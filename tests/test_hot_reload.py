@@ -462,11 +462,16 @@ class TestHotReloadIntegration:
                 with open(rule_file, "w") as f:
                     yaml.dump(rule_data, f)
 
-                # Give the file system event time to propagate
-                time.sleep(0.5)
-
-                # Check that the file was queued for reload
-                assert rule_file in service.pending_reloads or service.reload_count > 0
+                # Give the file system event time to propagate and reload to complete
+                # Use a more robust check with multiple attempts
+                reload_detected = False
+                for attempt in range(10):  # Try for up to 5 seconds
+                    time.sleep(0.5)
+                    if rule_file in service.pending_reloads or service.reload_count > 0:
+                        reload_detected = True
+                        break
+                
+                assert reload_detected, f"Reload not detected after 5 seconds. reload_count={service.reload_count}, pending_reloads={service.pending_reloads}"
 
             finally:
                 # Stop service
@@ -529,11 +534,16 @@ class TestHotReloadIntegration:
                 with open(rule_file, "w") as f:
                     yaml.dump(modified_rule, f)
 
-                # Give the file system event time to propagate
-                time.sleep(0.5)
-
-                # Check that modification was detected
-                assert rule_file in service.pending_reloads or service.reload_count > 0
+                # Give the file system event time to propagate and reload to complete
+                # Use a more robust check with multiple attempts
+                reload_detected = False
+                for attempt in range(10):  # Try for up to 5 seconds
+                    time.sleep(0.5)
+                    if rule_file in service.pending_reloads or service.reload_count > 0:
+                        reload_detected = True
+                        break
+                
+                assert reload_detected, f"Reload not detected after 5 seconds. reload_count={service.reload_count}, pending_reloads={service.pending_reloads}"
 
             finally:
                 # Stop service

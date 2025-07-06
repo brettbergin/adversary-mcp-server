@@ -385,15 +385,15 @@ class TestThreatEngineAdvanced:
         """Test that rules are loaded in correct priority order."""
         # Create built-in rules directory
         builtin_dir = tmp_path / "rules" / "built-in"
-        builtin_dir.mkdir(parents=True)
+        builtin_dir.mkdir(parents=True, exist_ok=True)
 
         # Create custom rules directory
         custom_dir = tmp_path / "custom"
-        custom_dir.mkdir()
+        custom_dir.mkdir(exist_ok=True)
 
         # Create provided rules directory
         provided_dir = tmp_path / "provided"
-        provided_dir.mkdir()
+        provided_dir.mkdir(exist_ok=True)
 
         # Create same rule ID in all directories with different names
         rule_id = "priority_test"
@@ -452,20 +452,23 @@ class TestThreatEngineAdvanced:
         with open(provided_dir / "provided.yaml", "w") as f:
             yaml.dump(provided_rule, f)
 
-        # Mock the project root path
-        with patch("adversary_mcp_server.threat_engine.Path.__new__") as mock_path:
-            mock_path.return_value = tmp_path
+        # Mock the get_user_rules_directory and initialize functions 
+        with patch("adversary_mcp_server.threat_engine.get_user_rules_directory") as mock_get_user_rules:
+            with patch("adversary_mcp_server.threat_engine.initialize_user_rules_directory") as mock_init:
+                # Set up the mock to return our test directory
+                mock_get_user_rules.return_value = tmp_path / "user_rules"
+                mock_init.return_value = None  # Skip initialization
 
-            # Create threat engine with all directories
-            engine = ThreatEngine(
-                rules_dir=provided_dir, custom_rules_dirs=[custom_dir]
-            )
+                # Create threat engine with all directories
+                engine = ThreatEngine(
+                    rules_dir=provided_dir, custom_rules_dirs=[custom_dir]
+                )
 
-            # The provided rule should have overridden the others
-            assert rule_id in engine.rules
-            rule = engine.rules[rule_id]
-            assert rule.name == "Provided Rule"
-            assert rule.severity == Severity.MEDIUM
+                # The provided rule should have overridden the others
+                assert rule_id in engine.rules
+                rule = engine.rules[rule_id]
+                assert rule.name == "Provided Rule"
+                assert rule.severity == Severity.MEDIUM
 
     def test_loaded_rule_files_tracking(self, tmp_path):
         """Test tracking of loaded rule files."""

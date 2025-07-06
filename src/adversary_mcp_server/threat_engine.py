@@ -255,6 +255,8 @@ class ThreatEngine:
             Language.TYPESCRIPT: [],
         }
         self.loaded_rule_files: Set[Path] = set()
+        # Track which file each rule was loaded from
+        self.rule_source_files: Dict[str, Path] = {}
 
         # Initialize user rules directory if it doesn't exist
         initialize_user_rules_directory()
@@ -320,7 +322,7 @@ class ThreatEngine:
             rules_loaded = 0
             for rule_data in data["rules"]:
                 rule = ThreatRule(**rule_data)
-                self.add_rule(rule)
+                self.add_rule(rule, source_file=rule_file)
                 rules_loaded += 1
 
             self.loaded_rule_files.add(rule_file)
@@ -329,13 +331,18 @@ class ThreatEngine:
         except Exception as e:
             raise ValueError(f"Failed to load rules from {rule_file}: {e}")
 
-    def add_rule(self, rule: ThreatRule) -> None:
+    def add_rule(self, rule: ThreatRule, source_file: Optional[Path] = None) -> None:
         """Add a threat rule to the engine.
 
         Args:
             rule: The threat rule to add
+            source_file: Path to the file this rule was loaded from (optional)
         """
         self.rules[rule.id] = rule
+
+        # Track source file
+        if source_file:
+            self.rule_source_files[rule.id] = source_file
 
         # Index by language
         for language in rule.languages:
@@ -569,9 +576,10 @@ class ThreatEngine:
             ),
         ]
 
-        # Add all default rules
+        # Add all default rules (mark as built-in/hardcoded)
         for rule in python_rules + js_rules:
-            self.add_rule(rule)
+            # Use a special path to indicate these are hardcoded rules
+            self.add_rule(rule, source_file=Path("<built-in>"))
 
     def validate_rule(self, rule: ThreatRule) -> List[str]:
         """Validate a threat rule for correctness.
@@ -635,6 +643,7 @@ class ThreatEngine:
                     if len(rule.description) > 100
                     else rule.description
                 ),
+                "source_file": str(self.rule_source_files.get(rule.id, "Unknown")),
             }
             for rule in self.rules.values()
         ]
@@ -645,6 +654,7 @@ class ThreatEngine:
         self.rules.clear()
         for lang_rules in self.rules_by_language.values():
             lang_rules.clear()
+        self.rule_source_files.clear()
 
         # Reload from files
         files_to_reload = list(self.loaded_rule_files)
@@ -709,6 +719,10 @@ class ThreatEngine:
 
         # Remove from main collection
         del self.rules[rule_id]
+
+        # Remove from source file mapping
+        if rule_id in self.rule_source_files:
+            del self.rule_source_files[rule_id]
 
         # Remove from language indices
         for language in rule.languages:

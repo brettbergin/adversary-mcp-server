@@ -356,11 +356,18 @@ def scan(
     type=click.Path(),
     help="Output file for rules (JSON format)",
 )
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    help="Show full absolute paths for source files",
+)
 def list_rules(
     category: Optional[str],
     severity: Optional[str],
     language: Optional[str],
     output: Optional[str],
+    verbose: bool,
 ):
     """List available threat detection rules."""
     try:
@@ -392,6 +399,7 @@ def list_rules(
         table.add_column("Category", style="green")
         table.add_column("Severity", style="red")
         table.add_column("Languages", style="blue")
+        table.add_column("Source File", style="yellow")
 
         for rule in rules:
             # Color severity
@@ -402,12 +410,22 @@ def list_rules(
                 "critical": "bold red",
             }.get(rule["severity"], "white")
 
+            # Format source file path for display
+            source_file = rule.get("source_file", "Unknown")
+            if verbose or source_file == "Unknown" or source_file == "<built-in>":
+                # Show full path in verbose mode, or special names as-is
+                source_file_display = source_file
+            else:
+                # Show just the filename for readability in normal mode
+                source_file_display = Path(source_file).name
+
             table.add_row(
                 rule["id"],
                 rule["name"],
                 rule["category"],
                 f"[{severity_color}]{rule['severity']}[/{severity_color}]",
                 ", ".join(rule["languages"]),
+                source_file_display,
             )
 
         console.print(table)
