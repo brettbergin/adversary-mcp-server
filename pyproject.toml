@@ -1,0 +1,172 @@
+[project]
+name = "adversary-mcp-server"
+version = "0.1.1"
+description = "MCP server for adversarial security analysis and vulnerability detection"
+readme = "README.md"
+authors = [
+    { name = "Brett Bergin", email = "brettberginbc@yahoo.com" }
+]
+requires-python = ">=3.10"
+license = { text = "MIT" }
+keywords = ["security", "mcp", "vulnerability", "adversary", "cursor", "red-team"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Software Development :: Quality Assurance",
+]
+dependencies = [
+    "click>=8.0.0",
+    "pydantic>=2.0.0",
+    "mcp>=1.0.0",
+    "rich>=13.0.0",
+    "keyring>=24.0.0",
+    "typing-extensions>=4.0.0",
+    "cryptography>=3.4.8",
+    "pyyaml>=6.0.0",
+    "ast-tools>=0.1.0",
+    "esprima>=4.0.0",
+    "openai>=1.0.0",
+    "jinja2>=3.0.0",
+    "tree-sitter>=0.20.0",
+    "tree-sitter-python>=0.20.0",
+    "tree-sitter-javascript>=0.20.0",
+    "tree-sitter-typescript>=0.20.0",
+    "bandit>=1.7.0",
+    "semgrep>=1.0.0",
+    "requests>=2.28.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "mypy>=1.0.0",
+    "black>=23.0.0",
+    "isort>=5.0.0",
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-mock>=3.10.0",
+    "responses>=0.24.0",
+    "freezegun>=1.2.0",
+    "ruff>=0.1.0",
+    "pre-commit>=3.0.0",
+]
+
+[project.scripts]
+adversary-mcp-cli = "adversary_mcp_server.cli:main"
+adversary-mcp-server = "adversary_mcp_server.server:main"
+
+[project.urls]
+Homepage = "https://github.com/brettbergin/adversary-mcp-server"
+Documentation = "https://github.com/brettbergin/adversary-mcp-server#readme"
+Repository = "https://github.com/brettbergin/adversary-mcp-server.git"
+Issues = "https://github.com/brettbergin/adversary-mcp-server/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+dev-dependencies = [
+    "mypy>=1.0.0",
+    "black>=23.0.0",
+    "isort>=5.0.0",
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-mock>=3.10.0",
+    "responses>=0.24.0",
+    "freezegun>=1.2.0",
+    "ruff>=0.1.0",
+    "pre-commit>=3.0.0",
+    "build>=1.2.2.post1",
+    "twine>=6.1.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/adversary_mcp_server"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+
+[tool.black]
+line-length = 88
+target-version = ['py310']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+line_length = 88
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+ensure_newline_before_comments = true
+
+[tool.ruff]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "C4", # flake8-comprehensions
+    "UP", # pyupgrade
+    "S",  # bandit security checks
+]
+ignore = [
+    "E501",  # line too long, handled by black
+    "B008",  # do not perform function calls in argument defaults
+    "C901",  # too complex
+    "S101",  # use of assert
+]
+line-length = 88
+target-version = "py310"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "--cov=adversary_mcp_server --cov-report=term-missing --cov-report=html --cov-report=json --cov-report=xml --cov-fail-under=80 --strict-markers"
+asyncio_mode = "auto"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+    "security: marks tests as security-related tests",
+] 
