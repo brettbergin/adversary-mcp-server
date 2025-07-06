@@ -28,6 +28,7 @@ class Category(str, Enum):
     AUTHENTICATION = "authentication"
     AUTHORIZATION = "authorization"
     CRYPTO = "crypto"
+    CRYPTOGRAPHY = "cryptography"
     CONFIGURATION = "configuration"
     VALIDATION = "validation"
     LOGGING = "logging"
@@ -38,6 +39,18 @@ class Category(str, Enum):
     RCE = "rce"
     LFI = "lfi"
     DISCLOSURE = "disclosure"
+    ACCESS_CONTROL = "access_control"
+    TYPE_SAFETY = "type_safety"
+    SECRETS = "secrets"
+    DOS = "dos"
+    CSRF = "csrf"
+    PATH_TRAVERSAL = "path_traversal"
+    REDIRECT = "redirect"
+    HEADERS = "headers"
+    SESSION = "session"
+    FILE_UPLOAD = "file_upload"
+    XXE = "xxe"
+    CLICKJACKING = "clickjacking"
 
 
 class Language(str, Enum):
@@ -83,7 +96,7 @@ class ExploitTemplate(BaseModel):
     @field_validator("type")
     @classmethod
     def validate_type(cls, v):
-        valid_types = ["curl", "python", "javascript", "shell", "payload"]
+        valid_types = ["curl", "python", "javascript", "typescript", "shell", "payload"]
         if v not in valid_types:
             raise ValueError(f"Invalid exploit type: {v}")
         return v
