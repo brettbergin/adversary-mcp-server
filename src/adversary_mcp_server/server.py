@@ -80,7 +80,7 @@ class AdversaryMCPServer:
             """List available adversary analysis tools."""
             return [
                 Tool(
-                    name="scan_code",
+                    name="adv_scan_code",
                     description="Scan source code for security vulnerabilities",
                     inputSchema={
                         "type": "object",
@@ -115,7 +115,7 @@ class AdversaryMCPServer:
                     },
                 ),
                 Tool(
-                    name="scan_file",
+                    name="adv_scan_file",
                     description="Scan a file for security vulnerabilities",
                     inputSchema={
                         "type": "object",
@@ -145,7 +145,7 @@ class AdversaryMCPServer:
                     },
                 ),
                 Tool(
-                    name="scan_directory",
+                    name="adv_scan_directory",
                     description="Scan a directory for security vulnerabilities",
                     inputSchema={
                         "type": "object",
@@ -180,7 +180,7 @@ class AdversaryMCPServer:
                     },
                 ),
                 Tool(
-                    name="generate_exploit",
+                    name="adv_generate_exploit",
                     description="Generate exploit for a specific vulnerability",
                     inputSchema={
                         "type": "object",
@@ -212,7 +212,7 @@ class AdversaryMCPServer:
                     },
                 ),
                 Tool(
-                    name="list_rules",
+                    name="adv_list_rules",
                     description="List all available threat detection rules",
                     inputSchema={
                         "type": "object",
@@ -236,7 +236,7 @@ class AdversaryMCPServer:
                     },
                 ),
                 Tool(
-                    name="get_rule_details",
+                    name="adv_get_rule_details",
                     description="Get detailed information about a specific rule",
                     inputSchema={
                         "type": "object",
@@ -250,7 +250,7 @@ class AdversaryMCPServer:
                     },
                 ),
                 Tool(
-                    name="configure_settings",
+                    name="adv_configure_settings",
                     description="Configure adversary MCP server settings",
                     inputSchema={
                         "type": "object",
@@ -277,7 +277,7 @@ class AdversaryMCPServer:
                     },
                 ),
                 Tool(
-                    name="get_status",
+                    name="adv_get_status",
                     description="Get status and configuration of the adversary MCP server",
                     inputSchema={
                         "type": "object",
@@ -293,21 +293,21 @@ class AdversaryMCPServer:
         ) -> List[types.TextContent]:
             """Handle tool calls."""
             try:
-                if name == "scan_code":
+                if name == "adv_scan_code":
                     return await self._handle_scan_code(arguments)
-                elif name == "scan_file":
+                elif name == "adv_scan_file":
                     return await self._handle_scan_file(arguments)
-                elif name == "scan_directory":
+                elif name == "adv_scan_directory":
                     return await self._handle_scan_directory(arguments)
-                elif name == "generate_exploit":
+                elif name == "adv_generate_exploit":
                     return await self._handle_generate_exploit(arguments)
-                elif name == "list_rules":
+                elif name == "adv_list_rules":
                     return await self._handle_list_rules(arguments)
-                elif name == "get_rule_details":
+                elif name == "adv_get_rule_details":
                     return await self._handle_get_rule_details(arguments)
-                elif name == "configure_settings":
+                elif name == "adv_configure_settings":
                     return await self._handle_configure_settings(arguments)
-                elif name == "get_status":
+                elif name == "adv_get_status":
                     return await self._handle_get_status()
                 else:
                     raise AdversaryToolError(f"Unknown tool: {name}")
