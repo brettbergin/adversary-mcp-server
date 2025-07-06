@@ -113,6 +113,205 @@ For enhanced exploit generation, configure your OpenAI API key:
 adversary-mcp-cli configure --openai-api-key your-api-key-here
 ```
 
+## 🔗 MCP Integration with Cursor IDE
+
+### What is MCP?
+
+The **Model Context Protocol (MCP)** allows AI assistants like Cursor to access external tools and data sources. The Adversary MCP Server acts as a security-focused "co-pilot" that analyzes your code in real-time as you develop.
+
+### Setting Up with Cursor IDE
+
+1. **Install the Package**
+   ```bash
+   pip install adversary-mcp-server
+   ```
+
+2. **Configure Cursor IDE**
+   Add the following to your Cursor settings (`~/.cursor/config.json` or via Cursor Settings):
+   ```json
+   {
+     "mcp": {
+       "servers": {
+         "adversary-security": {
+           "command": "adversary-mcp-server",
+           "args": [],
+           "env": {
+             "ADVERSARY_CONFIG_DIR": "~/.adversary-mcp"
+           }
+         }
+       }
+     }
+   }
+   ```
+
+3. **Restart Cursor IDE**
+   The server will automatically start when Cursor launches.
+
+### 🎯 User Experience Examples
+
+#### Scenario 1: Real-time Vulnerability Detection
+
+**You're coding in Cursor IDE:**
+```python
+# You type this vulnerable code:
+def authenticate_user(username, password):
+    query = f"SELECT * FROM users WHERE username = '{username}'"
+    return db.execute(query)
+```
+
+**Adversary MCP Server responds instantly in chat:**
+```
+🚨 **Security Alert: SQL Injection Detected**
+
+**File:** auth.py:3
+**Severity:** 🟥 **CRITICAL**
+**Vulnerability:** SQL Injection via string formatting
+
+**Vulnerable Code:**
+```python
+query = f"SELECT * FROM users WHERE username = '{username}'"
+```
+
+**🎯 Exploit Example:**
+Input: `admin' OR '1'='1' --`
+Result: Bypasses authentication entirely
+
+**✅ Recommended Fix:**
+```python
+query = "SELECT * FROM users WHERE username = ?"
+return db.execute(query, (username,))
+```
+
+**📚 Learn More:** [CWE-89: SQL Injection](https://cwe.mitre.org/data/definitions/89.html)
+```
+
+#### Scenario 2: Interactive Security Analysis
+
+**You ask Cursor:** *"Can you scan my entire authentication module for security issues?"*
+
+**Cursor uses the MCP server:**
+```
+🔍 **Scanning auth_module.py for vulnerabilities...**
+
+**Found 4 security issues:**
+
+1. **🟥 SQL Injection** (Line 23)
+   - Direct string concatenation in login query
+   - **Impact:** Complete database compromise
+
+2. **🟠 Command Injection** (Line 45) 
+   - Unsanitized input to os.system()
+   - **Impact:** Remote code execution
+
+3. **🟡 Weak Password Hashing** (Line 67)
+   - Using MD5 instead of bcrypt
+   - **Impact:** Credential compromise
+
+4. **🟡 Information Disclosure** (Line 89)
+   - Stack traces exposed to users
+   - **Impact:** System information leakage
+
+**🛠️ Would you like me to generate secure code examples for each issue?**
+```
+
+#### Scenario 3: Educational Exploit Generation
+
+**You ask:** *"Show me how the SQL injection on line 23 could be exploited"*
+
+**MCP Server provides educational examples:**
+```
+🎓 **Educational Exploit Analysis**
+
+**Vulnerability:** SQL Injection in user authentication
+
+**Attack Vectors:**
+
+1. **Authentication Bypass:**
+   ```
+   Username: admin' OR '1'='1' --
+   Result: Logs in as admin without password
+   ```
+
+2. **Data Extraction:**
+   ```
+   Username: ' UNION SELECT password FROM users WHERE username='admin' --
+   Result: Reveals admin password hash
+   ```
+
+3. **Database Enumeration:**
+   ```
+   Username: ' UNION SELECT table_name FROM information_schema.tables --
+   Result: Lists all database tables
+   ```
+
+**⚠️ Safety Note:** These examples are for educational purposes only. Use responsibly in authorized testing environments.
+
+**🛡️ Defense:** Implement parameterized queries and input validation.
+```
+
+#### Scenario 4: Code Review Integration
+
+**During code review, you ask:** *"Review this pull request for security issues"*
+
+**MCP Server analyzes the entire PR:**
+```
+📋 **Security Review for PR #123**
+
+**Files Analyzed:** 8
+**New Vulnerabilities:** 2
+**Fixed Issues:** 1
+**Security Score:** 🟢 **Improved** (87% → 94%)
+
+**New Issues Found:**
+
+📁 **src/api/user_controller.py**
+- Line 34: **Insecure Direct Object Reference**
+  - Users can access other users' data by changing ID parameter
+  - **Recommendation:** Add authorization checks
+
+📁 **src/utils/file_handler.py**  
+- Line 12: **Path Traversal Vulnerability**
+  - File paths not validated, allowing `../` attacks
+  - **Recommendation:** Sanitize file paths and use allowlisting
+
+**✅ Fixed Issues:**
+- SQL injection in login function (great work!)
+
+**🎯 Overall Assessment:** This PR significantly improves security posture. Address the 2 new issues before merging.
+```
+
+### 🔄 Continuous Security Workflow
+
+The MCP integration creates a seamless security workflow:
+
+1. **✍️ Write Code** → Adversary MCP monitors in real-time
+2. **🚨 Get Instant Alerts** → Security issues flagged immediately  
+3. **📚 Learn & Understand** → Detailed explanations and exploit examples
+4. **🛠️ Fix Vulnerabilities** → Guided remediation with secure code examples
+5. **✅ Verify Fixes** → Re-scan to confirm issues resolved
+6. **🔄 Repeat** → Continuous security improvement
+
+### 🎯 MCP Tools Available
+
+When integrated with Cursor, you can use natural language to:
+
+- **"Scan this file for vulnerabilities"** → `scan_file`
+- **"Check my entire project for SQL injection"** → `scan_directory` with filtering
+- **"Show me how this XSS attack works"** → `generate_exploit`
+- **"What security rules are available?"** → `list_rules`
+- **"Explain the OWASP Top 10 rule for injection"** → `get_rule_details`
+- **"Configure my security settings"** → `configure_settings`
+- **"What's the server status?"** → `get_status`
+
+### 🏆 Benefits of MCP Integration
+
+- **🚀 Real-time Analysis** - Catch vulnerabilities as you code
+- **🎓 Educational** - Learn security through hands-on examples
+- **⚡ Zero Context Switching** - Security analysis within your IDE
+- **🤝 AI-Powered** - Natural language interaction with security tools
+- **🔄 Continuous** - Always-on security monitoring
+- **📈 Learning Curve** - Improves your security skills over time
+
 ## 🎮 Usage
 
 ### Command Line Interface
@@ -147,18 +346,20 @@ adversary-mcp-cli rule-details python_sql_injection
 adversary-mcp-cli demo
 ```
 
-### MCP Server Integration
+### Available MCP Tools
 
-The server provides several MCP tools for integration with Cursor IDE:
+The server exposes these tools for IDE integration:
 
-- `scan_code` - Scan source code for vulnerabilities
-- `scan_file` - Scan a specific file
-- `scan_directory` - Scan an entire directory
-- `generate_exploit` - Generate exploits for vulnerabilities
-- `list_rules` - List available detection rules
-- `get_rule_details` - Get detailed rule information
-- `configure_settings` - Configure server settings
-- `get_status` - Get server status
+| Tool | Description | Example Usage |
+|------|-------------|---------------|
+| `scan_code` | Analyze code snippets for vulnerabilities | Paste code and get instant security feedback |
+| `scan_file` | Security scan of specific files | `"Scan auth.py for injection vulnerabilities"` |
+| `scan_directory` | Recursive directory analysis | `"Check my entire API folder for security issues"` |
+| `generate_exploit` | Educational exploit examples | `"Show me how this XSS could be exploited"` |
+| `list_rules` | Browse detection rules | `"What Python security rules are available?"` |
+| `get_rule_details` | Deep dive into specific rules | `"Explain the SQL injection detection rule"` |
+| `configure_settings` | Adjust server configuration | `"Enable high severity only"` |
+| `get_status` | Check server health | `"Is the security scanner working?"` |
 
 ### Example Output
 
