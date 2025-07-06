@@ -20,30 +20,30 @@ from keyring.errors import KeyringError
 @dataclass
 class SecurityConfig:
     """Security configuration for the adversary MCP server."""
-    
+
     # LLM Configuration
     openai_api_key: str = ""
     openai_model: str = "gpt-4"
     openai_max_tokens: int = 2048
-    
+
     # Scanner Configuration
     enable_ast_scanning: bool = True
     enable_semgrep_scanning: bool = True
     enable_bandit_scanning: bool = True
-    
+
     # Exploit Generation
     enable_exploit_generation: bool = True
     exploit_safety_mode: bool = True  # Limit exploit generation to safe examples
-    
+
     # Analysis Configuration
     max_file_size_mb: int = 10
     max_scan_depth: int = 5
     timeout_seconds: int = 300
-    
+
     # Rule Configuration
     custom_rules_path: Optional[str] = None
     severity_threshold: str = "medium"  # low, medium, high, critical
-    
+
     # Reporting Configuration
     include_exploit_examples: bool = True
     include_remediation_advice: bool = True
@@ -52,21 +52,25 @@ class SecurityConfig:
 
 class CredentialError(Exception):
     """Base exception for credential errors."""
+
     pass
 
 
 class CredentialNotFoundError(CredentialError):
     """Exception raised when credentials are not found."""
+
     pass
 
 
 class CredentialStorageError(CredentialError):
     """Exception raised when credential storage fails."""
+
     pass
 
 
 class CredentialDecryptionError(CredentialError):
     """Exception raised when credential decryption fails."""
+
     pass
 
 
@@ -374,4 +378,4 @@ class CredentialManager:
         """
         config = self.load_config()
         config.openai_api_key = api_key
-        self.store_config(config) 
+        self.store_config(config)

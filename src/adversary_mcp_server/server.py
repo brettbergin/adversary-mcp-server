@@ -33,11 +33,13 @@ logger = logging.getLogger(__name__)
 
 class AdversaryToolError(Exception):
     """Exception for adversary tool errors."""
+
     pass
 
 
 class ScanRequest(BaseModel):
     """Request for scanning code or files."""
+
     content: Optional[str] = None
     file_path: Optional[str] = None
     language: Optional[str] = None
@@ -48,6 +50,7 @@ class ScanRequest(BaseModel):
 
 class ScanResult(BaseModel):
     """Result of a security scan."""
+
     threats: List[Dict[str, Any]]
     summary: Dict[str, Any]
     metadata: Dict[str, Any]
@@ -60,7 +63,7 @@ class AdversaryMCPServer:
         """Initialize the MCP server."""
         self.server: Server = Server("adversary-mcp-server")
         self.credential_manager = CredentialManager()
-        
+
         # Initialize core components
         self.threat_engine = ThreatEngine()
         self.ast_scanner = ASTScanner(self.threat_engine)
@@ -201,7 +204,11 @@ class AdversaryMCPServer:
                                 "default": True,
                             },
                         },
-                        "required": ["vulnerability_type", "code_context", "target_language"],
+                        "required": [
+                            "vulnerability_type",
+                            "code_context",
+                            "target_language",
+                        ],
                     },
                 ),
                 Tool(
@@ -310,7 +317,9 @@ class AdversaryMCPServer:
                 logger.error(traceback.format_exc())
                 return [types.TextContent(type="text", text=f"Error: {str(e)}")]
 
-    async def _handle_scan_code(self, arguments: Dict[str, Any]) -> List[types.TextContent]:
+    async def _handle_scan_code(
+        self, arguments: Dict[str, Any]
+    ) -> List[types.TextContent]:
         """Handle code scanning request."""
         try:
             content = arguments["content"]
@@ -338,7 +347,9 @@ class AdversaryMCPServer:
                         )
                         threat.exploit_examples = exploits
                     except Exception as e:
-                        logger.warning(f"Failed to generate exploits for {threat.rule_id}: {e}")
+                        logger.warning(
+                            f"Failed to generate exploits for {threat.rule_id}: {e}"
+                        )
 
             # Format results
             result = self._format_scan_results(filtered_threats, "code")
@@ -347,7 +358,9 @@ class AdversaryMCPServer:
         except Exception as e:
             raise AdversaryToolError(f"Code scanning failed: {e}")
 
-    async def _handle_scan_file(self, arguments: Dict[str, Any]) -> List[types.TextContent]:
+    async def _handle_scan_file(
+        self, arguments: Dict[str, Any]
+    ) -> List[types.TextContent]:
         """Handle file scanning request."""
         try:
             file_path = Path(arguments["file_path"])
@@ -369,7 +382,7 @@ class AdversaryMCPServer:
             if include_exploits:
                 file_content = ""
                 try:
-                    with open(file_path, 'r', encoding='utf-8') as f:
+                    with open(file_path, "r", encoding="utf-8") as f:
                         file_content = f.read()
                 except Exception:
                     pass
@@ -381,7 +394,9 @@ class AdversaryMCPServer:
                         )
                         threat.exploit_examples = exploits
                     except Exception as e:
-                        logger.warning(f"Failed to generate exploits for {threat.rule_id}: {e}")
+                        logger.warning(
+                            f"Failed to generate exploits for {threat.rule_id}: {e}"
+                        )
 
             # Format results
             result = self._format_scan_results(filtered_threats, str(file_path))
@@ -390,14 +405,18 @@ class AdversaryMCPServer:
         except Exception as e:
             raise AdversaryToolError(f"File scanning failed: {e}")
 
-    async def _handle_scan_directory(self, arguments: Dict[str, Any]) -> List[types.TextContent]:
+    async def _handle_scan_directory(
+        self, arguments: Dict[str, Any]
+    ) -> List[types.TextContent]:
         """Handle directory scanning request."""
         try:
             directory_path = Path(arguments["directory_path"])
             recursive = arguments.get("recursive", True)
             severity_threshold = arguments.get("severity_threshold", "medium")
             include_exploits = arguments.get("include_exploits", True)
-            use_llm = arguments.get("use_llm", False)  # Default to False for directory scans
+            use_llm = arguments.get(
+                "use_llm", False
+            )  # Default to False for directory scans
 
             if not directory_path.exists():
                 raise AdversaryToolError(f"Directory not found: {directory_path}")
@@ -418,7 +437,9 @@ class AdversaryMCPServer:
                         )
                         threat.exploit_examples = exploits
                     except Exception as e:
-                        logger.warning(f"Failed to generate exploits for {threat.rule_id}: {e}")
+                        logger.warning(
+                            f"Failed to generate exploits for {threat.rule_id}: {e}"
+                        )
 
             # Format results
             result = self._format_scan_results(filtered_threats, str(directory_path))
@@ -427,7 +448,9 @@ class AdversaryMCPServer:
         except Exception as e:
             raise AdversaryToolError(f"Directory scanning failed: {e}")
 
-    async def _handle_generate_exploit(self, arguments: Dict[str, Any]) -> List[types.TextContent]:
+    async def _handle_generate_exploit(
+        self, arguments: Dict[str, Any]
+    ) -> List[types.TextContent]:
         """Handle exploit generation request."""
         try:
             vulnerability_type = arguments["vulnerability_type"]
@@ -437,7 +460,7 @@ class AdversaryMCPServer:
 
             # Create a mock threat match for exploit generation
             from .threat_engine import Category, Severity, ThreatMatch
-            
+
             # Map vulnerability type to category
             type_to_category = {
                 "sql_injection": Category.INJECTION,
@@ -446,9 +469,9 @@ class AdversaryMCPServer:
                 "deserialization": Category.DESERIALIZATION,
                 "path_traversal": Category.LFI,
             }
-            
+
             category = type_to_category.get(vulnerability_type, Category.INJECTION)
-            
+
             mock_threat = ThreatMatch(
                 rule_id=f"custom_{vulnerability_type}",
                 rule_name=vulnerability_type.replace("_", " ").title(),
@@ -470,21 +493,25 @@ class AdversaryMCPServer:
             result += f"**Vulnerability Type:** {vulnerability_type}\n"
             result += f"**Target Language:** {target_language}\n"
             result += f"**Code Context:**\n```\n{code_context}\n```\n\n"
-            
+
             if exploits:
                 result += "## Exploit Examples\n\n"
                 for i, exploit in enumerate(exploits, 1):
                     result += f"### Exploit {i}\n\n"
                     result += f"```\n{exploit}\n```\n\n"
             else:
-                result += "No exploits could be generated for this vulnerability type.\n"
+                result += (
+                    "No exploits could be generated for this vulnerability type.\n"
+                )
 
             return [types.TextContent(type="text", text=result)]
 
         except Exception as e:
             raise AdversaryToolError(f"Exploit generation failed: {e}")
 
-    async def _handle_list_rules(self, arguments: Dict[str, Any]) -> List[types.TextContent]:
+    async def _handle_list_rules(
+        self, arguments: Dict[str, Any]
+    ) -> List[types.TextContent]:
         """Handle list rules request."""
         try:
             category = arguments.get("category")
@@ -496,17 +523,21 @@ class AdversaryMCPServer:
             # Apply filters
             if category:
                 rules = [rule for rule in rules if rule["category"] == category]
-            
+
             if severity:
                 severity_enum = Severity(severity)
-                rules = [rule for rule in rules if Severity(rule["severity"]) >= severity_enum]
-            
+                rules = [
+                    rule
+                    for rule in rules
+                    if Severity(rule["severity"]) >= severity_enum
+                ]
+
             if language:
                 rules = [rule for rule in rules if language in rule["languages"]]
 
             # Format results
             result = f"# Threat Detection Rules ({len(rules)} rules)\n\n"
-            
+
             for rule in rules:
                 result += f"## {rule['name']} ({rule['id']})\n"
                 result += f"- **Category:** {rule['category']}\n"
@@ -519,7 +550,9 @@ class AdversaryMCPServer:
         except Exception as e:
             raise AdversaryToolError(f"Failed to list rules: {e}")
 
-    async def _handle_get_rule_details(self, arguments: Dict[str, Any]) -> List[types.TextContent]:
+    async def _handle_get_rule_details(
+        self, arguments: Dict[str, Any]
+    ) -> List[types.TextContent]:
         """Handle get rule details request."""
         try:
             rule_id = arguments["rule_id"]
@@ -535,25 +568,25 @@ class AdversaryMCPServer:
             result += f"**Severity:** {rule.severity.value}\n"
             result += f"**Languages:** {', '.join([lang.value for lang in rule.languages])}\n\n"
             result += f"**Description:**\n{rule.description}\n\n"
-            
+
             if rule.conditions:
                 result += "**Conditions:**\n"
                 for i, condition in enumerate(rule.conditions, 1):
                     result += f"{i}. Type: {condition.type}, Value: {condition.value}\n"
                 result += "\n"
-            
+
             if rule.remediation:
                 result += f"**Remediation:**\n{rule.remediation}\n\n"
-            
+
             if rule.references:
                 result += "**References:**\n"
                 for ref in rule.references:
                     result += f"- {ref}\n"
                 result += "\n"
-            
+
             if rule.cwe_id:
                 result += f"**CWE ID:** {rule.cwe_id}\n"
-            
+
             if rule.owasp_category:
                 result += f"**OWASP Category:** {rule.owasp_category}\n"
 
@@ -562,30 +595,32 @@ class AdversaryMCPServer:
         except Exception as e:
             raise AdversaryToolError(f"Failed to get rule details: {e}")
 
-    async def _handle_configure_settings(self, arguments: Dict[str, Any]) -> List[types.TextContent]:
+    async def _handle_configure_settings(
+        self, arguments: Dict[str, Any]
+    ) -> List[types.TextContent]:
         """Handle configuration settings request."""
         try:
             config = self.credential_manager.load_config()
-            
+
             # Update configuration
             if "openai_api_key" in arguments:
                 config.openai_api_key = arguments["openai_api_key"]
-            
+
             if "severity_threshold" in arguments:
                 config.severity_threshold = arguments["severity_threshold"]
-            
+
             if "exploit_safety_mode" in arguments:
                 config.exploit_safety_mode = arguments["exploit_safety_mode"]
-            
+
             if "enable_llm" in arguments:
                 config.enable_exploit_generation = arguments["enable_llm"]
-            
+
             # Save configuration
             self.credential_manager.store_config(config)
-            
+
             # Reinitialize exploit generator with new config
             self.exploit_generator = ExploitGenerator(self.credential_manager)
-            
+
             result = "✅ Configuration updated successfully!\n\n"
             result += "**Current Settings:**\n"
             result += f"- OpenAI API Key: {'✓ Configured' if config.openai_api_key else '✗ Not configured'}\n"
@@ -602,27 +637,27 @@ class AdversaryMCPServer:
         """Handle get status request."""
         try:
             config = self.credential_manager.load_config()
-            
+
             result = "# Adversary MCP Server Status\n\n"
             result += "## Configuration\n"
             result += f"- **OpenAI API Key:** {'✓ Configured' if config.openai_api_key else '✗ Not configured'}\n"
             result += f"- **Severity Threshold:** {config.severity_threshold}\n"
             result += f"- **Exploit Safety Mode:** {'✓ Enabled' if config.exploit_safety_mode else '✗ Disabled'}\n"
             result += f"- **LLM Generation:** {'✓ Enabled' if config.enable_exploit_generation else '✗ Disabled'}\n\n"
-            
+
             result += "## Threat Engine\n"
             rules = self.threat_engine.list_rules()
             result += f"- **Total Rules:** {len(rules)}\n"
-            
+
             # Count by language
             lang_counts = {}
             for rule in rules:
                 for lang in rule["languages"]:
                     lang_counts[lang] = lang_counts.get(lang, 0) + 1
-            
+
             for lang, count in lang_counts.items():
                 result += f"- **{lang.capitalize()} Rules:** {count}\n"
-            
+
             result += "\n## Components\n"
             result += f"- **AST Scanner:** ✓ Active\n"
             result += f"- **Exploit Generator:** ✓ Active\n"
@@ -633,77 +668,87 @@ class AdversaryMCPServer:
         except Exception as e:
             raise AdversaryToolError(f"Failed to get status: {e}")
 
-    def _filter_threats_by_severity(self, threats: List[ThreatMatch], min_severity: Severity) -> List[ThreatMatch]:
+    def _filter_threats_by_severity(
+        self, threats: List[ThreatMatch], min_severity: Severity
+    ) -> List[ThreatMatch]:
         """Filter threats by minimum severity level."""
-        severity_order = [Severity.LOW, Severity.MEDIUM, Severity.HIGH, Severity.CRITICAL]
+        severity_order = [
+            Severity.LOW,
+            Severity.MEDIUM,
+            Severity.HIGH,
+            Severity.CRITICAL,
+        ]
         min_index = severity_order.index(min_severity)
-        
+
         return [
-            threat for threat in threats
+            threat
+            for threat in threats
             if severity_order.index(threat.severity) >= min_index
         ]
 
     def _format_scan_results(self, threats: List[ThreatMatch], scan_target: str) -> str:
         """Format scan results for display."""
         result = f"# Security Scan Results for {scan_target}\n\n"
-        
+
         if not threats:
             result += "🎉 **No security vulnerabilities found!**\n\n"
             return result
-        
+
         # Summary
         severity_counts = {}
         for threat in threats:
             severity = threat.severity.value
             severity_counts[severity] = severity_counts.get(severity, 0) + 1
-        
+
         result += "## Summary\n"
         result += f"**Total Threats:** {len(threats)}\n"
         for severity in ["critical", "high", "medium", "low"]:
             count = severity_counts.get(severity, 0)
             if count > 0:
-                emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}[severity]
+                emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}[
+                    severity
+                ]
                 result += f"**{severity.capitalize()}:** {count} {emoji}\n"
         result += "\n"
-        
+
         # Detailed results
         result += "## Detailed Results\n\n"
-        
+
         for i, threat in enumerate(threats, 1):
             severity_emoji = {
                 "critical": "🔴",
-                "high": "🟠", 
+                "high": "🟠",
                 "medium": "🟡",
-                "low": "🟢"
+                "low": "🟢",
             }.get(threat.severity.value, "⚪")
-            
+
             result += f"### {i}. {threat.rule_name} {severity_emoji}\n"
             result += f"**File:** {threat.file_path}:{threat.line_number}\n"
             result += f"**Severity:** {threat.severity.value.capitalize()}\n"
             result += f"**Category:** {threat.category.value.capitalize()}\n"
             result += f"**Description:** {threat.description}\n\n"
-            
+
             if threat.code_snippet:
                 result += "**Code Context:**\n"
                 result += f"```\n{threat.code_snippet}\n```\n\n"
-            
+
             if threat.exploit_examples:
                 result += "**Exploit Examples:**\n"
                 for j, exploit in enumerate(threat.exploit_examples, 1):
                     result += f"*Example {j}:*\n"
                     result += f"```\n{exploit}\n```\n\n"
-            
+
             if threat.remediation:
                 result += f"**Remediation:** {threat.remediation}\n\n"
-            
+
             if threat.references:
                 result += "**References:**\n"
                 for ref in threat.references:
                     result += f"- {ref}\n"
                 result += "\n"
-            
+
             result += "---\n\n"
-        
+
         return result
 
     async def run(self) -> None:
@@ -739,4 +784,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main() 
+    main()

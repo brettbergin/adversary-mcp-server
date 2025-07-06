@@ -1,20 +1,27 @@
 """Tests for CLI module."""
 
-import pytest
-from unittest.mock import Mock, patch, MagicMock
-from pathlib import Path
-import sys
 import os
+import sys
+from pathlib import Path
+from unittest.mock import MagicMock, Mock, patch
+
+import pytest
 
 # Add the src directory to the path to import modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from adversary_mcp_server.cli import (
-    main, configure, status, scan, 
-    list_rules, rule_details, demo, 
-    reset, _display_scan_results
+    _display_scan_results,
+    configure,
+    demo,
+    list_rules,
+    main,
+    reset,
+    rule_details,
+    scan,
+    status,
 )
-from adversary_mcp_server.threat_engine import ThreatMatch, Severity, Category
+from adversary_mcp_server.threat_engine import Category, Severity, ThreatMatch
 
 
 class TestCLI:
@@ -40,7 +47,7 @@ class TestCLI:
 
     def test_display_scan_results_empty(self):
         """Test _display_scan_results with empty results."""
-        with patch('adversary_mcp_server.cli.console') as mock_console:
+        with patch("adversary_mcp_server.cli.console") as mock_console:
             _display_scan_results([], "test.py")
             mock_console.print.assert_called()
 
@@ -56,10 +63,10 @@ class TestCLI:
             line_number=1,
             code_snippet="test code",
             exploit_examples=["test exploit"],
-            remediation="Fix it"
+            remediation="Fix it",
         )
-        
-        with patch('adversary_mcp_server.cli.console') as mock_console:
+
+        with patch("adversary_mcp_server.cli.console") as mock_console:
             _display_scan_results([threat], "test.py")
             mock_console.print.assert_called()
 
@@ -73,7 +80,8 @@ class TestCLIIntegration:
         assert main is not None
         assert configure is not None
         assert status is not None
-        
+
         # Test basic CLI structure exists
         from adversary_mcp_server import cli
-        assert hasattr(cli, 'cli')  # Main typer app 
+
+        assert hasattr(cli, "cli")  # Main typer app

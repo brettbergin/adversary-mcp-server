@@ -1,1 +1,1 @@
-"""Tests for the Adversary MCP Server.""" 
+"""Tests for the Adversary MCP Server."""
