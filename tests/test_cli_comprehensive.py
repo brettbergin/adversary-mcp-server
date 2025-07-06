@@ -446,7 +446,7 @@ class TestCLIScanCommand:
             test_file = Path(temp_dir) / "test.py"
             with open(test_file, "w") as f:
                 f.write("print('test')")
-                
+
             result = self.runner.invoke(
                 cli, ["scan", temp_dir, "--recursive", "--severity", "low"]
             )

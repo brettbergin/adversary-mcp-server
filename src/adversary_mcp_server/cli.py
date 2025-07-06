@@ -8,11 +8,11 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set
 
 import click
+import yaml
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
-import yaml
 
 from .ast_scanner import ASTScanner
 from .credential_manager import CredentialManager, SecurityConfig
@@ -22,6 +22,7 @@ from .threat_engine import Language, Severity, ThreatEngine, get_user_rules_dire
 # Conditional import for hot_reload to avoid dependency issues in tests
 try:
     from .hot_reload import create_hot_reload_service
+
     HOT_RELOAD_AVAILABLE = True
 except ImportError:
     HOT_RELOAD_AVAILABLE = False
@@ -226,7 +227,7 @@ def scan(
     try:
         threat_engine = ThreatEngine()
         ast_scanner = ASTScanner(threat_engine)
-        
+
         # Load configuration
         try:
             credential_manager = CredentialManager()
@@ -240,7 +241,7 @@ def scan(
         if target_path.is_file():
             # Single file scan
             console.print(f"🔍 Scanning file: {target}")
-            
+
             # Auto-detect language if not specified
             if not language:
                 if target_path.suffix == ".py":
@@ -250,7 +251,9 @@ def scan(
                 elif target_path.suffix in [".ts", ".tsx"]:
                     language = "typescript"
                 else:
-                    console.print(f"❌ Cannot auto-detect language for {target}", style="red")
+                    console.print(
+                        f"❌ Cannot auto-detect language for {target}", style="red"
+                    )
                     sys.exit(1)
 
             # Read and scan file
@@ -258,18 +261,16 @@ def scan(
                 content = f.read()
 
             threats = ast_scanner.scan_code(
-                content, 
-                str(target_path),
-                Language(language)
+                content, str(target_path), Language(language)
             )
-            
+
         elif target_path.is_dir():
             # Directory scan
             console.print(f"🔍 Scanning directory: {target}")
-            
+
             threats = []
             file_count = 0
-            
+
             # Get all files to scan
             patterns = []
             if not language or language == "python":
@@ -278,13 +279,13 @@ def scan(
                 patterns.extend(["*.js", "*.jsx"])
             if not language or language == "typescript":
                 patterns.extend(["*.ts", "*.tsx"])
-            
+
             for pattern in patterns:
                 if recursive:
                     files = list(target_path.rglob(pattern))
                 else:
                     files = list(target_path.glob(pattern))
-                
+
                 for file_path in files:
                     try:
                         # Determine file language
@@ -296,28 +297,28 @@ def scan(
                             file_lang = Language.TYPESCRIPT
                         else:
                             continue
-                        
+
                         # Skip if language filter doesn't match
                         if language and file_lang.value != language:
                             continue
-                        
+
                         # Read and scan file
                         with open(file_path, "r", encoding="utf-8") as f:
                             content = f.read()
-                        
+
                         file_threats = ast_scanner.scan_code(
-                            content,
-                            str(file_path),
-                            file_lang
+                            content, str(file_path), file_lang
                         )
-                        
+
                         threats.extend(file_threats)
                         file_count += 1
-                        
+
                     except Exception as e:
-                        console.print(f"⚠️  Error scanning {file_path}: {e}", style="yellow")
+                        console.print(
+                            f"⚠️  Error scanning {file_path}: {e}", style="yellow"
+                        )
                         continue
-            
+
             console.print(f"📊 Scanned {file_count} files")
         else:
             console.print(f"❌ Invalid target: {target}", style="red")
@@ -369,12 +370,14 @@ def list_rules(
         # Apply filters
         if category:
             rules = [r for r in rules if r["category"] == category]
-        
+
         if severity:
             severity_order = ["low", "medium", "high", "critical"]
             min_index = severity_order.index(severity)
-            rules = [r for r in rules if severity_order.index(r["severity"]) >= min_index]
-        
+            rules = [
+                r for r in rules if severity_order.index(r["severity"]) >= min_index
+            ]
+
         if language:
             rules = [r for r in rules if language in r["languages"]]
 
@@ -394,17 +397,17 @@ def list_rules(
             # Color severity
             severity_color = {
                 "low": "green",
-                "medium": "yellow", 
+                "medium": "yellow",
                 "high": "red",
-                "critical": "bold red"
+                "critical": "bold red",
             }.get(rule["severity"], "white")
-            
+
             table.add_row(
                 rule["id"],
                 rule["name"],
                 rule["category"],
                 f"[{severity_color}]{rule['severity']}[/{severity_color}]",
-                ", ".join(rule["languages"])
+                ", ".join(rule["languages"]),
             )
 
         console.print(table)
@@ -439,8 +442,10 @@ def rule_details(rule_id: str):
         details_text += f"**Description:** {rule.description}\n\n"
         details_text += f"**Category:** {rule.category.value}\n"
         details_text += f"**Severity:** {rule.severity.value}\n"
-        details_text += f"**Languages:** {', '.join([lang.value for lang in rule.languages])}\n\n"
-        
+        details_text += (
+            f"**Languages:** {', '.join([lang.value for lang in rule.languages])}\n\n"
+        )
+
         if rule.cwe_id:
             details_text += f"**CWE ID:** {rule.cwe_id}\n"
         if rule.owasp_category:
@@ -465,11 +470,9 @@ def rule_details(rule_id: str):
                     value_str = ", ".join(condition.value)
                 elif len(value_str) > 50:
                     value_str = value_str[:47] + "..."
-                    
+
                 conditions_table.add_row(
-                    condition.type,
-                    value_str,
-                    "✓" if condition.case_sensitive else "✗"
+                    condition.type, value_str, "✓" if condition.case_sensitive else "✗"
                 )
 
             console.print(conditions_table)
@@ -481,7 +484,7 @@ def rule_details(rule_id: str):
                 template_text = f"**Type:** {template.type}\n"
                 template_text += f"**Description:** {template.description}\n"
                 template_text += f"**Template:**\n{template.template}"
-                
+
                 console.print(
                     Panel(template_text, title=f"Template {i}", border_style="yellow")
                 )
@@ -522,20 +525,30 @@ def export(output_file: str, format: str):
     try:
         threat_engine = ThreatEngine()
         output_path = Path(output_file)
-        
+
         if format == "yaml":
             # YAML export
-            rules_data = {"rules": [rule.model_dump(mode="json") for rule in threat_engine.rules.values()]}
+            rules_data = {
+                "rules": [
+                    rule.model_dump(mode="json")
+                    for rule in threat_engine.rules.values()
+                ]
+            }
             with open(output_path, "w") as f:
                 yaml.dump(rules_data, f, default_flow_style=False, sort_keys=False)
         else:
             # JSON export
-            rules_data = {"rules": [rule.model_dump(mode="json") for rule in threat_engine.rules.values()]}
+            rules_data = {
+                "rules": [
+                    rule.model_dump(mode="json")
+                    for rule in threat_engine.rules.values()
+                ]
+            }
             with open(output_path, "w") as f:
                 json.dump(rules_data, f, indent=2)
-        
+
         console.print(f"✅ Rules exported to {output_path}", style="green")
-        
+
     except Exception as e:
         console.print(f"❌ Export failed: {e}", style="red")
         sys.exit(1)
@@ -558,13 +571,13 @@ def import_rules(import_file: str, target_dir: Optional[str], validate: bool):
     try:
         threat_engine = ThreatEngine()
         import_path = Path(import_file)
-        
+
         if validate:
             console.print("🔍 Validating rules before import...")
             # Test load in temporary engine
             temp_engine = ThreatEngine()
             temp_engine.load_rules_from_file(import_path)
-            
+
             # Validate all rules
             validation_errors = temp_engine.validate_all_rules()
             if validation_errors:
@@ -572,20 +585,20 @@ def import_rules(import_file: str, target_dir: Optional[str], validate: bool):
                 for rule_id, errors in validation_errors.items():
                     console.print(f"  {rule_id}: {', '.join(errors)}", style="red")
                 sys.exit(1)
-            
+
             console.print("✅ Validation passed", style="green")
-        
+
         # Use default target directory if not provided
         if target_dir is None:
             target_path = get_user_rules_directory() / "custom"
         else:
             target_path = Path(target_dir)
-            
+
         # Import rules
         threat_engine.import_rules_from_file(import_path, target_path)
-        
+
         console.print(f"✅ Rules imported successfully to {target_path}", style="green")
-        
+
     except Exception as e:
         console.print(f"❌ Import failed: {e}", style="red")
         sys.exit(1)
@@ -597,20 +610,22 @@ def validate():
     try:
         threat_engine = ThreatEngine()
         validation_errors = threat_engine.validate_all_rules()
-        
+
         if not validation_errors:
             console.print("✅ All rules are valid", style="green")
             return
-        
-        console.print(f"❌ Found {len(validation_errors)} rules with errors:", style="red")
-        
+
+        console.print(
+            f"❌ Found {len(validation_errors)} rules with errors:", style="red"
+        )
+
         for rule_id, errors in validation_errors.items():
             console.print(f"\n[bold red]{rule_id}:[/bold red]")
             for error in errors:
                 console.print(f"  • {error}")
-        
+
         sys.exit(1)
-        
+
     except Exception as e:
         console.print(f"❌ Validation failed: {e}", style="red")
         sys.exit(1)
@@ -622,10 +637,13 @@ def reload():
     try:
         threat_engine = ThreatEngine()
         threat_engine.reload_rules()
-        
+
         stats = threat_engine.get_rule_statistics()
-        console.print(f"✅ Reloaded {stats['total_rules']} rules from {stats['loaded_files']} files", style="green")
-        
+        console.print(
+            f"✅ Reloaded {stats['total_rules']} rules from {stats['loaded_files']} files",
+            style="green",
+        )
+
     except Exception as e:
         console.print(f"❌ Reload failed: {e}", style="red")
         sys.exit(1)
@@ -637,51 +655,51 @@ def stats():
     try:
         threat_engine = ThreatEngine()
         stats = threat_engine.get_rule_statistics()
-        
+
         # Main statistics
         console.print(f"📊 [bold]Rule Statistics[/bold]")
         console.print(f"Total Rules: {stats['total_rules']}")
         console.print(f"Loaded Files: {stats['loaded_files']}")
-        
+
         # Categories table
-        if stats['categories']:
+        if stats["categories"]:
             cat_table = Table(title="Rules by Category")
             cat_table.add_column("Category", style="cyan")
             cat_table.add_column("Count", style="magenta")
-            
-            for category, count in stats['categories'].items():
+
+            for category, count in stats["categories"].items():
                 cat_table.add_row(category, str(count))
-            
+
             console.print(cat_table)
-        
+
         # Severity table
-        if stats['severities']:
+        if stats["severities"]:
             sev_table = Table(title="Rules by Severity")
             sev_table.add_column("Severity", style="cyan")
             sev_table.add_column("Count", style="magenta")
-            
-            for severity, count in stats['severities'].items():
+
+            for severity, count in stats["severities"].items():
                 sev_table.add_row(severity, str(count))
-            
+
             console.print(sev_table)
-        
+
         # Language table
-        if stats['languages']:
+        if stats["languages"]:
             lang_table = Table(title="Rules by Language")
             lang_table.add_column("Language", style="cyan")
             lang_table.add_column("Count", style="magenta")
-            
-            for language, count in stats['languages'].items():
+
+            for language, count in stats["languages"].items():
                 lang_table.add_row(language, str(count))
-            
+
             console.print(lang_table)
-        
+
         # Rule files
-        if stats['rule_files']:
+        if stats["rule_files"]:
             console.print("\n[bold]Loaded Rule Files:[/bold]")
-            for file_path in stats['rule_files']:
+            for file_path in stats["rule_files"]:
                 console.print(f"• {file_path}")
-        
+
     except Exception as e:
         console.print(f"❌ Failed to get statistics: {e}", style="red")
         sys.exit(1)
@@ -691,10 +709,12 @@ def stats():
 def demo():
     """Run a demonstration of the vulnerability scanner."""
     console.print("🎯 [bold]Adversary MCP Server Demo[/bold]")
-    console.print("This demo shows common security vulnerabilities and their detection.\n")
+    console.print(
+        "This demo shows common security vulnerabilities and their detection.\n"
+    )
 
     # Create sample vulnerable code
-    python_code = '''
+    python_code = """
 import os
 import pickle
 import sqlite3
@@ -717,9 +737,9 @@ def backup_file(filename):
 def load_user_data(data):
     # Vulnerable: pickle deserialization of untrusted data
     return pickle.loads(data)
-'''
+"""
 
-    js_code = '''
+    js_code = """
 // DOM-based XSS vulnerability
 function displayMessage(message) {
     // Vulnerable: direct innerHTML assignment
@@ -731,11 +751,11 @@ function calculate(expression) {
     // Vulnerable: eval with user input
     return eval(expression);
 }
-'''
+"""
 
     console.print("[bold cyan]Sample Vulnerable Python Code:[/bold cyan]")
     console.print(python_code)
-    
+
     console.print("\n[bold cyan]Sample Vulnerable JavaScript Code:[/bold cyan]")
     console.print(js_code)
 
@@ -746,7 +766,7 @@ function calculate(expression) {
     # Scan Python code
     console.print("\n🔍 [bold]Scanning Python Code...[/bold]")
     python_threats = ast_scanner.scan_code(python_code, Language.PYTHON, "demo.py")
-    
+
     # Scan JavaScript code
     console.print("\n🔍 [bold]Scanning JavaScript Code...[/bold]")
     js_threats = ast_scanner.scan_code(js_code, Language.JAVASCRIPT, "demo.js")
@@ -756,7 +776,9 @@ function calculate(expression) {
     _display_scan_results(all_threats, "demo")
 
     console.print("\n✅ [bold green]Demo completed![/bold green]")
-    console.print("Use 'adversary-mcp configure' to set up the server for production use.")
+    console.print(
+        "Use 'adversary-mcp configure' to set up the server for production use."
+    )
 
 
 @cli.command()
@@ -779,8 +801,10 @@ def _display_scan_results(threats, target):
         return
 
     # Summary
-    console.print(f"\n🚨 [bold red]Found {len(threats)} security threats in {target}[/bold red]")
-    
+    console.print(
+        f"\n🚨 [bold red]Found {len(threats)} security threats in {target}[/bold red]"
+    )
+
     # Count by severity
     severity_counts = {}
     for threat in threats:
@@ -791,7 +815,12 @@ def _display_scan_results(threats, target):
     for severity in ["critical", "high", "medium", "low"]:
         count = severity_counts.get(severity, 0)
         if count > 0:
-            color = {"critical": "bold red", "high": "red", "medium": "yellow", "low": "green"}[severity]
+            color = {
+                "critical": "bold red",
+                "high": "red",
+                "medium": "yellow",
+                "low": "green",
+            }[severity]
             summary_text += f"• {severity.capitalize()}: {count}\n"
 
     console.print(Panel(summary_text, title="Scan Summary", border_style="red"))
@@ -809,16 +838,20 @@ def _display_scan_results(threats, target):
         severity_color = {
             "low": "green",
             "medium": "yellow",
-            "high": "red", 
-            "critical": "bold red"
+            "high": "red",
+            "critical": "bold red",
         }.get(threat.severity.value, "white")
-        
+
         table.add_row(
             threat.file_path,
             str(threat.line_number),
             threat.rule_name,
             f"[{severity_color}]{threat.severity.value}[/{severity_color}]",
-            threat.description[:50] + "..." if len(threat.description) > 50 else threat.description
+            (
+                threat.description[:50] + "..."
+                if len(threat.description) > 50
+                else threat.description
+            ),
         )
 
     console.print(table)
@@ -828,34 +861,36 @@ def _save_results_to_file(threats, output_file):
     """Save scan results to a JSON file."""
     try:
         output_path = Path(output_file)
-        
+
         # Convert threats to serializable format
         results = []
         for threat in threats:
-            results.append({
-                "rule_id": threat.rule_id,
-                "rule_name": threat.rule_name,
-                "description": threat.description,
-                "category": threat.category.value,
-                "severity": threat.severity.value,
-                "file_path": threat.file_path,
-                "line_number": threat.line_number,
-                "column_number": threat.column_number,
-                "code_snippet": threat.code_snippet,
-                "function_name": threat.function_name,
-                "exploit_examples": threat.exploit_examples,
-                "remediation": threat.remediation,
-                "references": threat.references,
-                "cwe_id": threat.cwe_id,
-                "owasp_category": threat.owasp_category,
-                "confidence": threat.confidence
-            })
-        
+            results.append(
+                {
+                    "rule_id": threat.rule_id,
+                    "rule_name": threat.rule_name,
+                    "description": threat.description,
+                    "category": threat.category.value,
+                    "severity": threat.severity.value,
+                    "file_path": threat.file_path,
+                    "line_number": threat.line_number,
+                    "column_number": threat.column_number,
+                    "code_snippet": threat.code_snippet,
+                    "function_name": threat.function_name,
+                    "exploit_examples": threat.exploit_examples,
+                    "remediation": threat.remediation,
+                    "references": threat.references,
+                    "cwe_id": threat.cwe_id,
+                    "owasp_category": threat.owasp_category,
+                    "confidence": threat.confidence,
+                }
+            )
+
         with open(output_path, "w") as f:
             json.dump(results, f, indent=2)
-        
+
         console.print(f"✅ Results saved to {output_path}", style="green")
-        
+
     except Exception as e:
         console.print(f"❌ Failed to save results: {e}", style="red")
 
@@ -883,35 +918,40 @@ def watch():
 def start(directory: tuple, debounce: float):
     """Start the hot-reload service."""
     if not HOT_RELOAD_AVAILABLE:
-        console.print("❌ Hot-reload requires the 'watchdog' package. Install with: pip install watchdog", style="red")
+        console.print(
+            "❌ Hot-reload requires the 'watchdog' package. Install with: pip install watchdog",
+            style="red",
+        )
         sys.exit(1)
-        
+
     try:
         # Create threat engine
         threat_engine = ThreatEngine()
-        
+
         # Create hot-reload service
         if directory:
             custom_dirs = [Path(d) for d in directory]
         else:
             # Use user rules directory by default
             custom_dirs = [get_user_rules_directory()]
-            
+
         service = create_hot_reload_service(threat_engine, custom_dirs)
         service.set_debounce_time(debounce)
-        
+
         # Show initial status
         console.print("🔄 [bold]Starting Hot-Reload Service[/bold]")
         console.print(f"📁 Watching directories:")
         for watch_dir in service.watch_directories:
             console.print(f"  • {watch_dir}")
-            
+
         stats = threat_engine.get_rule_statistics()
-        console.print(f"📊 Loaded {stats['total_rules']} rules from {stats['loaded_files']} files")
-        
+        console.print(
+            f"📊 Loaded {stats['total_rules']} rules from {stats['loaded_files']} files"
+        )
+
         # Start the service daemon
         service.run_daemon()
-        
+
     except KeyboardInterrupt:
         console.print("\n👋 Hot-reload service stopped", style="yellow")
     except Exception as e:
@@ -930,48 +970,61 @@ def start(directory: tuple, debounce: float):
 def status(directory: tuple):
     """Show hot-reload service status."""
     if not HOT_RELOAD_AVAILABLE:
-        console.print("❌ Hot-reload requires the 'watchdog' package. Install with: pip install watchdog", style="red")
+        console.print(
+            "❌ Hot-reload requires the 'watchdog' package. Install with: pip install watchdog",
+            style="red",
+        )
         sys.exit(1)
-        
+
     try:
         # Create threat engine and service
         threat_engine = ThreatEngine()
         custom_dirs = [Path(d) for d in directory] if directory else None
         service = create_hot_reload_service(threat_engine, custom_dirs)
-        
+
         # Get status
         status_info = service.get_status()
-        
+
         # Display status
         status_text = f"**Service Status:** {'🟢 Running' if status_info['is_running'] else '🔴 Stopped'}\n"
-        status_text += f"**Watched Directories:** {len(status_info['watch_directories'])}\n"
+        status_text += (
+            f"**Watched Directories:** {len(status_info['watch_directories'])}\n"
+        )
         status_text += f"**Pending Reloads:** {status_info['pending_reloads']}\n"
         status_text += f"**Total Reloads:** {status_info['reload_count']}\n"
         status_text += f"**Debounce Time:** {status_info['debounce_seconds']} seconds\n"
-        
-        if status_info['last_reload_time']:
+
+        if status_info["last_reload_time"]:
             import datetime
-            last_reload = datetime.datetime.fromtimestamp(status_info['last_reload_time'])
-            status_text += f"**Last Reload:** {last_reload.strftime('%Y-%m-%d %H:%M:%S')}\n"
-        
+
+            last_reload = datetime.datetime.fromtimestamp(
+                status_info["last_reload_time"]
+            )
+            status_text += (
+                f"**Last Reload:** {last_reload.strftime('%Y-%m-%d %H:%M:%S')}\n"
+            )
+
         console.print(
             Panel(status_text, title="Hot-Reload Service Status", border_style="blue")
         )
-        
+
         # Show watched directories
-        if status_info['watch_directories']:
+        if status_info["watch_directories"]:
             console.print("\n[bold]Watched Directories:[/bold]")
-            for dir_path in status_info['watch_directories']:
+            for dir_path in status_info["watch_directories"]:
                 console.print(f"• {dir_path}")
-        
+
         # Show last reload files
-        if status_info['last_reload_files']:
+        if status_info["last_reload_files"]:
             console.print("\n[bold]Last Reload Files:[/bold]")
-            for file_path in status_info['last_reload_files']:
+            for file_path in status_info["last_reload_files"]:
                 console.print(f"• {file_path}")
-        
+
     except ImportError:
-        console.print("❌ Hot-reload requires the 'watchdog' package. Install with: pip install watchdog", style="red")
+        console.print(
+            "❌ Hot-reload requires the 'watchdog' package. Install with: pip install watchdog",
+            style="red",
+        )
         sys.exit(1)
     except Exception as e:
         console.print(f"❌ Failed to get hot-reload status: {e}", style="red")
@@ -989,41 +1042,51 @@ def status(directory: tuple):
 def test(directory: tuple):
     """Test hot-reload functionality by forcing a reload."""
     if not HOT_RELOAD_AVAILABLE:
-        console.print("❌ Hot-reload requires the 'watchdog' package. Install with: pip install watchdog", style="red")
+        console.print(
+            "❌ Hot-reload requires the 'watchdog' package. Install with: pip install watchdog",
+            style="red",
+        )
         sys.exit(1)
-        
+
     try:
         # Create threat engine and service
         threat_engine = ThreatEngine()
-        
+
         if directory:
             custom_dirs = [Path(d) for d in directory]
         else:
             # Use user rules directory by default
             custom_dirs = [get_user_rules_directory()]
-            
+
         service = create_hot_reload_service(threat_engine, custom_dirs)
-        
+
         # Show initial state
         console.print("🧪 [bold]Testing Hot-Reload Functionality[/bold]")
         console.print(f"📁 Watching directories:")
         for watch_dir in service.watch_directories:
             console.print(f"  • {watch_dir}")
-            
+
         stats = threat_engine.get_rule_statistics()
-        console.print(f"📊 Current: {stats['total_rules']} rules from {stats['loaded_files']} files")
-        
+        console.print(
+            f"📊 Current: {stats['total_rules']} rules from {stats['loaded_files']} files"
+        )
+
         # Force reload
         service.force_reload()
-        
+
         # Show final state
         stats = threat_engine.get_rule_statistics()
-        console.print(f"📊 After reload: {stats['total_rules']} rules from {stats['loaded_files']} files")
-        
+        console.print(
+            f"📊 After reload: {stats['total_rules']} rules from {stats['loaded_files']} files"
+        )
+
         console.print("✅ Hot-reload test completed successfully!", style="green")
-        
+
     except ImportError:
-        console.print("❌ Hot-reload requires the 'watchdog' package. Install with: pip install watchdog", style="red")
+        console.print(
+            "❌ Hot-reload requires the 'watchdog' package. Install with: pip install watchdog",
+            style="red",
+        )
         sys.exit(1)
     except Exception as e:
         console.print(f"❌ Hot-reload test failed: {e}", style="red")
@@ -1033,25 +1096,29 @@ def test(directory: tuple):
 def show_user_rules_directory():
     """Show the user's rules directory location."""
     user_rules_dir = get_user_rules_directory()
-    
+
     console.print(f"📁 [bold]User Rules Directory:[/bold] {user_rules_dir}")
     console.print(f"📂 Structure:")
     console.print(f"  • built-in/     - Core security rules")
     console.print(f"  • custom/       - User-defined rules")
     console.print(f"  • organization/ - Company/team rules")
     console.print(f"  • templates/    - Rule templates")
-    
+
     if user_rules_dir.exists():
         console.print(f"\n📊 Directory contents:")
         for subdir in ["built-in", "custom", "organization", "templates"]:
             subdir_path = user_rules_dir / subdir
             if subdir_path.exists():
-                rule_files = list(subdir_path.glob("*.yaml")) + list(subdir_path.glob("*.yml"))
+                rule_files = list(subdir_path.glob("*.yaml")) + list(
+                    subdir_path.glob("*.yml")
+                )
                 console.print(f"  • {subdir}/ ({len(rule_files)} files)")
                 for rule_file in rule_files:
                     console.print(f"    - {rule_file.name}")
     else:
-        console.print(f"\n⚠️  Directory does not exist yet. It will be created on first use.")
+        console.print(
+            f"\n⚠️  Directory does not exist yet. It will be created on first use."
+        )
 
 
 @cli.command()
