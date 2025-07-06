@@ -265,16 +265,22 @@ class CredentialManager:
 
         try:
             with open(self.config_file) as f:
-                encrypted_data = json.load(f)
+                data = json.load(f)
 
-            machine_id = self._get_machine_id()
-            config_json = self._decrypt_data(
-                encrypted_data["encrypted_data"],
-                encrypted_data["salt"],
-                machine_id,
-            )
+            # Check if this is an encrypted file (has encrypted_data and salt)
+            if "encrypted_data" in data and "salt" in data:
+                # Handle encrypted file
+                machine_id = self._get_machine_id()
+                config_json = self._decrypt_data(
+                    data["encrypted_data"],
+                    data["salt"],
+                    machine_id,
+                )
+                config_dict = json.loads(config_json)
+            else:
+                # Handle plain JSON file (backward compatibility)
+                config_dict = data
 
-            config_dict = json.loads(config_json)
             return SecurityConfig(**config_dict)
 
         except (
@@ -346,17 +352,20 @@ class CredentialManager:
         self._delete_file_config()
 
     def has_config(self) -> bool:
-        """Check if configuration exists.
+        """Check if configuration exists and can be loaded.
 
         Returns:
-            True if configuration exists, False otherwise
+            True if configuration exists and is valid, False otherwise
         """
         # Check keyring
         if self._try_keyring_retrieval() is not None:
             return True
 
-        # Check file
-        return self.config_file.exists()
+        # Check if file config can be loaded
+        if self._load_file_config() is not None:
+            return True
+            
+        return False
 
     def get_openai_api_key(self) -> Optional[str]:
         """Get OpenAI API key from configuration.
