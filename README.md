@@ -127,17 +127,19 @@ The **Model Context Protocol (MCP)** allows AI assistants like Cursor to access 
    ```
 
 2. **Configure Cursor IDE**
-   Add the following to your Cursor settings (`~/.cursor/config.json` or via Cursor Settings):
+   Create an MCP configuration file in one of these locations:
+   - **Project-specific**: `.cursor/mcp.json` (for this project only)
+   - **Global**: `~/.cursor/mcp.json` (for all projects)
+   
+   Add the following configuration:
    ```json
    {
-     "mcp": {
-       "servers": {
-         "adversary-security": {
-           "command": "adversary-mcp-server",
-           "args": [],
-           "env": {
-             "ADVERSARY_CONFIG_DIR": "~/.adversary-mcp"
-           }
+     "mcpServers": {
+       "adversary-security": {
+         "command": "adversary-mcp-server",
+         "args": [],
+         "env": {
+           "ADVERSARY_CONFIG_DIR": "~/.adversary-mcp"
          }
        }
      }
