@@ -1,0 +1,387 @@
+# Built-in Configuration Security Rules
+# These rules detect configuration and infrastructure security issues
+
+rules:
+  - id: "config_debug_enabled"
+    name: "Debug Mode Enabled"
+    description: "Application running in debug mode"
+    category: "configuration"
+    severity: "medium"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "DEBUG\\s*=\\s*True"
+      - type: "pattern"
+        value: "debug:\\s*true"
+      - type: "pattern"
+        value: "NODE_ENV.*development"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "Debug information disclosure"
+        description: "Stack traces and sensitive data"
+    
+    remediation: "Disable debug mode in production"
+    references:
+      - "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/"
+    cwe_id: "CWE-489"
+    owasp_category: "A05:2021 - Security Misconfiguration"
+
+  - id: "config_default_credentials"
+    name: "Default Credentials"
+    description: "Use of default or weak credentials"
+    category: "authentication"
+    severity: "high"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "password.*admin"
+        case_sensitive: false
+      - type: "pattern"
+        value: "password.*password"
+        case_sensitive: false
+      - type: "pattern"
+        value: "password.*123"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "admin:admin login"
+        description: "Default credential access"
+    
+    remediation: "Use strong, unique credentials"
+    references:
+      - "https://owasp.org/Top10/A07_2021-Identification_and_Authentication_Failures/"
+    cwe_id: "CWE-798"
+    owasp_category: "A07:2021 - Identification and Authentication Failures"
+
+  - id: "config_insecure_database"
+    name: "Insecure Database Configuration"
+    description: "Database connection without encryption"
+    category: "configuration"
+    severity: "medium"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "sslmode\\s*=\\s*disable"
+      - type: "pattern"
+        value: "ssl\\s*=\\s*false"
+      - type: "pattern"
+        value: "encrypt\\s*=\\s*false"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "Database traffic interception"
+        description: "Man-in-the-middle attack"
+    
+    remediation: "Enable SSL/TLS for database connections"
+    references:
+      - "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/"
+    cwe_id: "CWE-319"
+    owasp_category: "A02:2021 - Cryptographic Failures"
+
+  - id: "config_cors_misconfiguration"
+    name: "CORS Misconfiguration"
+    description: "Overly permissive CORS configuration"
+    category: "configuration"
+    severity: "medium"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "Access-Control-Allow-Origin.*\\*"
+      - type: "pattern"
+        value: "cors.*origin.*\\*"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "Cross-origin data theft"
+        description: "CORS bypass attack"
+    
+    remediation: "Use specific origins in CORS configuration"
+    references:
+      - "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/"
+    cwe_id: "CWE-942"
+    owasp_category: "A05:2021 - Security Misconfiguration"
+
+  - id: "config_missing_rate_limiting"
+    name: "Missing Rate Limiting"
+    description: "API endpoints without rate limiting"
+    category: "configuration"
+    severity: "medium"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "@app\\.route"
+      - type: "pattern"
+        value: "app\\.get\\("
+      - type: "pattern"
+        value: "app\\.post\\("
+    
+    exploit_templates:
+      - type: "payload"
+        template: "Brute force attack"
+        description: "API abuse"
+    
+    remediation: "Implement rate limiting"
+    references:
+      - "https://owasp.org/Top10/A07_2021-Identification_and_Authentication_Failures/"
+    cwe_id: "CWE-307"
+    owasp_category: "A07:2021 - Identification and Authentication Failures"
+
+  - id: "config_insecure_logging"
+    name: "Insecure Logging Configuration"
+    description: "Logging sensitive information"
+    category: "configuration"
+    severity: "medium"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "log.*password"
+      - type: "pattern"
+        value: "log.*secret"
+      - type: "pattern"
+        value: "console\\.log.*password"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "Log file password exposure"
+        description: "Credential disclosure"
+    
+    remediation: "Avoid logging sensitive data"
+    references:
+      - "https://owasp.org/Top10/A09_2021-Security_Logging_and_Monitoring_Failures/"
+    cwe_id: "CWE-532"
+    owasp_category: "A09:2021 - Security Logging and Monitoring Failures"
+
+  - id: "config_insecure_file_permissions"
+    name: "Insecure File Permissions"
+    description: "Files with overly permissive permissions"
+    category: "configuration"
+    severity: "medium"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "chmod.*777"
+      - type: "pattern"
+        value: "chmod.*666"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "Unauthorized file access"
+        description: "File permission abuse"
+    
+    remediation: "Use principle of least privilege"
+    references:
+      - "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/"
+    cwe_id: "CWE-732"
+    owasp_category: "A05:2021 - Security Misconfiguration"
+
+  - id: "config_exposed_admin_interface"
+    name: "Exposed Admin Interface"
+    description: "Admin interface accessible without authentication"
+    category: "configuration"
+    severity: "high"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "/admin"
+      - type: "pattern"
+        value: "/dashboard"
+      - type: "pattern"
+        value: "/management"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "Unauthorized admin access"
+        description: "Admin interface exposure"
+    
+    remediation: "Restrict admin interface access"
+    references:
+      - "https://owasp.org/Top10/A01_2021-Broken_Access_Control/"
+    cwe_id: "CWE-284"
+    owasp_category: "A01:2021 - Broken Access Control"
+
+  - id: "config_insecure_session_management"
+    name: "Insecure Session Management"
+    description: "Session configuration vulnerabilities"
+    category: "configuration"
+    severity: "medium"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "SESSION_COOKIE_SECURE\\s*=\\s*False"
+      - type: "pattern"
+        value: "secure:\\s*false"
+      - type: "pattern"
+        value: "httpOnly:\\s*false"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "Session hijacking"
+        description: "Cookie theft"
+    
+    remediation: "Configure secure session settings"
+    references:
+      - "https://owasp.org/Top10/A07_2021-Identification_and_Authentication_Failures/"
+    cwe_id: "CWE-614"
+    owasp_category: "A07:2021 - Identification and Authentication Failures"
+
+  - id: "config_missing_security_headers"
+    name: "Missing Security Headers"
+    description: "Important security headers not configured"
+    category: "configuration"
+    severity: "medium"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "app\\.run\\("
+      - type: "pattern"
+        value: "app\\.listen\\("
+    
+    exploit_templates:
+      - type: "payload"
+        template: "Security header bypass"
+        description: "Various client-side attacks"
+    
+    remediation: "Configure security headers: HSTS, CSP, X-Frame-Options"
+    references:
+      - "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/"
+    cwe_id: "CWE-16"
+    owasp_category: "A05:2021 - Security Misconfiguration"
+
+  - id: "config_insecure_tls_configuration"
+    name: "Insecure TLS Configuration"
+    description: "Weak TLS configuration"
+    category: "configuration"
+    severity: "high"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "ssl_version.*SSLv2"
+      - type: "pattern"
+        value: "ssl_version.*SSLv3"
+      - type: "pattern"
+        value: "ssl_version.*TLSv1"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "SSL/TLS downgrade attack"
+        description: "Protocol downgrade"
+    
+    remediation: "Use TLS 1.2 or higher"
+    references:
+      - "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/"
+    cwe_id: "CWE-326"
+    owasp_category: "A02:2021 - Cryptographic Failures"
+
+  - id: "config_environment_exposure"
+    name: "Environment Variable Exposure"
+    description: "Sensitive environment variables exposed"
+    category: "configuration"
+    severity: "medium"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "process\\.env"
+      - type: "pattern"
+        value: "os\\.environ"
+      - type: "pattern"
+        value: "getenv\\("
+    
+    exploit_templates:
+      - type: "payload"
+        template: "Environment variable disclosure"
+        description: "Sensitive data exposure"
+    
+    remediation: "Secure environment variable handling"
+    references:
+      - "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/"
+    cwe_id: "CWE-200"
+    owasp_category: "A05:2021 - Security Misconfiguration"
+
+  - id: "config_insecure_cookie_settings"
+    name: "Insecure Cookie Settings"
+    description: "Cookies configured without security attributes"
+    category: "configuration"
+    severity: "medium"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "set_cookie\\("
+      - type: "pattern"
+        value: "cookie\\("
+    
+    exploit_templates:
+      - type: "payload"
+        template: "Cookie theft via XSS"
+        description: "Session hijacking"
+    
+    remediation: "Set httpOnly, secure, and sameSite attributes"
+    references:
+      - "https://owasp.org/Top10/A07_2021-Identification_and_Authentication_Failures/"
+    cwe_id: "CWE-614"
+    owasp_category: "A07:2021 - Identification and Authentication Failures"
+
+  - id: "config_weak_jwt_configuration"
+    name: "Weak JWT Configuration"
+    description: "JWT configured with weak settings"
+    category: "configuration"
+    severity: "high"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "jwt.*secret.*test"
+      - type: "pattern"
+        value: "jwt.*secret.*123"
+      - type: "pattern"
+        value: "algorithm.*none"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "JWT signature bypass"
+        description: "Token manipulation"
+    
+    remediation: "Use strong JWT secrets and algorithms"
+    references:
+      - "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/"
+    cwe_id: "CWE-327"
+    owasp_category: "A02:2021 - Cryptographic Failures"
+
+  - id: "config_cloud_storage_public"
+    name: "Public Cloud Storage"
+    description: "Cloud storage buckets with public access"
+    category: "configuration"
+    severity: "high"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "public-read"
+      - type: "pattern"
+        value: "public-read-write"
+      - type: "pattern"
+        value: "AllUsers"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "Public bucket data exposure"
+        description: "Unauthorized data access"
+    
+    remediation: "Restrict bucket access to authorized users"
+    references:
+      - "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/"
+    cwe_id: "CWE-284"
+    owasp_category: "A05:2021 - Security Misconfiguration" 

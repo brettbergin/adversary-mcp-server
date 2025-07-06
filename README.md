@@ -20,7 +20,7 @@
 
 ## Overview
 
-Adversary MCP Server is a next-generation software security analysis platform that integrates seamlessly with modern development environments through the Model Context Protocol (MCP). Featuring dynamic YAML-based rule management, real-time hot-reload capabilities, and comprehensive CLI tools, it provides intelligent security analysis directly within your IDE workflow.
+Adversary MCP Server is a software security analysis platform that integrates seamlessly with modern development environments through the Model Context Protocol (MCP). Featuring dynamic YAML-based rule based signature management, real-time hot-reload capabilities, and comprehensive CLI tooling, it provides intelligent security analysis directly within your software development environment.
 
 ### Key Capabilities
 

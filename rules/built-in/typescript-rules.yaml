@@ -1,0 +1,247 @@
+# Built-in TypeScript Security Rules
+# These rules detect TypeScript-specific security vulnerabilities
+
+rules:
+  - id: "ts_type_assertion_unsafe"
+    name: "Unsafe Type Assertion"
+    description: "Using 'as any' or unsafe type assertions"
+    category: "type_safety"
+    severity: "medium"
+    languages: ["typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "as any"
+      - type: "pattern"
+        value: "as unknown"
+      - type: "pattern"
+        value: "<any>"
+    
+    exploit_templates:
+      - type: "typescript"
+        template: "const userInput = req.body as any"
+        description: "Bypassing type safety"
+    
+    remediation: "Use proper type guards and validation"
+    references:
+      - "https://owasp.org/Top10/A03_2021-Injection/"
+    cwe_id: "CWE-843"
+    owasp_category: "A03:2021 - Injection"
+
+  - id: "ts_non_null_assertion_unsafe"
+    name: "Unsafe Non-Null Assertion"
+    description: "Using non-null assertion operator without proper validation"
+    category: "type_safety"
+    severity: "low"
+    languages: ["typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "!\\s*\\."
+      - type: "pattern"
+        value: "!\\s*\\["
+    
+    exploit_templates:
+      - type: "typescript"
+        template: "const value = userInput!.property"
+        description: "Runtime null reference error"
+    
+    remediation: "Use proper null checks and optional chaining"
+    references:
+      - "https://owasp.org/Top10/A09_2021-Security_Logging_and_Monitoring_Failures/"
+    cwe_id: "CWE-476"
+    owasp_category: "A09:2021 - Security Logging and Monitoring Failures"
+
+  - id: "ts_module_declaration_unsafe"
+    name: "Unsafe Module Declaration"
+    description: "Global module declarations that can override built-ins"
+    category: "type_safety"
+    severity: "medium"
+    languages: ["typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "declare global"
+      - type: "pattern"
+        value: "declare module"
+    
+    exploit_templates:
+      - type: "typescript"
+        template: "declare global { interface String { evil(): void } }"
+        description: "Global prototype pollution"
+    
+    remediation: "Avoid global declarations and use proper module structure"
+    references:
+      - "https://owasp.org/Top10/A08_2021-Software_and_Data_Integrity_Failures/"
+    cwe_id: "CWE-1321"
+    owasp_category: "A08:2021 - Software and Data Integrity Failures"
+
+  - id: "ts_decorator_unsafe"
+    name: "Unsafe Decorator Usage"
+    description: "Using decorators that can execute arbitrary code"
+    category: "injection"
+    severity: "medium"
+    languages: ["typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "@\\w+\\(.*eval.*\\)"
+      - type: "pattern"
+        value: "@\\w+\\(.*Function.*\\)"
+    
+    exploit_templates:
+      - type: "typescript"
+        template: "@Component(eval('malicious code'))"
+        description: "Code injection via decorator"
+    
+    remediation: "Validate decorator parameters"
+    references:
+      - "https://owasp.org/Top10/A03_2021-Injection/"
+    cwe_id: "CWE-94"
+    owasp_category: "A03:2021 - Injection"
+
+  - id: "ts_interface_pollution"
+    name: "Interface Pollution"
+    description: "Extending built-in interfaces unsafely"
+    category: "type_safety"
+    severity: "low"
+    languages: ["typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "interface Object"
+      - type: "pattern"
+        value: "interface Array"
+      - type: "pattern"
+        value: "interface String"
+    
+    exploit_templates:
+      - type: "typescript"
+        template: "interface Object { evil: () => void }"
+        description: "Built-in interface pollution"
+    
+    remediation: "Use namespaces or avoid extending built-ins"
+    references:
+      - "https://owasp.org/Top10/A08_2021-Software_and_Data_Integrity_Failures/"
+    cwe_id: "CWE-1321"
+    owasp_category: "A08:2021 - Software and Data Integrity Failures"
+
+  - id: "ts_any_type_overuse"
+    name: "Excessive Any Type Usage"
+    description: "Overuse of 'any' type defeating type safety"
+    category: "type_safety"
+    severity: "low"
+    languages: ["typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: ":\\s*any"
+      - type: "pattern"
+        value: "Array<any>"
+    
+    exploit_templates:
+      - type: "typescript"
+        template: "function process(data: any): any"
+        description: "Loss of type safety"
+    
+    remediation: "Use specific types or generic constraints"
+    references:
+      - "https://owasp.org/Top10/A08_2021-Software_and_Data_Integrity_Failures/"
+    cwe_id: "CWE-843"
+    owasp_category: "A08:2021 - Software and Data Integrity Failures"
+
+  - id: "ts_unsafe_cast"
+    name: "Unsafe Type Casting"
+    description: "Casting to incompatible types"
+    category: "type_safety"
+    severity: "medium"
+    languages: ["typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "as\\s+\\w+\\[\\]"
+      - type: "pattern"
+        value: "as\\s+{.*}"
+    
+    exploit_templates:
+      - type: "typescript"
+        template: "const admin = user as AdminUser"
+        description: "Unsafe privilege escalation"
+    
+    remediation: "Use type guards and proper validation"
+    references:
+      - "https://owasp.org/Top10/A01_2021-Broken_Access_Control/"
+    cwe_id: "CWE-843"
+    owasp_category: "A01:2021 - Broken Access Control"
+
+  - id: "ts_computed_property_unsafe"
+    name: "Unsafe Computed Property Access"
+    description: "Using computed properties without validation"
+    category: "access_control"
+    severity: "medium"
+    languages: ["typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "\\[.*\\+.*\\]"
+      - type: "pattern"
+        value: "\\[.*\\$.*\\]"
+    
+    exploit_templates:
+      - type: "typescript"
+        template: "obj[userInput + 'Property']"
+        description: "Property access bypass"
+    
+    remediation: "Validate property names against whitelist"
+    references:
+      - "https://owasp.org/Top10/A01_2021-Broken_Access_Control/"
+    cwe_id: "CWE-915"
+    owasp_category: "A01:2021 - Broken Access Control"
+
+  - id: "ts_namespace_pollution"
+    name: "Namespace Pollution"
+    description: "Polluting global namespace"
+    category: "type_safety"
+    severity: "low"
+    languages: ["typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "namespace\\s+\\w+\\s*{"
+      - type: "pattern"
+        value: "module\\s+\\w+\\s*{"
+    
+    exploit_templates:
+      - type: "typescript"
+        template: "namespace eval { export const run = eval; }"
+        description: "Namespace pollution"
+    
+    remediation: "Use ES modules instead of namespaces"
+    references:
+      - "https://owasp.org/Top10/A08_2021-Software_and_Data_Integrity_Failures/"
+    cwe_id: "CWE-1321"
+    owasp_category: "A08:2021 - Software and Data Integrity Failures"
+
+  - id: "ts_generic_constraint_bypass"
+    name: "Generic Constraint Bypass"
+    description: "Using generic types to bypass constraints"
+    category: "type_safety"
+    severity: "medium"
+    languages: ["typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "<T extends any>"
+      - type: "pattern"
+        value: "<T = any>"
+    
+    exploit_templates:
+      - type: "typescript"
+        template: "function unsafe<T extends any>(input: T): T"
+        description: "Generic constraint bypass"
+    
+    remediation: "Use proper generic constraints"
+    references:
+      - "https://owasp.org/Top10/A08_2021-Software_and_Data_Integrity_Failures/"
+    cwe_id: "CWE-843"
+    owasp_category: "A08:2021 - Software and Data Integrity Failures" 

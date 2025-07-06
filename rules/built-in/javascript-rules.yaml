@@ -44,4 +44,395 @@ rules:
     remediation: "Never use eval() with user input. Use JSON.parse() for data"
     references:
       - "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/eval"
-    cwe_id: "CWE-94" 
+    cwe_id: "CWE-94"
+
+  - id: "js_prototype_pollution"
+    name: "Prototype Pollution"
+    description: "Unsafe object merge that can pollute prototype"
+    category: "injection"
+    severity: "high"
+    languages: ["javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "\\.__proto__\\s*="
+      - type: "pattern"
+        value: "\\['__proto__'\\]\\s*="
+      - type: "pattern"
+        value: "merge\\(.*\\)"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "{\"__proto__\": {\"isAdmin\": true}}"
+        description: "Prototype pollution payload"
+    
+    remediation: "Use Object.create(null) and validate object keys"
+    references:
+      - "https://owasp.org/Top10/A08_2021-Software_and_Data_Integrity_Failures/"
+    cwe_id: "CWE-1321"
+
+  - id: "js_nosql_injection"
+    name: "NoSQL Injection"
+    description: "User input used directly in NoSQL queries"
+    category: "injection"
+    severity: "high"
+    languages: ["javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "\\$where.*\\+.*"
+      - type: "pattern"
+        value: "find\\(.*\\+.*\\)"
+      - type: "pattern"
+        value: "findOne\\(.*\\+.*\\)"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "{$where: \"this.username == 'admin'\"}"
+        description: "NoSQL injection payload"
+    
+    remediation: "Use parameterized queries and input validation"
+    references:
+      - "https://owasp.org/Top10/A03_2021-Injection/"
+    cwe_id: "CWE-943"
+
+  - id: "js_open_redirect"
+    name: "Open Redirect"
+    description: "Unvalidated redirect using user input"
+    category: "redirect"
+    severity: "medium"
+    languages: ["javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "location\\.href\\s*=.*"
+      - type: "pattern"
+        value: "window\\.location\\s*=.*"
+      - type: "pattern"
+        value: "location\\.replace\\(.*\\)"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "javascript:alert('XSS')"
+        description: "JavaScript protocol injection"
+    
+    remediation: "Validate redirect URLs against whitelist"
+    references:
+      - "https://owasp.org/Top10/A01_2021-Broken_Access_Control/"
+    cwe_id: "CWE-601"
+
+  - id: "js_insecure_randomness"
+    name: "Insecure Random Number Generation"
+    description: "Using Math.random() for security purposes"
+    category: "cryptography"
+    severity: "medium"
+    languages: ["javascript", "typescript"]
+    
+    conditions:
+      - type: "function_call"
+        value: ["Math.random"]
+    
+    exploit_templates:
+      - type: "javascript"
+        template: "Math.random().toString(36).substr(2, 9)"
+        description: "Predictable token generation"
+    
+    remediation: "Use crypto.getRandomValues() for cryptographically secure random numbers"
+    references:
+      - "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/"
+    cwe_id: "CWE-338"
+
+  - id: "js_hardcoded_secrets"
+    name: "Hardcoded Secrets"
+    description: "Hardcoded API keys, passwords, or secrets"
+    category: "secrets"
+    severity: "high"
+    languages: ["javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "apiKey\\s*[:=]\\s*['\"][A-Za-z0-9]{20,}['\"]"
+        case_sensitive: false
+      - type: "pattern"
+        value: "password\\s*[:=]\\s*['\"][^'\"]{5,}['\"]"
+        case_sensitive: false
+    
+    exploit_templates:
+      - type: "payload"
+        template: "const apiKey = 'sk-1234567890abcdef'"
+        description: "Hardcoded API key"
+    
+    remediation: "Use environment variables for secrets"
+    references:
+      - "https://owasp.org/Top10/A07_2021-Identification_and_Authentication_Failures/"
+    cwe_id: "CWE-798"
+
+  - id: "js_unsafe_innerhtml"
+    name: "Unsafe innerHTML Usage"
+    description: "innerHTML used with potentially unsafe content"
+    category: "xss"
+    severity: "high"
+    languages: ["javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "innerHTML\\s*=\\s*.*\\+.*"
+      - type: "pattern"
+        value: "innerHTML\\s*\\+=.*"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "<img src=x onerror=alert('XSS')>"
+        description: "XSS via innerHTML"
+    
+    remediation: "Use textContent or DOMPurify for sanitization"
+    references:
+      - "https://owasp.org/Top10/A03_2021-Injection/"
+    cwe_id: "CWE-79"
+
+  - id: "js_weak_jwt_secret"
+    name: "Weak JWT Secret"
+    description: "JWT signed with weak or hardcoded secret"
+    category: "cryptography"
+    severity: "high"
+    languages: ["javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "jwt\\.sign\\(.*['\"][^'\"]{1,8}['\"].*\\)"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "jwt.sign(payload, 'secret')"
+        description: "Weak JWT secret"
+    
+    remediation: "Use strong, randomly generated secrets"
+    references:
+      - "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/"
+    cwe_id: "CWE-326"
+
+  - id: "js_regex_dos"
+    name: "Regular Expression DoS"
+    description: "Regular expression vulnerable to ReDoS attacks"
+    category: "dos"
+    severity: "medium"
+    languages: ["javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "\\(.*\\+.*\\)\\*"
+      - type: "pattern"
+        value: "\\(.*\\*.*\\)\\+"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa!"
+        description: "ReDoS payload"
+    
+    remediation: "Use atomic grouping or possessive quantifiers"
+    references:
+      - "https://owasp.org/Top10/A06_2021-Vulnerable_and_Outdated_Components/"
+    cwe_id: "CWE-1333"
+
+  - id: "js_unsafe_object_assign"
+    name: "Unsafe Object Assignment"
+    description: "Object.assign() with user input can cause prototype pollution"
+    category: "injection"
+    severity: "medium"
+    languages: ["javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "Object\\.assign\\(.*\\)"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "Object.assign({}, userInput)"
+        description: "Prototype pollution via Object.assign"
+    
+    remediation: "Validate object keys and use Object.create(null)"
+    references:
+      - "https://owasp.org/Top10/A08_2021-Software_and_Data_Integrity_Failures/"
+    cwe_id: "CWE-1321"
+
+  - id: "js_insecure_cors"
+    name: "Insecure CORS Configuration"
+    description: "CORS configured with overly permissive settings"
+    category: "configuration"
+    severity: "medium"
+    languages: ["javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "Access-Control-Allow-Origin.*\\*"
+      - type: "pattern"
+        value: "Access-Control-Allow-Credentials.*true"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "Access-Control-Allow-Origin: *"
+        description: "CORS misconfiguration"
+    
+    remediation: "Use specific origins instead of wildcard"
+    references:
+      - "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/"
+    cwe_id: "CWE-942"
+
+  - id: "js_path_traversal"
+    name: "Path Traversal"
+    description: "User input used in file paths without validation"
+    category: "path_traversal"
+    severity: "high"
+    languages: ["javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "fs\\.readFile\\(.*\\+.*\\)"
+      - type: "pattern"
+        value: "fs\\.writeFile\\(.*\\+.*\\)"
+      - type: "pattern"
+        value: "path\\.join\\(.*\\+.*\\)"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "../../../etc/passwd"
+        description: "Path traversal payload"
+    
+    remediation: "Validate and sanitize file paths"
+    references:
+      - "https://owasp.org/Top10/A01_2021-Broken_Access_Control/"
+    cwe_id: "CWE-22"
+
+  - id: "js_sql_injection"
+    name: "SQL Injection"
+    description: "User input concatenated directly into SQL queries"
+    category: "injection"
+    severity: "high"
+    languages: ["javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "query\\(.*\\+.*\\)"
+      - type: "pattern"
+        value: "execute\\(.*\\+.*\\)"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "' OR '1'='1' --"
+        description: "SQL injection payload"
+    
+    remediation: "Use parameterized queries"
+    references:
+      - "https://owasp.org/Top10/A03_2021-Injection/"
+    cwe_id: "CWE-89"
+
+  - id: "js_csrf_missing"
+    name: "Missing CSRF Protection"
+    description: "State-changing operations without CSRF protection"
+    category: "csrf"
+    severity: "medium"
+    languages: ["javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "app\\.post\\(.*\\)"
+      - type: "pattern"
+        value: "app\\.put\\(.*\\)"
+      - type: "pattern"
+        value: "app\\.delete\\(.*\\)"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "<form method='POST' action='/delete'>"
+        description: "CSRF attack"
+    
+    remediation: "Implement CSRF tokens"
+    references:
+      - "https://owasp.org/Top10/A01_2021-Broken_Access_Control/"
+    cwe_id: "CWE-352"
+
+  - id: "js_cookie_insecure"
+    name: "Insecure Cookie Configuration"
+    description: "Cookies set without secure flags"
+    category: "configuration"
+    severity: "medium"
+    languages: ["javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "cookie\\(.*\\)"
+      - type: "pattern"
+        value: "setCookie\\(.*\\)"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "document.cookie = 'session=123'"
+        description: "Insecure cookie"
+    
+    remediation: "Set httpOnly, secure, and sameSite flags"
+    references:
+      - "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/"
+    cwe_id: "CWE-614"
+
+  - id: "js_command_injection"
+    name: "Command Injection"
+    description: "User input passed to system commands"
+    category: "injection"
+    severity: "critical"
+    languages: ["javascript", "typescript"]
+    
+    conditions:
+      - type: "function_call"
+        value: ["exec", "spawn", "execSync"]
+    
+    exploit_templates:
+      - type: "payload"
+        template: "; cat /etc/passwd"
+        description: "Command injection payload"
+    
+    remediation: "Use execFile() and validate input"
+    references:
+      - "https://owasp.org/Top10/A03_2021-Injection/"
+    cwe_id: "CWE-78"
+
+  - id: "js_deserialization_unsafe"
+    name: "Unsafe Deserialization"
+    description: "Deserializing untrusted data"
+    category: "deserialization"
+    severity: "high"
+    languages: ["javascript", "typescript"]
+    
+    conditions:
+      - type: "function_call"
+        value: ["JSON.parse", "eval", "vm.runInNewContext"]
+    
+    exploit_templates:
+      - type: "payload"
+        template: "JSON.parse('{\"__proto__\": {\"isAdmin\": true}}')"
+        description: "Deserialization attack"
+    
+    remediation: "Validate JSON structure and use safe parsing"
+    references:
+      - "https://owasp.org/Top10/A08_2021-Software_and_Data_Integrity_Failures/"
+    cwe_id: "CWE-502"
+
+  - id: "js_express_trust_proxy"
+    name: "Express Trust Proxy Misconfiguration"
+    description: "Express trust proxy set to true without validation"
+    category: "configuration"
+    severity: "medium"
+    languages: ["javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "trust proxy.*true"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "X-Forwarded-For: 127.0.0.1"
+        description: "IP spoofing"
+    
+    remediation: "Configure trust proxy with specific values"
+    references:
+      - "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/"
+    cwe_id: "CWE-346" 

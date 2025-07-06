@@ -1,0 +1,363 @@
+# Built-in Cryptographic Security Rules
+# These rules detect cryptographic vulnerabilities across multiple languages
+
+rules:
+  - id: "crypto_weak_hash_md5"
+    name: "MD5 Hash Algorithm"
+    description: "Use of cryptographically weak MD5 hash algorithm"
+    category: "cryptography"
+    severity: "medium"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "function_call"
+        value: ["md5", "hashlib.md5", "crypto.createHash('md5')"]
+      - type: "pattern"
+        value: "MD5|md5"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "Collision attack on MD5"
+        description: "MD5 collision vulnerability"
+    
+    remediation: "Use SHA-256 or stronger hash functions"
+    references:
+      - "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/"
+    cwe_id: "CWE-327"
+    owasp_category: "A02:2021 - Cryptographic Failures"
+
+  - id: "crypto_weak_hash_sha1"
+    name: "SHA-1 Hash Algorithm"
+    description: "Use of cryptographically weak SHA-1 hash algorithm"
+    category: "cryptography"
+    severity: "medium"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "function_call"
+        value: ["sha1", "hashlib.sha1", "crypto.createHash('sha1')"]
+      - type: "pattern"
+        value: "SHA1|sha1"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "SHAttered attack on SHA-1"
+        description: "SHA-1 collision vulnerability"
+    
+    remediation: "Use SHA-256 or stronger hash functions"
+    references:
+      - "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/"
+    cwe_id: "CWE-327"
+    owasp_category: "A02:2021 - Cryptographic Failures"
+
+  - id: "crypto_weak_cipher_des"
+    name: "DES Encryption"
+    description: "Use of weak DES encryption algorithm"
+    category: "cryptography"
+    severity: "high"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "DES|des"
+      - type: "function_call"
+        value: ["DES.new", "crypto.createCipher('des')"]
+    
+    exploit_templates:
+      - type: "payload"
+        template: "DES brute force attack"
+        description: "DES key exhaustion"
+    
+    remediation: "Use AES-256 or other strong encryption algorithms"
+    references:
+      - "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/"
+    cwe_id: "CWE-327"
+    owasp_category: "A02:2021 - Cryptographic Failures"
+
+  - id: "crypto_weak_cipher_rc4"
+    name: "RC4 Encryption"
+    description: "Use of weak RC4 stream cipher"
+    category: "cryptography"
+    severity: "high"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "RC4|rc4"
+      - type: "function_call"
+        value: ["ARC4.new", "crypto.createCipher('rc4')"]
+    
+    exploit_templates:
+      - type: "payload"
+        template: "RC4 bias attack"
+        description: "RC4 statistical biases"
+    
+    remediation: "Use AES-256 or other strong encryption algorithms"
+    references:
+      - "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/"
+    cwe_id: "CWE-327"
+    owasp_category: "A02:2021 - Cryptographic Failures"
+
+  - id: "crypto_hardcoded_key"
+    name: "Hardcoded Cryptographic Key"
+    description: "Cryptographic key hardcoded in source code"
+    category: "secrets"
+    severity: "critical"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "key\\s*=\\s*['\"][A-Za-z0-9+/]{16,}['\"]"
+      - type: "pattern"
+        value: "secret\\s*=\\s*['\"][A-Za-z0-9+/]{16,}['\"]"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "const key = 'abcdef1234567890'"
+        description: "Hardcoded encryption key"
+    
+    remediation: "Use secure key management systems"
+    references:
+      - "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/"
+    cwe_id: "CWE-798"
+    owasp_category: "A02:2021 - Cryptographic Failures"
+
+  - id: "crypto_weak_key_generation"
+    name: "Weak Key Generation"
+    description: "Using weak random number generators for key generation"
+    category: "cryptography"
+    severity: "high"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "random\\(\\).*key"
+      - type: "pattern"
+        value: "Math\\.random\\(\\).*key"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "const key = Math.random().toString(16)"
+        description: "Predictable key generation"
+    
+    remediation: "Use cryptographically secure random number generators"
+    references:
+      - "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/"
+    cwe_id: "CWE-338"
+    owasp_category: "A02:2021 - Cryptographic Failures"
+
+  - id: "crypto_ecb_mode"
+    name: "ECB Encryption Mode"
+    description: "Use of insecure ECB encryption mode"
+    category: "cryptography"
+    severity: "medium"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "ECB|ecb"
+      - type: "function_call"
+        value: ["MODE_ECB", "createCipher"]
+    
+    exploit_templates:
+      - type: "payload"
+        template: "ECB pattern analysis"
+        description: "ECB mode pattern leakage"
+    
+    remediation: "Use CBC, GCM, or other secure modes"
+    references:
+      - "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/"
+    cwe_id: "CWE-327"
+    owasp_category: "A02:2021 - Cryptographic Failures"
+
+  - id: "crypto_no_salt"
+    name: "Password Hashing Without Salt"
+    description: "Password hashing without salt"
+    category: "cryptography"
+    severity: "medium"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "hash\\(password\\)"
+      - type: "pattern"
+        value: "hashlib\\..*\\(password\\)"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "Rainbow table attack"
+        description: "Precomputed hash attack"
+    
+    remediation: "Use bcrypt, scrypt, or PBKDF2 with salt"
+    references:
+      - "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/"
+    cwe_id: "CWE-759"
+    owasp_category: "A02:2021 - Cryptographic Failures"
+
+  - id: "crypto_weak_pbkdf2"
+    name: "Weak PBKDF2 Configuration"
+    description: "PBKDF2 with insufficient iterations"
+    category: "cryptography"
+    severity: "medium"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "pbkdf2.*iterations?\\s*=\\s*[1-9]\\d{0,3}"
+      - type: "pattern"
+        value: "PBKDF2.*[1-9]\\d{0,3}"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "Low iteration brute force"
+        description: "Fast password cracking"
+    
+    remediation: "Use at least 100,000 iterations for PBKDF2"
+    references:
+      - "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/"
+    cwe_id: "CWE-916"
+    owasp_category: "A02:2021 - Cryptographic Failures"
+
+  - id: "crypto_rsa_weak_key"
+    name: "Weak RSA Key Size"
+    description: "RSA key size less than 2048 bits"
+    category: "cryptography"
+    severity: "medium"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "RSA.*1024|RSA.*512"
+      - type: "pattern"
+        value: "generate.*1024|generate.*512"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "RSA factorization attack"
+        description: "Weak key factorization"
+    
+    remediation: "Use RSA keys of 2048 bits or larger"
+    references:
+      - "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/"
+    cwe_id: "CWE-326"
+    owasp_category: "A02:2021 - Cryptographic Failures"
+
+  - id: "crypto_ssl_weak_version"
+    name: "Weak SSL/TLS Version"
+    description: "Use of weak SSL/TLS versions"
+    category: "cryptography"
+    severity: "high"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "SSLv2|SSLv3|TLSv1\\.0|TLSv1\\.1"
+      - type: "pattern"
+        value: "ssl_version.*SSL|ssl_version.*TLS"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "POODLE/BEAST attack"
+        description: "SSL/TLS downgrade attack"
+    
+    remediation: "Use TLS 1.2 or higher"
+    references:
+      - "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/"
+    cwe_id: "CWE-326"
+    owasp_category: "A02:2021 - Cryptographic Failures"
+
+  - id: "crypto_weak_random_seed"
+    name: "Weak Random Seed"
+    description: "Using predictable values for random seed"
+    category: "cryptography"
+    severity: "medium"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "seed\\(\\d+\\)"
+      - type: "pattern"
+        value: "srand\\(\\d+\\)"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "seed(123456)"
+        description: "Predictable random sequence"
+    
+    remediation: "Use entropy-based seeding"
+    references:
+      - "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/"
+    cwe_id: "CWE-336"
+    owasp_category: "A02:2021 - Cryptographic Failures"
+
+  - id: "crypto_iv_reuse"
+    name: "IV/Nonce Reuse"
+    description: "Reusing initialization vectors or nonces"
+    category: "cryptography"
+    severity: "high"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "iv\\s*=\\s*['\"][0-9a-fA-F]{16,}['\"]"
+      - type: "pattern"
+        value: "nonce\\s*=\\s*['\"][0-9a-fA-F]{16,}['\"]"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "IV reuse attack"
+        description: "Two-time pad attack"
+    
+    remediation: "Generate random IV/nonce for each encryption"
+    references:
+      - "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/"
+    cwe_id: "CWE-329"
+    owasp_category: "A02:2021 - Cryptographic Failures"
+
+  - id: "crypto_jwt_none_algorithm"
+    name: "JWT None Algorithm"
+    description: "JWT using 'none' algorithm"
+    category: "cryptography"
+    severity: "critical"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "alg.*none"
+      - type: "pattern"
+        value: "algorithm.*none"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "JWT with alg: none"
+        description: "Unsigned JWT token"
+    
+    remediation: "Use strong JWT signing algorithms"
+    references:
+      - "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/"
+    cwe_id: "CWE-347"
+    owasp_category: "A02:2021 - Cryptographic Failures"
+
+  - id: "crypto_constant_time_comparison"
+    name: "Non-Constant Time Comparison"
+    description: "String comparison vulnerable to timing attacks"
+    category: "cryptography"
+    severity: "low"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "hash\\s*==\\s*.*"
+      - type: "pattern"
+        value: "digest\\s*==\\s*.*"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "Timing attack on hash comparison"
+        description: "Timing side-channel attack"
+    
+    remediation: "Use constant-time comparison functions"
+    references:
+      - "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/"
+    cwe_id: "CWE-208"
+    owasp_category: "A02:2021 - Cryptographic Failures" 

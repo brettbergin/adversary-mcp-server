@@ -1,0 +1,397 @@
+# Built-in Web Security Rules
+# These rules detect web-specific security vulnerabilities
+
+rules:
+  - id: "web_xss_reflected"
+    name: "Reflected XSS"
+    description: "User input reflected in response without sanitization"
+    category: "xss"
+    severity: "high"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "response.*request\\."
+      - type: "pattern"
+        value: "echo.*\\$_GET"
+      - type: "pattern"
+        value: "print.*request\\."
+    
+    exploit_templates:
+      - type: "payload"
+        template: "<script>alert('XSS')</script>"
+        description: "Reflected XSS payload"
+    
+    remediation: "Sanitize and encode user input before output"
+    references:
+      - "https://owasp.org/Top10/A03_2021-Injection/"
+    cwe_id: "CWE-79"
+    owasp_category: "A03:2021 - Injection"
+
+  - id: "web_xss_stored"
+    name: "Stored XSS"
+    description: "User input stored and displayed without sanitization"
+    category: "xss"
+    severity: "critical"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "save.*request\\."
+      - type: "pattern"
+        value: "store.*input"
+      - type: "pattern"
+        value: "insert.*\\$_POST"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "<img src=x onerror=alert('Stored XSS')>"
+        description: "Stored XSS payload"
+    
+    remediation: "Sanitize input before storage and output"
+    references:
+      - "https://owasp.org/Top10/A03_2021-Injection/"
+    cwe_id: "CWE-79"
+    owasp_category: "A03:2021 - Injection"
+
+  - id: "web_csrf_missing_protection"
+    name: "Missing CSRF Protection"
+    description: "State-changing operations without CSRF protection"
+    category: "csrf"
+    severity: "medium"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "@app\\.route.*POST"
+      - type: "pattern"
+        value: "app\\.post\\("
+      - type: "pattern"
+        value: "router\\.post\\("
+    
+    exploit_templates:
+      - type: "payload"
+        template: "<form method='POST' action='/transfer'><input name='amount' value='1000'></form>"
+        description: "CSRF attack form"
+    
+    remediation: "Implement CSRF tokens"
+    references:
+      - "https://owasp.org/Top10/A01_2021-Broken_Access_Control/"
+    cwe_id: "CWE-352"
+    owasp_category: "A01:2021 - Broken Access Control"
+
+  - id: "web_clickjacking_no_framebusting"
+    name: "Missing Clickjacking Protection"
+    description: "No X-Frame-Options or CSP frame-ancestors directive"
+    category: "clickjacking"
+    severity: "medium"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "render_template\\("
+      - type: "pattern"
+        value: "response\\.send\\("
+    
+    exploit_templates:
+      - type: "payload"
+        template: "<iframe src='victim.com'></iframe>"
+        description: "Clickjacking attack"
+    
+    remediation: "Set X-Frame-Options or CSP frame-ancestors"
+    references:
+      - "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/"
+    cwe_id: "CWE-1021"
+    owasp_category: "A05:2021 - Security Misconfiguration"
+
+  - id: "web_missing_content_type"
+    name: "Missing Content-Type Header"
+    description: "Response without proper Content-Type header"
+    category: "headers"
+    severity: "low"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "response\\."
+      - type: "pattern"
+        value: "res\\."
+    
+    exploit_templates:
+      - type: "payload"
+        template: "MIME type confusion attack"
+        description: "Content type sniffing"
+    
+    remediation: "Set explicit Content-Type headers"
+    references:
+      - "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/"
+    cwe_id: "CWE-16"
+    owasp_category: "A05:2021 - Security Misconfiguration"
+
+  - id: "web_missing_security_headers"
+    name: "Missing Security Headers"
+    description: "Missing important security headers"
+    category: "headers"
+    severity: "medium"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "response\\."
+      - type: "pattern"
+        value: "res\\."
+    
+    exploit_templates:
+      - type: "payload"
+        template: "Various header-based attacks"
+        description: "Security header bypass"
+    
+    remediation: "Add security headers: HSTS, CSP, X-Content-Type-Options"
+    references:
+      - "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/"
+    cwe_id: "CWE-16"
+    owasp_category: "A05:2021 - Security Misconfiguration"
+
+  - id: "web_session_fixation"
+    name: "Session Fixation"
+    description: "Session ID not regenerated after login"
+    category: "session"
+    severity: "medium"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "login.*session"
+      - type: "pattern"
+        value: "authenticate.*session"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "Fixed session ID attack"
+        description: "Session fixation attack"
+    
+    remediation: "Regenerate session ID after authentication"
+    references:
+      - "https://owasp.org/Top10/A07_2021-Identification_and_Authentication_Failures/"
+    cwe_id: "CWE-384"
+    owasp_category: "A07:2021 - Identification and Authentication Failures"
+
+  - id: "web_insecure_session_cookie"
+    name: "Insecure Session Cookie"
+    description: "Session cookie without secure attributes"
+    category: "session"
+    severity: "medium"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "set_cookie\\("
+      - type: "pattern"
+        value: "cookie\\("
+    
+    exploit_templates:
+      - type: "payload"
+        template: "Session hijacking via insecure cookie"
+        description: "Cookie theft"
+    
+    remediation: "Set httpOnly, secure, and sameSite attributes"
+    references:
+      - "https://owasp.org/Top10/A07_2021-Identification_and_Authentication_Failures/"
+    cwe_id: "CWE-614"
+    owasp_category: "A07:2021 - Identification and Authentication Failures"
+
+  - id: "web_directory_traversal"
+    name: "Directory Traversal"
+    description: "User input used in file paths"
+    category: "path_traversal"
+    severity: "high"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "send_file\\(.*request\\."
+      - type: "pattern"
+        value: "sendFile\\(.*req\\."
+    
+    exploit_templates:
+      - type: "payload"
+        template: "../../../../etc/passwd"
+        description: "Directory traversal attack"
+    
+    remediation: "Validate and sanitize file paths"
+    references:
+      - "https://owasp.org/Top10/A01_2021-Broken_Access_Control/"
+    cwe_id: "CWE-22"
+    owasp_category: "A01:2021 - Broken Access Control"
+
+  - id: "web_file_upload_unrestricted"
+    name: "Unrestricted File Upload"
+    description: "File upload without proper validation"
+    category: "file_upload"
+    severity: "high"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "upload\\("
+      - type: "pattern"
+        value: "save\\(.*file"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "shell.php upload"
+        description: "Malicious file upload"
+    
+    remediation: "Validate file types, size, and content"
+    references:
+      - "https://owasp.org/Top10/A01_2021-Broken_Access_Control/"
+    cwe_id: "CWE-434"
+    owasp_category: "A01:2021 - Broken Access Control"
+
+  - id: "web_http_response_splitting"
+    name: "HTTP Response Splitting"
+    description: "User input in HTTP headers"
+    category: "injection"
+    severity: "medium"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "header\\(.*request\\."
+      - type: "pattern"
+        value: "setHeader\\(.*req\\."
+    
+    exploit_templates:
+      - type: "payload"
+        template: "\\r\\nSet-Cookie: evil=value"
+        description: "Header injection"
+    
+    remediation: "Validate and sanitize header values"
+    references:
+      - "https://owasp.org/Top10/A03_2021-Injection/"
+    cwe_id: "CWE-113"
+    owasp_category: "A03:2021 - Injection"
+
+  - id: "web_information_disclosure"
+    name: "Information Disclosure"
+    description: "Sensitive information exposed in responses"
+    category: "disclosure"
+    severity: "medium"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "debug.*True"
+      - type: "pattern"
+        value: "stacktrace"
+      - type: "pattern"
+        value: "error.*traceback"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "Stack trace information leak"
+        description: "Information disclosure"
+    
+    remediation: "Disable debug mode and handle errors properly"
+    references:
+      - "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/"
+    cwe_id: "CWE-200"
+    owasp_category: "A05:2021 - Security Misconfiguration"
+
+  - id: "web_xml_external_entity"
+    name: "XML External Entity (XXE)"
+    description: "XML parser processing external entities"
+    category: "xxe"
+    severity: "high"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "parse.*xml"
+      - type: "pattern"
+        value: "XMLParser"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "<!DOCTYPE foo [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]>"
+        description: "XXE file disclosure"
+    
+    remediation: "Disable external entity processing"
+    references:
+      - "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/"
+    cwe_id: "CWE-611"
+    owasp_category: "A05:2021 - Security Misconfiguration"
+
+  - id: "web_ldap_injection"
+    name: "LDAP Injection"
+    description: "User input in LDAP queries"
+    category: "injection"
+    severity: "medium"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "ldap.*search.*request\\."
+      - type: "pattern"
+        value: "ldap.*query.*input"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "*)(&(uid=admin)(password=*))"
+        description: "LDAP injection bypass"
+    
+    remediation: "Use parameterized LDAP queries"
+    references:
+      - "https://owasp.org/Top10/A03_2021-Injection/"
+    cwe_id: "CWE-90"
+    owasp_category: "A03:2021 - Injection"
+
+  - id: "web_server_side_request_forgery"
+    name: "Server-Side Request Forgery (SSRF)"
+    description: "Server making requests based on user input"
+    category: "ssrf"
+    severity: "high"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "requests\\.get\\(.*request\\."
+      - type: "pattern"
+        value: "fetch\\(.*req\\."
+      - type: "pattern"
+        value: "urllib.*request\\."
+    
+    exploit_templates:
+      - type: "payload"
+        template: "http://localhost:8080/admin"
+        description: "SSRF to internal services"
+    
+    remediation: "Validate and whitelist URLs"
+    references:
+      - "https://owasp.org/Top10/A10_2021-Server-Side_Request_Forgery/"
+    cwe_id: "CWE-918"
+    owasp_category: "A10:2021 - Server-Side Request Forgery (SSRF)"
+
+  - id: "web_host_header_injection"
+    name: "Host Header Injection"
+    description: "Host header used without validation"
+    category: "injection"
+    severity: "medium"
+    languages: ["python", "javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "request\\.headers\\['host'\\]"
+      - type: "pattern"
+        value: "req\\.get\\('host'\\)"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "Host: evil.com"
+        description: "Host header injection"
+    
+    remediation: "Validate Host header against whitelist"
+    references:
+      - "https://owasp.org/Top10/A03_2021-Injection/"
+    cwe_id: "CWE-20"
+    owasp_category: "A03:2021 - Injection" 
