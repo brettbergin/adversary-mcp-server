@@ -285,6 +285,15 @@ class AdversaryMCPServer:
                         "required": [],
                     },
                 ),
+                Tool(
+                    name="adv_get_version",
+                    description="Get version information of the adversary MCP server",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {},
+                        "required": [],
+                    },
+                ),
             ]
 
         @self.server.call_tool()
@@ -309,6 +318,8 @@ class AdversaryMCPServer:
                     return await self._handle_configure_settings(arguments)
                 elif name == "adv_get_status":
                     return await self._handle_get_status()
+                elif name == "adv_get_version":
+                    return await self._handle_get_version()
                 else:
                     raise AdversaryToolError(f"Unknown tool: {name}")
 
@@ -667,6 +678,65 @@ class AdversaryMCPServer:
 
         except Exception as e:
             raise AdversaryToolError(f"Failed to get status: {e}")
+
+    async def _handle_get_version(self) -> List[types.TextContent]:
+        """Handle get version request."""
+        try:
+            version = self._get_version()
+            
+            result = f"# Adversary MCP Server Version\n\n"
+            result += f"**Version:** {version}\n"
+            result += f"**Package:** adversary-mcp-server\n"
+            result += f"**Description:** MCP server for adversarial security analysis and vulnerability detection\n"
+            
+            return [types.TextContent(type="text", text=result)]
+            
+        except Exception as e:
+            raise AdversaryToolError(f"Failed to get version: {e}")
+
+    def _get_version(self) -> str:
+        """Get version from pyproject.toml or package metadata."""
+        try:
+            # Try to get version from pyproject.toml first
+            current_dir = Path(__file__).parent
+            project_root = current_dir.parent.parent
+            pyproject_path = project_root / "pyproject.toml"
+            
+            if pyproject_path.exists():
+                try:
+                    # Try using tomllib (Python 3.11+)
+                    import tomllib
+                    with open(pyproject_path, 'rb') as f:
+                        pyproject_data = tomllib.load(f)
+                    return pyproject_data.get('project', {}).get('version', 'unknown')
+                except ImportError:
+                    # Fallback to tomli or toml for older Python versions
+                    try:
+                        import tomli
+                        with open(pyproject_path, 'rb') as f:
+                            pyproject_data = tomli.load(f)
+                        return pyproject_data.get('project', {}).get('version', 'unknown')
+                    except ImportError:
+                        try:
+                            import toml
+                            with open(pyproject_path, 'r') as f:
+                                pyproject_data = toml.load(f)
+                            return pyproject_data.get('project', {}).get('version', 'unknown')
+                        except ImportError:
+                            pass
+            
+            # Fallback to package metadata
+            try:
+                import importlib.metadata
+                return importlib.metadata.version('adversary-mcp-server')
+            except (importlib.metadata.PackageNotFoundError, ImportError):
+                pass
+            
+            # Final fallback
+            return "unknown"
+            
+        except Exception:
+            return "unknown"
 
     def _filter_threats_by_severity(
         self, threats: List[ThreatMatch], min_severity: Severity

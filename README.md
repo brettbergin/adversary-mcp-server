@@ -5,8 +5,8 @@
 [![PyPI version](https://badge.fury.io/py/adversary-mcp-server.svg)](https://badge.fury.io/py/adversary-mcp-server)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://img.shields.io/badge/tests-279%20passed-brightgreen.svg)](https://github.com/brettbergin/adversary-mcp-server)
-[![Version](https://img.shields.io/badge/version-v0.4.2-blue.svg)](https://pypi.org/project/adversary-mcp-server/)
+[![Tests](https://img.shields.io/badge/tests-294%20passed-brightgreen.svg)](https://github.com/brettbergin/adversary-mcp-server)
+[![Version](https://img.shields.io/badge/version-v0.4.3-blue.svg)](https://pypi.org/project/adversary-mcp-server/)
 
 **Enterprise-grade security analysis with dynamic rule management and hot-reload capabilities**
 
@@ -81,6 +81,7 @@ Once configured, you can use these MCP tools in Cursor:
 - `adv_generate_exploit` - Generate educational exploits
 - `adv_configure_settings` - Configure server settings
 - `adv_get_status` - Check server status
+- `adv_get_version` - Get version information
 
 ### 4. Enable Hot-Reload (Optional)
 
@@ -109,6 +110,7 @@ adversary-mcp-cli watch start
 | `adv_get_rule_details` | Get detailed information about a specific rule | Pass rule ID |
 | `adv_configure_settings` | Configure server settings | Pass configuration options |
 | `adv_get_status` | Get server status and configuration | No parameters required |
+| `adv_get_version` | Get version information of the adversary MCP server | No parameters required |
 
 ### Example Usage in Cursor
 
@@ -121,6 +123,9 @@ Use adv_generate_exploit for sql_injection vulnerability in this login function
 
 # List all XSS detection rules
 Use adv_list_rules filtered by category "xss"
+
+# Get version information
+Use adv_get_version to check the current version of the adversary MCP server
 ```
 
 ---
@@ -432,7 +437,7 @@ adversary-mcp-server/
 ├── rules/                 # Packaged rules (copied to user directory)
 │   ├── built-in/           # 109 core security rules
 │   └── templates/         # Rule creation templates
-└── tests/                 # Comprehensive test suite (279 tests)
+└── tests/                 # Comprehensive test suite (294 tests)
 ```
 
 ---
