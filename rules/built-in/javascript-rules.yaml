@@ -1,0 +1,47 @@
+# Built-in JavaScript/TypeScript Security Rules
+# These rules detect common security vulnerabilities in JavaScript and TypeScript code
+
+rules:
+  - id: "js_xss_dom"
+    name: "DOM-based XSS"
+    description: "User input inserted directly into DOM without sanitization"
+    category: "xss"
+    severity: "high"
+    languages: ["javascript", "typescript"]
+    
+    conditions:
+      - type: "pattern"
+        value: "innerHTML\\s*=.*"
+      - type: "pattern"
+        value: "outerHTML\\s*=.*"
+    
+    exploit_templates:
+      - type: "payload"
+        template: "<script>alert('XSS')</script>"
+        description: "Basic XSS payload"
+    
+    remediation: "Use textContent or proper sanitization libraries"
+    references:
+      - "https://owasp.org/Top10/A03_2021-Injection/"
+    cwe_id: "CWE-79"
+
+  - id: "js_eval_injection"
+    name: "Code Injection via eval()"
+    description: "User input passed to eval() function"
+    category: "injection"
+    severity: "critical"
+    languages: ["javascript", "typescript"]
+    
+    conditions:
+      - type: "function_call"
+        value: ["eval", "Function", "setTimeout", "setInterval"]
+    
+    exploit_templates:
+      - type: "javascript"
+        template: "eval('alert(\"Injected code\")')"
+        description: "Code injection via eval"
+    
+    remediation: "Never use eval() with user input. Use JSON.parse() for data"
+    references:
+      - "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/eval"
+    cwe_id: "CWE-94" 

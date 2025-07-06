@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
+from click.testing import CliRunner
 
 # Add the src directory to the path to import modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
@@ -25,6 +26,7 @@ from adversary_mcp_server.cli import (
     status,
 )
 from adversary_mcp_server.threat_engine import Category, Language, Severity, ThreatMatch
+import yaml
 
 
 class TestCLIUtilities:
@@ -514,3 +516,773 @@ class TestCLILanguageDetection:
         for lang in invalid_languages:
             # Test that these would be rejected
             assert lang not in ["python", "javascript", "typescript"]
+
+
+class TestRulesExportCommand:
+    """Test the rules export command."""
+
+    def test_export_rules_yaml(self, tmp_path):
+        """Test exporting rules to YAML format."""
+        runner = CliRunner()
+        output_file = tmp_path / "exported_rules.yaml"
+        
+        result = runner.invoke(cli, [
+            'rules', 'export', str(output_file), '--format', 'yaml'
+        ])
+        
+        assert result.exit_code == 0
+        assert "Rules exported" in result.output
+        assert output_file.exists()
+        
+        # Verify YAML content
+        with open(output_file, 'r') as f:
+            data = yaml.safe_load(f)
+        
+        assert "rules" in data
+        assert len(data["rules"]) > 0
+
+    def test_export_rules_json(self, tmp_path):
+        """Test exporting rules to JSON format."""
+        runner = CliRunner()
+        output_file = tmp_path / "exported_rules.json"
+        
+        result = runner.invoke(cli, [
+            'rules', 'export', str(output_file), '--format', 'json'
+        ])
+        
+        assert result.exit_code == 0
+        assert "Rules exported" in result.output
+        assert output_file.exists()
+        
+        # Verify JSON content
+        with open(output_file, 'r') as f:
+            data = json.load(f)
+        
+        assert "rules" in data
+        assert len(data["rules"]) > 0
+
+    def test_export_rules_default_format(self, tmp_path):
+        """Test exporting rules with default format (YAML)."""
+        runner = CliRunner()
+        output_file = tmp_path / "exported_rules.yaml"
+        
+        result = runner.invoke(cli, [
+            'rules', 'export', str(output_file)
+        ])
+        
+        assert result.exit_code == 0
+        assert output_file.exists()
+
+    def test_export_rules_error_handling(self, tmp_path):
+        """Test error handling in rules export."""
+        runner = CliRunner()
+        
+        # Try to export to a directory that doesn't exist
+        invalid_path = tmp_path / "nonexistent" / "rules.yaml"
+        
+        result = runner.invoke(cli, [
+            'rules', 'export', str(invalid_path)
+        ])
+        
+        assert result.exit_code != 0
+        assert "Export failed" in result.output
+
+
+class TestRulesImportCommand:
+    """Test the rules import command."""
+
+    def test_import_rules_basic(self, tmp_path):
+        """Test basic rule import functionality."""
+        # Create a valid rule file to import
+        import_file = tmp_path / "import_rules.yaml"
+        rule_data = {
+            "rules": [
+                {
+                    "id": "imported_test_rule",
+                    "name": "Imported Test Rule",
+                    "description": "A test rule for import",
+                    "category": "injection",
+                    "severity": "high",
+                    "languages": ["python"],
+                    "conditions": [
+                        {
+                            "type": "pattern",
+                            "value": "imported.*pattern"
+                        }
+                    ],
+                    "remediation": "Fix the imported issue"
+                }
+            ]
+        }
+        
+        with open(import_file, 'w') as f:
+            yaml.dump(rule_data, f)
+        
+        runner = CliRunner()
+        
+        result = runner.invoke(cli, [
+            'rules', 'import-rules', str(import_file)
+        ])
+        
+        assert result.exit_code == 0
+        assert "Rules imported successfully" in result.output
+
+    def test_import_rules_with_target_dir(self, tmp_path):
+        """Test importing rules with target directory."""
+        # Create a valid rule file to import
+        import_file = tmp_path / "import_rules.yaml"
+        rule_data = {
+            "rules": [
+                {
+                    "id": "imported_test_rule",
+                    "name": "Imported Test Rule",
+                    "description": "A test rule for import",
+                    "category": "injection",
+                    "severity": "high",
+                    "languages": ["python"],
+                    "conditions": [
+                        {
+                            "type": "pattern",
+                            "value": "imported.*pattern"
+                        }
+                    ]
+                }
+            ]
+        }
+        
+        with open(import_file, 'w') as f:
+            yaml.dump(rule_data, f)
+        
+        # Create target directory
+        target_dir = tmp_path / "target"
+        target_dir.mkdir()
+        
+        runner = CliRunner()
+        
+        result = runner.invoke(cli, [
+            'rules', 'import-rules', str(import_file), 
+            '--target-dir', str(target_dir)
+        ])
+        
+        assert result.exit_code == 0
+        assert "Rules imported successfully" in result.output
+        
+        # Verify file was copied to target directory
+        target_file = target_dir / "import_rules.yaml"
+        assert target_file.exists()
+
+    def test_import_rules_validation_failure(self, tmp_path):
+        """Test import with validation failure."""
+        # Create an invalid rule file
+        import_file = tmp_path / "invalid_rules.yaml"
+        invalid_rule_data = {
+            "rules": [
+                {
+                    "id": "",  # Invalid empty ID
+                    "name": "Invalid Rule",
+                    "description": "Invalid rule",
+                    "category": "injection",
+                    "severity": "high",
+                    "languages": ["python"],
+                    "conditions": []  # Invalid empty conditions
+                }
+            ]
+        }
+        
+        with open(import_file, 'w') as f:
+            yaml.dump(invalid_rule_data, f)
+        
+        runner = CliRunner()
+        
+        result = runner.invoke(cli, [
+            'rules', 'import-rules', str(import_file)
+        ])
+        
+        assert result.exit_code != 0
+        assert "Import failed" in result.output
+
+    def test_import_rules_no_validation(self, tmp_path):
+        """Test importing rules without validation."""
+        # Create a rule file with potential validation issues
+        import_file = tmp_path / "rules.yaml"
+        rule_data = {
+            "rules": [
+                {
+                    "id": "test_rule",
+                    "name": "Test Rule",
+                    "description": "Test rule",
+                    "category": "injection",
+                    "severity": "high",
+                    "languages": ["python"],
+                    "conditions": [
+                        {
+                            "type": "pattern",
+                            "value": "test"
+                        }
+                    ]
+                }
+            ]
+        }
+        
+        with open(import_file, 'w') as f:
+            yaml.dump(rule_data, f)
+        
+        runner = CliRunner()
+        
+        result = runner.invoke(cli, [
+            'rules', 'import-rules', str(import_file), '--no-validate'
+        ])
+        
+        assert result.exit_code == 0
+        assert "Rules imported successfully" in result.output
+
+    def test_import_rules_nonexistent_file(self):
+        """Test importing from non-existent file."""
+        runner = CliRunner()
+        
+        result = runner.invoke(cli, [
+            'rules', 'import-rules', '/nonexistent/file.yaml'
+        ])
+        
+        assert result.exit_code != 0
+
+
+class TestRulesValidateCommand:
+    """Test the rules validate command."""
+
+    def test_validate_rules_success(self):
+        """Test successful rule validation."""
+        runner = CliRunner()
+        
+        result = runner.invoke(cli, ['rules', 'validate'])
+        
+        # All default rules should be valid
+        assert result.exit_code == 0
+        assert "All rules are valid" in result.output
+
+    @patch('adversary_mcp_server.threat_engine.ThreatEngine.validate_all_rules')
+    def test_validate_rules_with_errors(self, mock_validate):
+        """Test rule validation with errors."""
+        # Mock validation errors
+        mock_validate.return_value = {
+            "invalid_rule_1": ["Rule ID is required", "At least one condition is required"],
+            "invalid_rule_2": ["Rule name is required"]
+        }
+        
+        runner = CliRunner()
+        
+        result = runner.invoke(cli, ['rules', 'validate'])
+        
+        assert result.exit_code != 0
+        assert "Found 2 rules with errors" in result.output
+        assert "invalid_rule_1" in result.output
+        assert "invalid_rule_2" in result.output
+
+    @patch('adversary_mcp_server.cli.ThreatEngine')
+    def test_validate_rules_exception(self, mock_engine_class):
+        """Test rule validation with exception."""
+        # Mock engine to raise exception
+        mock_engine = Mock()
+        mock_engine.validate_all_rules.side_effect = Exception("Validation error")
+        mock_engine_class.return_value = mock_engine
+        
+        runner = CliRunner()
+        
+        result = runner.invoke(cli, ['rules', 'validate'])
+        
+        assert result.exit_code != 0
+        assert "Validation failed" in result.output
+
+
+class TestRulesReloadCommand:
+    """Test the rules reload command."""
+
+    @patch('adversary_mcp_server.cli.ThreatEngine')
+    def test_reload_rules_success(self, mock_engine_class):
+        """Test successful rule reload."""
+        # Mock engine
+        mock_engine = Mock()
+        mock_engine.get_rule_statistics.return_value = {
+            "total_rules": 10,
+            "loaded_files": 3
+        }
+        mock_engine_class.return_value = mock_engine
+        
+        runner = CliRunner()
+        
+        result = runner.invoke(cli, ['rules', 'reload'])
+        
+        assert result.exit_code == 0
+        assert "Reloaded" in result.output and "10" in result.output and "3" in result.output
+
+    @patch('adversary_mcp_server.cli.ThreatEngine')
+    def test_reload_rules_failure(self, mock_engine_class):
+        """Test rule reload with failure."""
+        # Mock engine to raise exception
+        mock_engine = Mock()
+        mock_engine.reload_rules.side_effect = Exception("Reload error")
+        mock_engine_class.return_value = mock_engine
+        
+        runner = CliRunner()
+        
+        result = runner.invoke(cli, ['rules', 'reload'])
+        
+        assert result.exit_code != 0
+        assert "Reload failed" in result.output
+
+
+class TestRulesStatsCommand:
+    """Test the rules stats command."""
+
+    @patch('adversary_mcp_server.cli.ThreatEngine')
+    def test_stats_command(self, mock_engine_class):
+        """Test rule statistics command."""
+        # Mock engine with statistics
+        mock_engine = Mock()
+        mock_engine.get_rule_statistics.return_value = {
+            "total_rules": 15,
+            "loaded_files": 4,
+            "categories": {
+                "injection": 8,
+                "xss": 4,
+                "deserialization": 3
+            },
+            "severities": {
+                "critical": 5,
+                "high": 6,
+                "medium": 3,
+                "low": 1
+            },
+            "languages": {
+                "python": 10,
+                "javascript": 8,
+                "typescript": 7
+            },
+            "rule_files": [
+                "/path/to/rules1.yaml",
+                "/path/to/rules2.yaml"
+            ]
+        }
+        mock_engine_class.return_value = mock_engine
+        
+        runner = CliRunner()
+        
+        result = runner.invoke(cli, ['rules', 'stats'])
+        
+        assert result.exit_code == 0
+        assert "Total Rules:" in result.output and "15" in result.output
+        assert "injection" in result.output
+        assert "critical" in result.output
+        assert "python" in result.output
+
+    @patch('adversary_mcp_server.cli.ThreatEngine')
+    def test_stats_command_failure(self, mock_engine_class):
+        """Test statistics command with failure."""
+        # Mock engine to raise exception
+        mock_engine = Mock()
+        mock_engine.get_rule_statistics.side_effect = Exception("Stats error")
+        mock_engine_class.return_value = mock_engine
+        
+        runner = CliRunner()
+        
+        result = runner.invoke(cli, ['rules', 'stats'])
+        
+        assert result.exit_code != 0
+        assert "Failed to get statistics" in result.output
+
+
+class TestWatchCommands:
+    """Test hot-reload watch commands."""
+
+    @patch('adversary_mcp_server.cli.create_hot_reload_service')
+    @patch('adversary_mcp_server.threat_engine.ThreatEngine')
+    def test_watch_start_command(self, mock_engine_class, mock_create_service):
+        """Test starting the hot-reload service."""
+        # Mock engine
+        mock_engine = Mock()
+        mock_engine.get_rule_statistics.return_value = {
+            "total_rules": 10,
+            "loaded_files": 2
+        }
+        mock_engine_class.return_value = mock_engine
+        
+        # Mock service
+        mock_service = Mock()
+        mock_create_service.return_value = mock_service
+        
+        # Mock run_daemon to avoid infinite loop
+        mock_service.run_daemon.side_effect = KeyboardInterrupt()
+        
+        runner = CliRunner()
+        
+        result = runner.invoke(cli, ['watch', 'start'])
+        
+        assert result.exit_code == 0
+        assert "Starting Hot-Reload Service" in result.output
+        mock_service.set_debounce_time.assert_called_with(1.0)
+        mock_service.run_daemon.assert_called_once()
+
+    @patch('adversary_mcp_server.cli.create_hot_reload_service')
+    @patch('adversary_mcp_server.threat_engine.ThreatEngine')
+    def test_watch_start_with_custom_directories(self, mock_engine_class, mock_create_service, tmp_path):
+        """Test starting hot-reload service with custom directories."""
+        # Create temporary directories
+        custom_dir1 = tmp_path / "custom1"
+        custom_dir1.mkdir()
+        custom_dir2 = tmp_path / "custom2"
+        custom_dir2.mkdir()
+        
+        # Mock engine
+        mock_engine = Mock()
+        mock_engine.get_rule_statistics.return_value = {
+            "total_rules": 5,
+            "loaded_files": 1
+        }
+        mock_engine_class.return_value = mock_engine
+        
+        # Mock service
+        mock_service = Mock()
+        mock_create_service.return_value = mock_service
+        mock_service.run_daemon.side_effect = KeyboardInterrupt()
+        
+        runner = CliRunner()
+        
+        result = runner.invoke(cli, [
+            'watch', 'start',
+            '-d', str(custom_dir1),
+            '-d', str(custom_dir2),
+            '--debounce', '2.5'
+        ])
+        
+        assert result.exit_code == 0
+        mock_service.set_debounce_time.assert_called_with(2.5)
+        
+        # Verify custom directories were passed
+        call_args = mock_create_service.call_args
+        custom_dirs = call_args[0][1]  # Second argument to create_hot_reload_service
+        assert len(custom_dirs) == 2
+        assert Path(str(custom_dir1)) in custom_dirs
+        assert Path(str(custom_dir2)) in custom_dirs
+
+    def test_watch_start_missing_watchdog(self):
+        """Test watch start with missing watchdog dependency."""
+        runner = CliRunner()
+        
+        # Mock HOT_RELOAD_AVAILABLE to simulate missing watchdog
+        with patch('adversary_mcp_server.cli.HOT_RELOAD_AVAILABLE', False):
+            result = runner.invoke(cli, ['watch', 'start'])
+        
+        assert result.exit_code != 0
+        assert "watchdog" in result.output
+
+    @patch('adversary_mcp_server.cli.create_hot_reload_service')
+    @patch('adversary_mcp_server.threat_engine.ThreatEngine')
+    def test_watch_status_command(self, mock_engine_class, mock_create_service):
+        """Test watch status command."""
+        # Mock engine
+        mock_engine = Mock()
+        mock_engine_class.return_value = mock_engine
+        
+        # Mock service with status
+        mock_service = Mock()
+        mock_service.get_status.return_value = {
+            "is_running": True,
+            "watch_directories": ["/path/to/rules"],
+            "pending_reloads": 2,
+            "reload_count": 5,
+            "debounce_seconds": 1.0,
+            "last_reload_time": 1234567890,
+            "last_reload_files": ["/path/to/rules/test.yaml"]
+        }
+        mock_create_service.return_value = mock_service
+        
+        runner = CliRunner()
+        
+        result = runner.invoke(cli, ['watch', 'status'])
+        
+        assert result.exit_code == 0
+        assert "🟢 Running" in result.output
+        assert "**Pending Reloads:** 2" in result.output
+        assert "**Total Reloads:** 5" in result.output
+
+    @patch('adversary_mcp_server.cli.create_hot_reload_service')
+    @patch('adversary_mcp_server.threat_engine.ThreatEngine')
+    def test_watch_status_stopped(self, mock_engine_class, mock_create_service):
+        """Test watch status when service is stopped."""
+        # Mock engine
+        mock_engine = Mock()
+        mock_engine_class.return_value = mock_engine
+        
+        # Mock service with stopped status
+        mock_service = Mock()
+        mock_service.get_status.return_value = {
+            "is_running": False,
+            "watch_directories": [],
+            "pending_reloads": 0,
+            "reload_count": 0,
+            "debounce_seconds": 1.0,
+            "last_reload_time": 0,
+            "last_reload_files": []
+        }
+        mock_create_service.return_value = mock_service
+        
+        runner = CliRunner()
+        
+        result = runner.invoke(cli, ['watch', 'status'])
+        
+        assert result.exit_code == 0
+        assert "🔴 Stopped" in result.output
+
+    @patch('adversary_mcp_server.cli.create_hot_reload_service')
+    @patch('adversary_mcp_server.threat_engine.ThreatEngine')
+    def test_watch_test_command(self, mock_engine_class, mock_create_service):
+        """Test watch test command."""
+        # Mock engine
+        mock_engine = Mock()
+        mock_engine.get_rule_statistics.return_value = {
+            "total_rules": 8,
+            "loaded_files": 2
+        }
+        mock_engine_class.return_value = mock_engine
+        
+        # Mock service
+        mock_service = Mock()
+        mock_create_service.return_value = mock_service
+        
+        runner = CliRunner()
+        
+        result = runner.invoke(cli, ['watch', 'test'])
+        
+        assert result.exit_code == 0
+        assert "Testing Hot-Reload Functionality" in result.output
+        assert "Hot-reload test completed successfully" in result.output
+        mock_service.force_reload.assert_called_once()
+
+    def test_watch_test_missing_watchdog(self):
+        """Test watch test with missing watchdog dependency."""
+        runner = CliRunner()
+        
+        # Mock HOT_RELOAD_AVAILABLE to simulate missing watchdog
+        with patch('adversary_mcp_server.cli.HOT_RELOAD_AVAILABLE', False):
+            result = runner.invoke(cli, ['watch', 'test'])
+        
+        assert result.exit_code != 0
+        assert "watchdog" in result.output
+
+    @patch('adversary_mcp_server.cli.create_hot_reload_service')
+    @patch('adversary_mcp_server.threat_engine.ThreatEngine')
+    def test_watch_command_with_exception(self, mock_engine_class, mock_create_service):
+        """Test watch commands with exceptions."""
+        # Mock engine
+        mock_engine = Mock()
+        mock_engine_class.return_value = mock_engine
+        
+        # Mock service to raise exception
+        mock_service = Mock()
+        mock_service.get_status.side_effect = Exception("Service error")
+        mock_create_service.return_value = mock_service
+        
+        runner = CliRunner()
+        
+        result = runner.invoke(cli, ['watch', 'status'])
+        
+        assert result.exit_code != 0
+        assert "Failed to get hot-reload status" in result.output
+
+
+class TestCLIIntegration:
+    """Integration tests for CLI commands."""
+
+    def test_rules_export_import_roundtrip(self, tmp_path):
+        """Test exporting and then importing rules."""
+        runner = CliRunner()
+        
+        # Export rules
+        export_file = tmp_path / "exported.yaml"
+        result = runner.invoke(cli, [
+            'rules', 'export', str(export_file)
+        ])
+        assert result.exit_code == 0
+        assert export_file.exists()
+        
+        # Import the exported rules
+        target_dir = tmp_path / "imported"
+        target_dir.mkdir()
+        
+        result = runner.invoke(cli, [
+            'rules', 'import-rules', str(export_file),
+            '--target-dir', str(target_dir)
+        ])
+        assert result.exit_code == 0
+        
+        # Verify file was copied
+        imported_file = target_dir / "exported.yaml"
+        assert imported_file.exists()
+
+    def test_rules_workflow(self, tmp_path):
+        """Test complete rules management workflow."""
+        runner = CliRunner()
+        
+        # Get initial statistics
+        result = runner.invoke(cli, ['rules', 'stats'])
+        assert result.exit_code == 0
+        
+        # Validate rules
+        result = runner.invoke(cli, ['rules', 'validate'])
+        assert result.exit_code == 0
+        
+        # Export rules
+        export_file = tmp_path / "workflow_export.yaml"
+        result = runner.invoke(cli, [
+            'rules', 'export', str(export_file)
+        ])
+        assert result.exit_code == 0
+        
+        # Reload rules
+        result = runner.invoke(cli, ['rules', 'reload'])
+        assert result.exit_code == 0
+
+    def test_watch_workflow(self):
+        """Test watch command workflow."""
+        runner = CliRunner()
+        
+        # Test watch status
+        result = runner.invoke(cli, ['watch', 'status'])
+        # May fail if watchdog not available, but should not crash
+        
+        # Test watch test
+        result = runner.invoke(cli, ['watch', 'test'])
+        # May fail if watchdog not available, but should not crash
+
+
+class TestCLIErrorHandling:
+    """Test error handling in CLI commands."""
+
+    def test_invalid_command(self):
+        """Test invalid command handling."""
+        runner = CliRunner()
+        
+        result = runner.invoke(cli, ['invalid-command'])
+        
+        assert result.exit_code != 0
+
+    def test_invalid_subcommand(self):
+        """Test invalid subcommand handling."""
+        runner = CliRunner()
+        
+        result = runner.invoke(cli, ['rules', 'invalid-subcommand'])
+        
+        assert result.exit_code != 0
+
+    @patch('adversary_mcp_server.cli.ThreatEngine')
+    def test_engine_initialization_failure(self, mock_engine_class):
+        """Test CLI behavior when engine initialization fails."""
+        # Mock engine to raise exception on initialization
+        mock_engine_class.side_effect = Exception("Engine init failed")
+        
+        runner = CliRunner()
+        
+        result = runner.invoke(cli, ['rules', 'stats'])
+        
+        assert result.exit_code != 0
+        assert "Failed to" in result.output
+
+    def test_file_permission_errors(self, tmp_path):
+        """Test handling of file permission errors."""
+        runner = CliRunner()
+        
+        # Create a file and remove write permissions
+        restricted_file = tmp_path / "restricted.yaml"
+        restricted_file.touch()
+        restricted_file.chmod(0o444)  # Read-only
+        
+        try:
+            # Try to export to read-only file
+            result = runner.invoke(cli, [
+                'rules', 'export', str(restricted_file)
+            ])
+            
+            # Should handle permission error gracefully
+            assert result.exit_code != 0
+            
+        finally:
+            # Restore permissions for cleanup
+            restricted_file.chmod(0o644)
+
+
+@pytest.fixture
+def cli_runner():
+    """Provide a CLI runner for testing."""
+    return CliRunner()
+
+
+@pytest.fixture
+def sample_rule_file(tmp_path):
+    """Create a sample rule file for testing."""
+    rule_file = tmp_path / "sample_rules.yaml"
+    rule_data = {
+        "rules": [
+            {
+                "id": "sample_rule",
+                "name": "Sample Rule",
+                "description": "A sample rule for testing",
+                "category": "injection",
+                "severity": "high",
+                "languages": ["python"],
+                "conditions": [
+                    {
+                        "type": "pattern",
+                        "value": "sample.*pattern"
+                    }
+                ],
+                "remediation": "Fix the sample issue",
+                "references": ["https://example.com"],
+                "cwe_id": "CWE-89"
+            }
+        ]
+    }
+    
+    with open(rule_file, 'w') as f:
+        yaml.dump(rule_data, f)
+    
+    return rule_file
+
+
+class TestCLIWithSampleData:
+    """Test CLI commands with sample data."""
+
+    def test_import_sample_rules(self, cli_runner, sample_rule_file, tmp_path):
+        """Test importing sample rules."""
+        target_dir = tmp_path / "target"
+        target_dir.mkdir()
+        
+        result = cli_runner.invoke(cli, [
+            'rules', 'import-rules', str(sample_rule_file),
+            '--target-dir', str(target_dir)
+        ])
+        
+        assert result.exit_code == 0
+        assert "Rules imported successfully" in result.output
+        
+        # Verify file was copied
+        copied_file = target_dir / sample_rule_file.name
+        assert copied_file.exists()
+
+    def test_export_with_sample_data(self, cli_runner, tmp_path):
+        """Test exporting rules with sample data."""
+        output_file = tmp_path / "export_test.yaml"
+        
+        result = cli_runner.invoke(cli, [
+            'rules', 'export', str(output_file)
+        ])
+        
+        assert result.exit_code == 0
+        assert output_file.exists()
+        
+        # Verify content structure
+        with open(output_file, 'r') as f:
+            data = yaml.safe_load(f)
+        
+        assert "rules" in data
+        assert isinstance(data["rules"], list)
+        assert len(data["rules"]) > 0

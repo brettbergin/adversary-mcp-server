@@ -235,6 +235,7 @@ class TestCLIRuleDetailsExtended:
         mock_rule.conditions = [mock_condition]
         mock_rule.exploit_templates = [mock_template]
         mock_rule.references = ["http://example.com", "http://test.com"]
+        mock_rule.tags = None
 
         mock_engine = Mock()
         mock_engine.get_rule_by_id.return_value = mock_rule
@@ -262,6 +263,7 @@ class TestCLIRuleDetailsExtended:
         mock_rule.conditions = None
         mock_rule.exploit_templates = None
         mock_rule.references = None
+        mock_rule.tags = None
 
         mock_engine = Mock()
         mock_engine.get_rule_by_id.return_value = mock_rule

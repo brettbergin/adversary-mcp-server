@@ -1,0 +1,142 @@
+rules:
+- id: js_xss_dom
+  name: DOM-based XSS
+  description: User input inserted directly into DOM without sanitization
+  category: xss
+  severity: high
+  languages:
+  - javascript
+  - typescript
+  conditions:
+  - type: pattern
+    value: innerHTML\s*=.*
+    case_sensitive: true
+    multiline: false
+  - type: pattern
+    value: outerHTML\s*=.*
+    case_sensitive: true
+    multiline: false
+  exploit_templates:
+  - type: payload
+    template: <script>alert('XSS')</script>
+    parameters: {}
+    description: Basic XSS payload
+  remediation: Use textContent or proper sanitization libraries
+  references:
+  - https://owasp.org/Top10/A03_2021-Injection/
+  cwe_id: CWE-79
+  owasp_category: null
+  tags: []
+- id: js_eval_injection
+  name: Code Injection via eval()
+  description: User input passed to eval() function
+  category: injection
+  severity: critical
+  languages:
+  - javascript
+  - typescript
+  conditions:
+  - type: function_call
+    value:
+    - eval
+    - Function
+    - setTimeout
+    - setInterval
+    case_sensitive: true
+    multiline: false
+  exploit_templates:
+  - type: javascript
+    template: eval('alert("Injected code")')
+    parameters: {}
+    description: Code injection via eval
+  remediation: Never use eval() with user input. Use JSON.parse() for data
+  references:
+  - https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/eval
+  cwe_id: CWE-94
+  owasp_category: null
+  tags: []
+- id: python_sql_injection
+  name: SQL Injection
+  description: Direct string concatenation in SQL queries
+  category: injection
+  severity: high
+  languages:
+  - python
+  conditions:
+  - type: pattern
+    value: cursor\.execute\(.*\+.*\)
+    case_sensitive: true
+    multiline: false
+  - type: pattern
+    value: cursor\.execute\(.*%.*\)
+    case_sensitive: true
+    multiline: false
+  - type: pattern
+    value: .*=.*['"].*\+.*['"].*
+    case_sensitive: true
+    multiline: false
+  exploit_templates:
+  - type: payload
+    template: ''' OR ''1''=''1'' --'
+    parameters: {}
+    description: Basic SQL injection payload
+  remediation: Use parameterized queries or prepared statements
+  references:
+  - https://owasp.org/Top10/A03_2021-Injection/
+  cwe_id: CWE-89
+  owasp_category: A03:2021 - Injection
+  tags: []
+- id: python_command_injection
+  name: Command Injection
+  description: User input passed to shell commands
+  category: injection
+  severity: critical
+  languages:
+  - python
+  conditions:
+  - type: function_call
+    value:
+    - os.system
+    - subprocess.call
+    - subprocess.run
+    - os.popen
+    case_sensitive: true
+    multiline: false
+  exploit_templates:
+  - type: payload
+    template: ; cat /etc/passwd
+    parameters: {}
+    description: Command injection to read sensitive files
+  remediation: Use subprocess with shell=False and validate input
+  references:
+  - https://owasp.org/Top10/A03_2021-Injection/
+  cwe_id: CWE-78
+  owasp_category: null
+  tags: []
+- id: python_pickle_deserialize
+  name: Unsafe Pickle Deserialization
+  description: Pickle deserialization of untrusted data
+  category: deserialization
+  severity: critical
+  languages:
+  - python
+  conditions:
+  - type: function_call
+    value:
+    - pickle.loads
+    - pickle.load
+    - cPickle.loads
+    - cPickle.load
+    case_sensitive: true
+    multiline: false
+  exploit_templates:
+  - type: python
+    template: import pickle; pickle.loads(b'cos\nsystem\n(S\'whoami\'\ntR.')
+    parameters: {}
+    description: Pickle payload for command execution
+  remediation: Use safe serialization formats like JSON
+  references:
+  - https://docs.python.org/3/library/pickle.html#restriction
+  cwe_id: CWE-502
+  owasp_category: null
+  tags: []

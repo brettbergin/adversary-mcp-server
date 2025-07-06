@@ -1,0 +1,60 @@
+# Security Rule Template
+# Copy this template to create new custom security rules
+
+rules:
+  - id: "example_rule_id"  # Must be unique, lowercase, use underscores
+    name: "Example Security Rule"
+    description: "Brief description of what this rule detects"
+    
+    # Classification
+    category: "injection"  # injection, xss, deserialization, disclosure, etc.
+    severity: "high"       # low, medium, high, critical
+    languages: ["python", "javascript", "typescript"]
+    
+    # Detection conditions (at least one required)
+    conditions:
+      - type: "pattern"           # pattern, function_call, ast_node, import, variable, regex
+        value: "example.*pattern" # Regex pattern or function name
+        case_sensitive: true      # Optional, default true
+        multiline: false          # Optional, default false
+      
+      - type: "function_call"
+        value: ["os.system", "eval"]  # List of dangerous functions
+      
+      - type: "ast_node"
+        value: "Call"  # AST node type to match
+    
+    # Exploit examples (optional but recommended)
+    exploit_templates:
+      - type: "payload"
+        template: "'; DROP TABLE users; --"
+        description: "SQL injection payload example"
+        parameters:
+          target: "username field"
+      
+      - type: "python"
+        template: |
+          import os
+          malicious_payload = "example"
+          os.system(malicious_payload)
+        description: "Python exploit example"
+    
+    # Remediation guidance
+    remediation: |
+      Specific guidance on how to fix this vulnerability:
+      1. Use parameterized queries
+      2. Validate and sanitize input
+      3. Apply principle of least privilege
+    
+    # External references
+    references:
+      - "https://owasp.org/Top10/"
+      - "https://cwe.mitre.org/data/definitions/89.html"
+    
+    # Security standards mapping
+    cwe_id: "CWE-89"
+    owasp_category: "A03:2021 - Injection"
+    
+    # Optional metadata
+    tags: ["web", "database", "user-input"]
+    confidence: 0.9  # 0.0 to 1.0, how confident we are in detection 

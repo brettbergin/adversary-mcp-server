@@ -8,6 +8,8 @@ from typing import Any, Dict, List, Optional, Set, Union
 
 import yaml
 from pydantic import BaseModel, field_validator
+import os
+import shutil
 
 
 class Severity(str, Enum):
@@ -154,14 +156,80 @@ class ThreatMatch:
     confidence: float = 1.0  # 0.0 to 1.0
 
 
+def get_user_rules_directory() -> Path:
+    """Get the user's rules directory, creating it if it doesn't exist.
+    
+    Returns:
+        Path to the user's rules directory (~/.local/share/adversary-mcp-server/rules)
+    """
+    config_dir = Path.home() / ".local" / "share" / "adversary-mcp-server"
+    rules_dir = config_dir / "rules"
+    
+    # Create the rules directory structure if it doesn't exist
+    rules_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Create subdirectories
+    (rules_dir / "built-in").mkdir(exist_ok=True)
+    (rules_dir / "custom").mkdir(exist_ok=True)  
+    (rules_dir / "organization").mkdir(exist_ok=True)
+    (rules_dir / "templates").mkdir(exist_ok=True)
+    
+    return rules_dir
+
+
+def get_builtin_rules_directory() -> Path:
+    """Get the built-in rules directory in the user's config.
+    
+    Returns:
+        Path to the built-in rules directory
+    """
+    return get_user_rules_directory() / "built-in"
+
+
+def initialize_user_rules_directory() -> None:
+    """Initialize the user's rules directory with built-in rules and templates.
+    
+    This function:
+    1. Creates the rules directory structure
+    2. Copies built-in rules from the package to user config
+    3. Creates rule templates
+    """
+    user_rules_dir = get_user_rules_directory()
+    builtin_rules_dir = user_rules_dir / "built-in"
+    templates_dir = user_rules_dir / "templates"
+    
+    # Get the package's rules directory (where the shipped rules are)
+    package_rules_dir = Path(__file__).parent.parent.parent / "rules"
+    
+    # Copy built-in rules from package to user config (if they exist and user doesn't have them)
+    if package_rules_dir.exists():
+        package_builtin_dir = package_rules_dir / "built-in"
+        if package_builtin_dir.exists():
+            for rule_file in package_builtin_dir.glob("*.yaml"):
+                user_rule_file = builtin_rules_dir / rule_file.name
+                if not user_rule_file.exists():
+                    shutil.copy2(rule_file, user_rule_file)
+                    print(f"Copied built-in rule: {rule_file.name}")
+        
+        # Copy templates
+        package_templates_dir = package_rules_dir / "templates"
+        if package_templates_dir.exists():
+            for template_file in package_templates_dir.glob("*.yaml"):
+                user_template_file = templates_dir / template_file.name
+                if not user_template_file.exists():
+                    shutil.copy2(template_file, user_template_file)
+                    print(f"Copied rule template: {template_file.name}")
+
+
 class ThreatEngine:
     """Engine for loading and executing threat detection rules."""
 
-    def __init__(self, rules_dir: Optional[Path] = None):
+    def __init__(self, rules_dir: Optional[Path] = None, custom_rules_dirs: Optional[List[Path]] = None):
         """Initialize the threat engine.
 
         Args:
-            rules_dir: Directory containing YAML rule files
+            rules_dir: Primary directory containing YAML rule files (defaults to user config)
+            custom_rules_dirs: Additional directories for custom rules
         """
         self.rules: Dict[str, ThreatRule] = {}
         self.rules_by_language: Dict[Language, List[ThreatRule]] = {
@@ -169,11 +237,40 @@ class ThreatEngine:
             Language.JAVASCRIPT: [],
             Language.TYPESCRIPT: [],
         }
-
-        if rules_dir:
+        self.loaded_rule_files: Set[Path] = set()
+        
+        # Initialize user rules directory if it doesn't exist
+        initialize_user_rules_directory()
+        
+        # Default to user's rules directory if none provided
+        if rules_dir is None:
+            rules_dir = get_user_rules_directory()
+        
+        # Load rules in order of priority: built-in -> organization -> custom -> provided
+        self._load_builtin_rules()
+        
+        # Load from user rule directories by default
+        user_rules_dir = get_user_rules_directory()
+        
+        # Load organization rules (medium priority)
+        organization_rules_dir = user_rules_dir / "organization"
+        if organization_rules_dir.exists():
+            self.load_rules_from_directory(organization_rules_dir)
+        
+        # Load custom rules (high priority)
+        custom_rules_dir = user_rules_dir / "custom"
+        if custom_rules_dir.exists():
+            self.load_rules_from_directory(custom_rules_dir)
+        
+        # Load from additional custom directories
+        if custom_rules_dirs:
+            for custom_dir in custom_rules_dirs:
+                if custom_dir.exists():
+                    self.load_rules_from_directory(custom_dir)
+        
+        # Load from provided rules directory (if different from user config)
+        if rules_dir and rules_dir != get_user_rules_directory():
             self.load_rules_from_directory(rules_dir)
-        else:
-            self._load_default_rules()
 
     def load_rules_from_directory(self, rules_dir: Path) -> None:
         """Load threat rules from YAML files in a directory.
@@ -203,9 +300,14 @@ class ThreatEngine:
             if "rules" not in data:
                 raise ValueError(f"No 'rules' section found in {rule_file}")
 
+            rules_loaded = 0
             for rule_data in data["rules"]:
                 rule = ThreatRule(**rule_data)
                 self.add_rule(rule)
+                rules_loaded += 1
+
+            self.loaded_rule_files.add(rule_file)
+            print(f"Loaded {rules_loaded} rules from {rule_file}")
 
         except Exception as e:
             raise ValueError(f"Failed to load rules from {rule_file}: {e}")
@@ -279,6 +381,32 @@ class ThreatEngine:
             for rule in self.rules.values()
             if severity_order.index(rule.severity) >= min_index
         ]
+
+    def _load_builtin_rules(self) -> None:
+        """Load built-in rules from YAML files, fallback to hardcoded if not found."""
+        builtin_rules_dir = get_builtin_rules_directory()
+        
+        rules_loaded = False
+        if builtin_rules_dir.exists():
+            try:
+                # Try to load from YAML files first
+                for rule_file in builtin_rules_dir.glob("*.yaml"):
+                    self.load_rules_from_file(rule_file)
+                    rules_loaded = True
+                
+                for rule_file in builtin_rules_dir.glob("*.yml"):
+                    self.load_rules_from_file(rule_file)
+                    rules_loaded = True
+                    
+            except Exception as e:
+                print(f"Warning: Failed to load built-in rules from YAML: {e}")
+                print("Falling back to hardcoded rules...")
+                rules_loaded = False
+        
+        # Fallback to hardcoded rules if YAML loading failed or no files found
+        if not rules_loaded:
+            print("Loading hardcoded built-in rules...")
+            self._load_default_rules()
 
     def _load_default_rules(self) -> None:
         """Load default security rules."""
@@ -465,7 +593,7 @@ class ThreatEngine:
         Args:
             output_file: Path to output YAML file
         """
-        rules_data = {"rules": [rule.dict() for rule in self.rules.values()]}
+        rules_data = {"rules": [rule.model_dump(mode="json") for rule in self.rules.values()]}
 
         with open(output_file, "w") as f:
             yaml.dump(rules_data, f, default_flow_style=False, sort_keys=False)
@@ -491,3 +619,152 @@ class ThreatEngine:
             }
             for rule in self.rules.values()
         ]
+
+    def reload_rules(self) -> None:
+        """Reload all rules from their source files."""
+        # Clear existing rules
+        self.rules.clear()
+        for lang_rules in self.rules_by_language.values():
+            lang_rules.clear()
+            
+        # Reload from files
+        files_to_reload = list(self.loaded_rule_files)
+        self.loaded_rule_files.clear()
+        
+        # Re-load built-in rules first
+        self._load_builtin_rules()
+        
+        # Then reload any additional files
+        for rule_file in files_to_reload:
+            if rule_file.exists():
+                try:
+                    self.load_rules_from_file(rule_file)
+                except Exception as e:
+                    print(f"Warning: Failed to reload {rule_file}: {e}")
+
+    def import_rules_from_file(self, import_file: Path, target_dir: Optional[Path] = None) -> None:
+        """Import rules from an external file.
+        
+        Args:
+            import_file: File to import rules from
+            target_dir: Directory to copy the file to (optional)
+        """
+        if not import_file.exists():
+            raise FileNotFoundError(f"Import file not found: {import_file}")
+            
+        # Validate the file first
+        temp_engine = ThreatEngine()
+        temp_engine.load_rules_from_file(import_file)
+        
+        # If target directory specified, copy the file
+        if target_dir:
+            target_dir.mkdir(parents=True, exist_ok=True)
+            target_file = target_dir / import_file.name
+            
+            import shutil
+            shutil.copy2(import_file, target_file)
+            print(f"Copied rule file to {target_file}")
+            
+            # Load from the new location
+            self.load_rules_from_file(target_file)
+        else:
+            # Load directly from source
+            self.load_rules_from_file(import_file)
+
+    def remove_rule(self, rule_id: str) -> bool:
+        """Remove a rule by its ID.
+        
+        Args:
+            rule_id: Rule identifier to remove
+            
+        Returns:
+            True if rule was removed, False if not found
+        """
+        if rule_id not in self.rules:
+            return False
+            
+        rule = self.rules[rule_id]
+        
+        # Remove from main collection
+        del self.rules[rule_id]
+        
+        # Remove from language indices
+        for language in rule.languages:
+            if language in self.rules_by_language:
+                self.rules_by_language[language] = [
+                    r for r in self.rules_by_language[language] if r.id != rule_id
+                ]
+        
+        return True
+
+    def get_rule_statistics(self) -> Dict[str, Any]:
+        """Get statistics about loaded rules.
+        
+        Returns:
+            Dictionary with rule statistics
+        """
+        total_rules = len(self.rules)
+        
+        # Count by category
+        category_counts = {}
+        for rule in self.rules.values():
+            category = rule.category.value
+            category_counts[category] = category_counts.get(category, 0) + 1
+            
+        # Count by severity
+        severity_counts = {}
+        for rule in self.rules.values():
+            severity = rule.severity.value
+            severity_counts[severity] = severity_counts.get(severity, 0) + 1
+            
+        # Count by language
+        language_counts = {}
+        for language, rules in self.rules_by_language.items():
+            language_counts[language.value] = len(rules)
+        
+        return {
+            "total_rules": total_rules,
+            "categories": category_counts,
+            "severities": severity_counts,
+            "languages": language_counts,
+            "loaded_files": len(self.loaded_rule_files),
+            "rule_files": [str(f) for f in self.loaded_rule_files]
+        }
+
+    def validate_all_rules(self) -> Dict[str, List[str]]:
+        """Validate all loaded rules.
+        
+        Returns:
+            Dictionary mapping rule IDs to validation errors
+        """
+        validation_results = {}
+        
+        for rule_id, rule in self.rules.items():
+            errors = self.validate_rule(rule)
+            if errors:
+                validation_results[rule_id] = errors
+                
+        return validation_results
+
+    def find_rules_by_pattern(self, pattern: str) -> List[ThreatRule]:
+        """Find rules that match a search pattern.
+        
+        Args:
+            pattern: Search pattern (regex) to match against rule names and descriptions
+            
+        Returns:
+            List of matching rules
+        """
+        try:
+            regex = re.compile(pattern, re.IGNORECASE)
+        except re.error:
+            return []
+            
+        matching_rules = []
+        for rule in self.rules.values():
+            if (regex.search(rule.name) or 
+                regex.search(rule.description) or
+                regex.search(rule.id)):
+                matching_rules.append(rule)
+                
+        return matching_rules
