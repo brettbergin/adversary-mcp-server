@@ -1,4 +1,4 @@
-.PHONY: help install test test-fast test-cov test-html lint format clean check-all
+.PHONY: help install test test-fast test-cov test-html lint format clean check-all build upload
 .DEFAULT_GOAL := help
 
 help: ## Show this help message
@@ -79,6 +79,9 @@ clean: ## Clean up build artifacts and cache files
 	find . -type d -name "__pycache__" -exec rm -rf {} +
 	find . -type f -name "*.pyc" -delete
 
+build: ## Build package for distribution
+	uv build
+
 check-all: lint test security-scan ## Run all checks (linting, tests, and security scans)
 
 dev-setup: install ## Set up development environment
@@ -116,9 +119,8 @@ ci-security: ## Run security scans in CI environment
 	python -m bandit -r src/ -f json -o security-report.json
 	python -m semgrep --config=auto src/ --json --output=semgrep-report.json
 
-upload: ## Upload package to PyPI
-	python -m build
-	twine upload dist/*
+upload: build ## Upload package to PyPI
+	uv run twine upload dist/*
 
 demo: ## Run a demo of the adversary MCP server
 	python -m adversary_mcp_server.cli demo
