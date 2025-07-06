@@ -918,7 +918,10 @@ class TestWatchCommands:
 
         # Mock service
         mock_service = Mock()
-        mock_service.watch_directories = [str(custom_dir1), str(custom_dir2)]  # Mock as list
+        mock_service.watch_directories = [
+            str(custom_dir1),
+            str(custom_dir2),
+        ]  # Mock as list
         mock_create_service.return_value = mock_service
         mock_service.run_daemon.side_effect = KeyboardInterrupt()
 

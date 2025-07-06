@@ -470,8 +470,10 @@ class TestHotReloadIntegration:
                     if rule_file in service.pending_reloads or service.reload_count > 0:
                         reload_detected = True
                         break
-                
-                assert reload_detected, f"Reload not detected after 5 seconds. reload_count={service.reload_count}, pending_reloads={service.pending_reloads}"
+
+                assert (
+                    reload_detected
+                ), f"Reload not detected after 5 seconds. reload_count={service.reload_count}, pending_reloads={service.pending_reloads}"
 
             finally:
                 # Stop service
@@ -542,8 +544,10 @@ class TestHotReloadIntegration:
                     if rule_file in service.pending_reloads or service.reload_count > 0:
                         reload_detected = True
                         break
-                
-                assert reload_detected, f"Reload not detected after 5 seconds. reload_count={service.reload_count}, pending_reloads={service.pending_reloads}"
+
+                assert (
+                    reload_detected
+                ), f"Reload not detected after 5 seconds. reload_count={service.reload_count}, pending_reloads={service.pending_reloads}"
 
             finally:
                 # Stop service

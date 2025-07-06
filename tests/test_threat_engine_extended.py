@@ -452,9 +452,13 @@ class TestThreatEngineAdvanced:
         with open(provided_dir / "provided.yaml", "w") as f:
             yaml.dump(provided_rule, f)
 
-        # Mock the get_user_rules_directory and initialize functions 
-        with patch("adversary_mcp_server.threat_engine.get_user_rules_directory") as mock_get_user_rules:
-            with patch("adversary_mcp_server.threat_engine.initialize_user_rules_directory") as mock_init:
+        # Mock the get_user_rules_directory and initialize functions
+        with patch(
+            "adversary_mcp_server.threat_engine.get_user_rules_directory"
+        ) as mock_get_user_rules:
+            with patch(
+                "adversary_mcp_server.threat_engine.initialize_user_rules_directory"
+            ) as mock_init:
                 # Set up the mock to return our test directory
                 mock_get_user_rules.return_value = tmp_path / "user_rules"
                 mock_init.return_value = None  # Skip initialization
