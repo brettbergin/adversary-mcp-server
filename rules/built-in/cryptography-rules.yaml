@@ -13,7 +13,7 @@ rules:
       - type: "function_call"
         value: ["md5", "hashlib.md5", "crypto.createHash('md5')"]
       - type: "pattern"
-        value: "MD5|md5"
+        value: "\\bMD5\\b|hashlib\\.md5|crypto\\.createHash\\(['\"]md5['\"]\\)|Hash\\.MD5|algorithm.*['\"]MD5['\"]"
     
     exploit_templates:
       - type: "payload"
@@ -37,7 +37,7 @@ rules:
       - type: "function_call"
         value: ["sha1", "hashlib.sha1", "crypto.createHash('sha1')"]
       - type: "pattern"
-        value: "SHA1|sha1"
+        value: "\\bSHA1\\b|\\bsha1\\b|hashlib\\.sha1|crypto\\.createHash\\(['\"]sha1['\"]\\)|Hash\\.SHA1|algorithm.*['\"]SHA1['\"]"
     
     exploit_templates:
       - type: "payload"
@@ -59,9 +59,9 @@ rules:
     
     conditions:
       - type: "pattern"
-        value: "DES|des"
+        value: "Cipher\\.DES|import.*\\bDES\\b|from.*\\bDES\\b|createCipher\\(['\"]des['\"]\\)|algorithm\\s*=\\s*['\"]DES['\"]|cipher\\s*=\\s*['\"]DES['\"]|\\.DES\\.|\\bDES\\.new\\b"
       - type: "function_call"
-        value: ["DES.new", "crypto.createCipher('des')"]
+        value: ["DES.new", "crypto.createCipher('des')", "Crypto.Cipher.DES.new"]
     
     exploit_templates:
       - type: "payload"
@@ -83,9 +83,9 @@ rules:
     
     conditions:
       - type: "pattern"
-        value: "RC4|rc4"
+        value: "\\bRC4\\b|\\bARC4\\b|Cipher\\.RC4|import.*RC4|from.*RC4|createCipher\\(['\"]rc4['\"]\\)|algorithm.*['\"]RC4['\"]|cipher.*['\"]RC4['\"]"
       - type: "function_call"
-        value: ["ARC4.new", "crypto.createCipher('rc4')"]
+        value: ["ARC4.new", "crypto.createCipher('rc4')", "Crypto.Cipher.ARC4.new"]
     
     exploit_templates:
       - type: "payload"
@@ -155,7 +155,7 @@ rules:
     
     conditions:
       - type: "pattern"
-        value: "ECB|ecb"
+        value: "\\bECB\\b|MODE_ECB|mode.*['\"]ECB['\"]|AES\\.MODE_ECB|Cipher.*ECB"
       - type: "function_call"
         value: ["MODE_ECB", "createCipher"]
     

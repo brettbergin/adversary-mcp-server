@@ -107,7 +107,7 @@ rules:
       - type: "function_call"
         value: ["hashlib.md5", "hashlib.sha1", "Crypto.Hash.MD5", "Crypto.Hash.SHA1"]
       - type: "pattern"
-        value: "DES|RC4|MD5|SHA1"
+        value: "Cipher\\.DES|\\bDES\\.new\\b|\\bRC4\\.new\\b|Cipher\\.RC4|hashlib\\.md5|hashlib\\.sha1|Crypto\\.Hash\\.MD5|Crypto\\.Hash\\.SHA1"
     
     exploit_templates:
       - type: "python"
