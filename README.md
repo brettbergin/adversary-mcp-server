@@ -91,7 +91,7 @@ Create `.cursor/mcp.json` in your project or `~/.cursor/mcp.json` globally:
       "command": "/Users/<user>/envs/.venv/bin/python",
       "args": ["-m", "adversary_mcp_server.server"],
       "env": {
-        "ADVERSARY_CONFIG_DIR": "~/.local/share/adversary-mcp-server
+        "ADVERSARY_CONFIG_DIR": "~/.local/share/adversary-mcp-server"
       }
     }
   }
