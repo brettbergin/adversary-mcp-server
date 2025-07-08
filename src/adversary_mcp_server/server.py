@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 
 from .ast_scanner import ASTScanner
 from .credential_manager import CredentialManager, CredentialNotFoundError
+from .enhanced_scanner import EnhancedScanner
 from .exploit_generator import ExploitGenerator
 from .threat_engine import Language, Severity, ThreatEngine, ThreatMatch
 
@@ -67,6 +68,7 @@ class AdversaryMCPServer:
         # Initialize core components
         self.threat_engine = ThreatEngine()
         self.ast_scanner = ASTScanner(self.threat_engine)
+        self.enhanced_scanner = EnhancedScanner(self.threat_engine, self.credential_manager)
         self.exploit_generator = ExploitGenerator(self.credential_manager)
 
         # Set up server handlers
@@ -270,7 +272,11 @@ class AdversaryMCPServer:
                             },
                             "enable_llm": {
                                 "type": "boolean",
-                                "description": "Enable LLM-based analysis",
+                                "description": "Enable LLM for exploit generation",
+                            },
+                            "enable_llm_analysis": {
+                                "type": "boolean",
+                                "description": "Enable LLM-based security analysis",
                             },
                         },
                         "required": [],
@@ -341,17 +347,29 @@ class AdversaryMCPServer:
 
             # Convert language string to enum
             language = Language(language_str)
-
-            # Scan the code
-            threats = self.ast_scanner.scan_code(content, "input.code", language)
-
-            # Filter by severity
             severity_enum = Severity(severity_threshold)
-            filtered_threats = self._filter_threats_by_severity(threats, severity_enum)
+
+            # Validate LLM configuration if LLM analysis is requested
+            if use_llm:
+                config = self.credential_manager.load_config()
+                is_valid, error_msg = config.validate_llm_configuration()
+                if not is_valid:
+                    logger.warning(f"LLM analysis requested but configuration invalid: {error_msg}")
+                    # Continue with rules-only analysis
+                    use_llm = False
+
+            # Scan the code using enhanced scanner
+            scan_result = self.enhanced_scanner.scan_code(
+                source_code=content,
+                file_path="input.code",
+                language=language,
+                use_llm=use_llm,
+                severity_threshold=severity_enum,
+            )
 
             # Generate exploits if requested
             if include_exploits:
-                for threat in filtered_threats:
+                for threat in scan_result.all_threats:
                     try:
                         exploits = self.exploit_generator.generate_exploits(
                             threat, content, use_llm
@@ -362,8 +380,8 @@ class AdversaryMCPServer:
                             f"Failed to generate exploits for {threat.rule_id}: {e}"
                         )
 
-            # Format results
-            result = self._format_scan_results(filtered_threats, "code")
+            # Format results with enhanced information
+            result = self._format_enhanced_scan_results(scan_result, "code")
             return [types.TextContent(type="text", text=result)]
 
         except Exception as e:
@@ -382,12 +400,24 @@ class AdversaryMCPServer:
             if not file_path.exists():
                 raise AdversaryToolError(f"File not found: {file_path}")
 
-            # Scan the file
-            threats = self.ast_scanner.scan_file(file_path)
-
-            # Filter by severity
+            # Convert severity threshold to enum
             severity_enum = Severity(severity_threshold)
-            filtered_threats = self._filter_threats_by_severity(threats, severity_enum)
+
+            # Validate LLM configuration if LLM analysis is requested
+            if use_llm:
+                config = self.credential_manager.load_config()
+                is_valid, error_msg = config.validate_llm_configuration()
+                if not is_valid:
+                    logger.warning(f"LLM analysis requested but configuration invalid: {error_msg}")
+                    # Continue with rules-only analysis
+                    use_llm = False
+
+            # Scan the file using enhanced scanner
+            scan_result = self.enhanced_scanner.scan_file(
+                file_path=file_path,
+                use_llm=use_llm,
+                severity_threshold=severity_enum,
+            )
 
             # Generate exploits if requested
             if include_exploits:
@@ -398,7 +428,7 @@ class AdversaryMCPServer:
                 except Exception:
                     pass
 
-                for threat in filtered_threats:
+                for threat in scan_result.all_threats:
                     try:
                         exploits = self.exploit_generator.generate_exploits(
                             threat, file_content, use_llm
@@ -409,8 +439,8 @@ class AdversaryMCPServer:
                             f"Failed to generate exploits for {threat.rule_id}: {e}"
                         )
 
-            # Format results
-            result = self._format_scan_results(filtered_threats, str(file_path))
+            # Format results with enhanced information
+            result = self._format_enhanced_scan_results(scan_result, str(file_path))
             return [types.TextContent(type="text", text=result)]
 
         except Exception as e:
@@ -432,16 +462,35 @@ class AdversaryMCPServer:
             if not directory_path.exists():
                 raise AdversaryToolError(f"Directory not found: {directory_path}")
 
-            # Scan the directory
-            threats = self.ast_scanner.scan_directory(directory_path, recursive)
-
-            # Filter by severity
+            # Convert severity threshold to enum
             severity_enum = Severity(severity_threshold)
-            filtered_threats = self._filter_threats_by_severity(threats, severity_enum)
+
+            # Validate LLM configuration if LLM analysis is requested
+            if use_llm:
+                config = self.credential_manager.load_config()
+                is_valid, error_msg = config.validate_llm_configuration()
+                if not is_valid:
+                    logger.warning(f"LLM analysis requested but configuration invalid: {error_msg}")
+                    # Continue with rules-only analysis
+                    use_llm = False
+
+            # Scan the directory using enhanced scanner
+            scan_results = self.enhanced_scanner.scan_directory(
+                directory_path=directory_path,
+                recursive=recursive,
+                use_llm=use_llm,
+                severity_threshold=severity_enum,
+                max_files=50,  # Limit files for performance
+            )
+
+            # Combine all threats from all files
+            all_threats = []
+            for scan_result in scan_results:
+                all_threats.extend(scan_result.all_threats)
 
             # Generate exploits if requested (limited for directory scans)
             if include_exploits:
-                for threat in filtered_threats[:10]:  # Limit to first 10 threats
+                for threat in all_threats[:10]:  # Limit to first 10 threats
                     try:
                         exploits = self.exploit_generator.generate_exploits(
                             threat, "", use_llm
@@ -452,8 +501,8 @@ class AdversaryMCPServer:
                             f"Failed to generate exploits for {threat.rule_id}: {e}"
                         )
 
-            # Format results
-            result = self._format_scan_results(filtered_threats, str(directory_path))
+            # Format results with enhanced information
+            result = self._format_directory_scan_results(scan_results, str(directory_path))
             return [types.TextContent(type="text", text=result)]
 
         except Exception as e:
@@ -626,18 +675,30 @@ class AdversaryMCPServer:
             if "enable_llm" in arguments:
                 config.enable_exploit_generation = arguments["enable_llm"]
 
+            if "enable_llm_analysis" in arguments:
+                config.enable_llm_analysis = arguments["enable_llm_analysis"]
+
             # Save configuration
             self.credential_manager.store_config(config)
 
-            # Reinitialize exploit generator with new config
+            # Reinitialize components with new config
             self.exploit_generator = ExploitGenerator(self.credential_manager)
+            self.enhanced_scanner = EnhancedScanner(self.threat_engine, self.credential_manager)
 
             result = "✅ Configuration updated successfully!\n\n"
             result += "**Current Settings:**\n"
             result += f"- OpenAI API Key: {'✓ Configured' if config.openai_api_key else '✗ Not configured'}\n"
             result += f"- Severity Threshold: {config.severity_threshold}\n"
             result += f"- Exploit Safety Mode: {'✓ Enabled' if config.exploit_safety_mode else '✗ Disabled'}\n"
-            result += f"- LLM Generation: {'✓ Enabled' if config.enable_exploit_generation else '✗ Disabled'}\n"
+            result += f"- LLM Exploit Generation: {'✓ Enabled' if config.enable_exploit_generation else '✗ Disabled'}\n"
+            result += f"- LLM Security Analysis: {'✓ Enabled' if config.enable_llm_analysis else '✗ Disabled'}\n"
+            
+            # Validate LLM configuration
+            is_valid, error_msg = config.validate_llm_configuration()
+            if not is_valid:
+                result += f"- LLM Configuration: ❌ {error_msg}\n"
+            else:
+                result += f"- LLM Configuration: ✅ Valid\n"
 
             return [types.TextContent(type="text", text=result)]
 
@@ -818,6 +879,172 @@ class AdversaryMCPServer:
                 result += "\n"
 
             result += "---\n\n"
+
+        return result
+    
+    def _format_enhanced_scan_results(self, scan_result, scan_target: str) -> str:
+        """Format enhanced scan results for display.
+
+        Args:
+            scan_result: Enhanced scan result object
+            scan_target: Target that was scanned
+
+        Returns:
+            Formatted scan results string
+        """
+        from .enhanced_scanner import EnhancedScanResult
+        
+        result = f"# Enhanced Security Scan Results for {scan_target}\n\n"
+        
+        if not scan_result.all_threats:
+            result += "🎉 **No security vulnerabilities found!**\n\n"
+            # Still show analysis overview
+            result += "## Analysis Overview\n\n"
+            result += f"**Rules Engine:** {scan_result.stats['rules_threats']} findings\n"
+            result += f"**LLM Analysis:** {scan_result.stats['llm_threats']} findings\n"
+            result += f"**Language:** {scan_result.language.value}\n\n"
+            return result
+
+        # Analysis overview
+        result += "## Analysis Overview\n\n"
+        result += f"**Rules Engine:** {scan_result.stats['rules_threats']} findings\n"
+        result += f"**LLM Analysis:** {scan_result.stats['llm_threats']} findings\n"
+        result += f"**Total Unique:** {scan_result.stats['unique_threats']} findings\n"
+        result += f"**Language:** {scan_result.language.value}\n\n"
+
+        # Summary by severity
+        severity_counts = scan_result.stats['severity_counts']
+        result += "## Summary\n"
+        result += f"**Total Threats:** {len(scan_result.all_threats)}\n"
+        for severity in ["critical", "high", "medium", "low"]:
+            count = severity_counts.get(severity, 0)
+            if count > 0:
+                emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}[severity]
+                result += f"**{severity.capitalize()}:** {count} {emoji}\n"
+        result += "\n"
+
+        # Scan metadata
+        metadata = scan_result.scan_metadata
+        if metadata.get('llm_scan_success') is not None:
+            result += "## Scan Details\n\n"
+            result += f"**Rules Scan:** {'✅ Success' if metadata.get('rules_scan_success') else '❌ Failed'}\n"
+            result += f"**LLM Scan:** {'✅ Success' if metadata.get('llm_scan_success') else '❌ Failed'}\n"
+            if metadata.get('source_lines'):
+                result += f"**Source Lines:** {metadata['source_lines']}\n"
+            result += "\n"
+
+        # Detailed findings
+        result += "## Detailed Results\n\n"
+
+        for i, threat in enumerate(scan_result.all_threats, 1):
+            severity_emoji = {
+                "critical": "🔴",
+                "high": "🟠",
+                "medium": "🟡",
+                "low": "🟢",
+            }.get(threat.severity.value, "⚪")
+
+            # Identify source (rules vs LLM)
+            source_icon = "🤖" if threat.rule_id.startswith("llm_") else "📋"
+            source_text = "LLM Analysis" if threat.rule_id.startswith("llm_") else "Rules Engine"
+
+            result += f"### {i}. {threat.rule_name} {severity_emoji} {source_icon}\n"
+            result += f"**Source:** {source_text}\n"
+            result += f"**File:** {threat.file_path}:{threat.line_number}\n"
+            result += f"**Severity:** {threat.severity.value.capitalize()}\n"
+            result += f"**Category:** {threat.category.value.capitalize()}\n"
+            result += f"**Confidence:** {threat.confidence:.2f}\n"
+            result += f"**Description:** {threat.description}\n\n"
+
+            if threat.code_snippet:
+                result += "**Code Context:**\n"
+                result += f"```\n{threat.code_snippet}\n```\n\n"
+
+            if threat.exploit_examples:
+                result += "**Exploit Examples:**\n"
+                for j, exploit in enumerate(threat.exploit_examples, 1):
+                    result += f"*Example {j}:*\n"
+                    result += f"```\n{exploit}\n```\n\n"
+
+            if threat.remediation:
+                result += f"**Remediation:** {threat.remediation}\n\n"
+
+            if threat.references:
+                result += "**References:**\n"
+                for ref in threat.references:
+                    result += f"- {ref}\n"
+                result += "\n"
+
+            result += "---\n\n"
+
+        return result
+    
+    def _format_directory_scan_results(self, scan_results, scan_target: str) -> str:
+        """Format directory scan results for display.
+
+        Args:
+            scan_results: List of enhanced scan results
+            scan_target: Target directory that was scanned
+
+        Returns:
+            Formatted scan results string
+        """
+        if not scan_results:
+            return f"# Directory Scan Results for {scan_target}\n\n❌ No files found to scan\n"
+
+        # Combine statistics
+        total_threats = sum(len(result.all_threats) for result in scan_results)
+        total_files = len(scan_results)
+        files_with_threats = sum(1 for result in scan_results if result.all_threats)
+        
+        # Count by severity across all files
+        severity_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+        for result in scan_results:
+            for severity, count in result.stats['severity_counts'].items():
+                severity_counts[severity] += count
+
+        # Build result string
+        result = f"# Enhanced Directory Scan Results for {scan_target}\n\n"
+        
+        if total_threats == 0:
+            result += "🎉 **No security vulnerabilities found in any files!**\n\n"
+            result += f"**Files Scanned:** {total_files}\n"
+            return result
+
+        result += "## Overview\n\n"
+        result += f"**Files Scanned:** {total_files}\n"
+        result += f"**Files with Issues:** {files_with_threats}\n"
+        result += f"**Total Threats:** {total_threats}\n\n"
+
+        # Summary by severity
+        result += "## Summary\n"
+        for severity in ["critical", "high", "medium", "low"]:
+            count = severity_counts.get(severity, 0)
+            if count > 0:
+                emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}[severity]
+                result += f"**{severity.capitalize()}:** {count} {emoji}\n"
+        result += "\n"
+
+        # File-by-file breakdown
+        result += "## Files with Security Issues\n\n"
+        
+        for scan_result in scan_results:
+            if scan_result.all_threats:
+                result += f"### {scan_result.file_path}\n"
+                result += f"Found {len(scan_result.all_threats)} issue(s)\n\n"
+                
+                for threat in scan_result.all_threats:
+                    severity_emoji = {
+                        "critical": "🔴",
+                        "high": "🟠",
+                        "medium": "🟡",
+                        "low": "🟢",
+                    }.get(threat.severity.value, "⚪")
+                    
+                    source_icon = "🤖" if threat.rule_id.startswith("llm_") else "📋"
+                    
+                    result += f"- **{threat.rule_name}** {severity_emoji} {source_icon}\n"
+                    result += f"  Line {threat.line_number}: {threat.description}\n\n"
 
         return result
 

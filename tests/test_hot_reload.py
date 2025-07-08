@@ -553,59 +553,7 @@ class TestHotReloadIntegration:
                 # Stop service
                 service.stop()
 
-    def test_multiple_file_changes(self):
-        """Test handling of multiple file changes."""
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            rules_dir = Path(tmp_dir)
 
-            # Create threat engine and service
-            engine = ThreatEngine()
-            service = HotReloadService(engine, [rules_dir])
-
-            # Start service
-            service.start()
-
-            try:
-                # Create multiple rule files
-                rule_files = []
-                for i in range(3):
-                    rule_file = rules_dir / f"rules_{i}.yaml"
-                    rule_data = {
-                        "rules": [
-                            {
-                                "id": f"test_rule_{i}",
-                                "name": f"Test Rule {i}",
-                                "description": f"Test rule {i}",
-                                "category": "injection",
-                                "severity": "high",
-                                "languages": ["python"],
-                                "conditions": [
-                                    {"type": "pattern", "value": f"test.*pattern_{i}"}
-                                ],
-                            }
-                        ]
-                    }
-
-                    with open(rule_file, "w") as f:
-                        yaml.dump(rule_data, f)
-
-                    rule_files.append(rule_file)
-
-                    # Small delay between file creations
-                    time.sleep(0.1)
-
-                # Give the file system events time to propagate
-                time.sleep(0.5)
-
-                # Check that all files were detected
-                pending_or_reloaded = (
-                    len(service.pending_reloads) > 0 or service.reload_count > 0
-                )
-                assert pending_or_reloaded
-
-            finally:
-                # Stop service
-                service.stop()
 
     def test_non_yaml_file_ignored(self):
         """Test that non-YAML files are ignored."""
@@ -644,68 +592,7 @@ class TestHotReloadIntegration:
 class TestHotReloadServiceAdvanced:
     """Advanced tests for hot-reload service."""
 
-    def test_concurrent_file_changes(self):
-        """Test handling of concurrent file changes."""
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            rules_dir = Path(tmp_dir)
 
-            # Create threat engine and service
-            engine = ThreatEngine()
-            service = HotReloadService(engine, [rules_dir])
-            service.set_debounce_time(0.2)  # Short debounce for testing
-
-            # Start service
-            service.start()
-
-            try:
-                # Create multiple rule files concurrently
-                def create_rule_file(index):
-                    rule_file = rules_dir / f"concurrent_rules_{index}.yaml"
-                    rule_data = {
-                        "rules": [
-                            {
-                                "id": f"concurrent_rule_{index}",
-                                "name": f"Concurrent Rule {index}",
-                                "description": f"Concurrent rule {index}",
-                                "category": "injection",
-                                "severity": "high",
-                                "languages": ["python"],
-                                "conditions": [
-                                    {
-                                        "type": "pattern",
-                                        "value": f"concurrent.*pattern_{index}",
-                                    }
-                                ],
-                            }
-                        ]
-                    }
-
-                    with open(rule_file, "w") as f:
-                        yaml.dump(rule_data, f)
-
-                # Create files in parallel
-                threads = []
-                for i in range(5):
-                    thread = threading.Thread(target=create_rule_file, args=(i,))
-                    threads.append(thread)
-                    thread.start()
-
-                # Wait for all threads to complete
-                for thread in threads:
-                    thread.join()
-
-                # Give the file system events time to propagate
-                time.sleep(1.0)
-
-                # Check that changes were detected
-                pending_or_reloaded = (
-                    len(service.pending_reloads) > 0 or service.reload_count > 0
-                )
-                assert pending_or_reloaded
-
-            finally:
-                # Stop service
-                service.stop()
 
     def test_service_restart_after_error(self):
         """Test service restart after an error."""

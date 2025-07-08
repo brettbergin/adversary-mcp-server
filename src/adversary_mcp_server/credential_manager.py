@@ -8,7 +8,7 @@ import stat
 from base64 import b64decode, b64encode
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import keyring
 from cryptography.fernet import Fernet, InvalidToken
@@ -25,6 +25,7 @@ class SecurityConfig:
     openai_api_key: str = ""
     openai_model: str = "gpt-4"
     openai_max_tokens: int = 2048
+    enable_llm_analysis: bool = True  # Enable LLM-based security analysis
 
     # Scanner Configuration
     enable_ast_scanning: bool = True
@@ -48,6 +49,48 @@ class SecurityConfig:
     include_exploit_examples: bool = True
     include_remediation_advice: bool = True
     verbose_output: bool = False
+
+    def validate_llm_configuration(self) -> tuple[bool, str]:
+        """Validate LLM configuration.
+        
+        Returns:
+            Tuple of (is_valid, error_message)
+        """
+        if self.enable_llm_analysis and not self.openai_api_key:
+            return False, "OpenAI API key is required when LLM analysis is enabled. Set it using adv_configure_settings."
+        
+        if self.enable_llm_analysis and self.openai_api_key and not self.openai_api_key.startswith("sk-"):
+            return False, "Invalid OpenAI API key format. API keys should start with 'sk-'."
+        
+        return True, ""
+    
+    def is_llm_analysis_available(self) -> bool:
+        """Check if LLM analysis is available and properly configured.
+        
+        Returns:
+            True if LLM analysis can be used
+        """
+        return self.enable_llm_analysis and bool(self.openai_api_key)
+    
+    def get_configuration_summary(self) -> dict[str, Any]:
+        """Get a summary of the current configuration.
+        
+        Returns:
+            Dictionary with configuration summary
+        """
+        is_valid, error = self.validate_llm_configuration()
+        
+        return {
+            "llm_analysis_enabled": self.enable_llm_analysis,
+            "llm_analysis_available": self.is_llm_analysis_available(),
+            "openai_api_key_configured": bool(self.openai_api_key),
+            "openai_model": self.openai_model,
+            "configuration_valid": is_valid,
+            "configuration_error": error if not is_valid else None,
+            "exploit_generation_enabled": self.enable_exploit_generation,
+            "exploit_safety_mode": self.exploit_safety_mode,
+            "severity_threshold": self.severity_threshold,
+        }
 
 
 class CredentialError(Exception):

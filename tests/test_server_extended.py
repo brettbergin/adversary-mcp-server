@@ -78,7 +78,7 @@ class TestAdversaryMCPServerExtended:
                 "use_llm": False,
             }
 
-            with patch.object(server.ast_scanner, "scan_file") as mock_scan:
+            with patch.object(server.enhanced_scanner, "scan_file") as mock_scan:
                 threat = ThreatMatch(
                     rule_id="sql_injection",
                     rule_name="SQL Injection",
@@ -88,7 +88,17 @@ class TestAdversaryMCPServerExtended:
                     file_path=temp_file,
                     line_number=1,
                 )
-                mock_scan.return_value = [threat]
+                # Mock the enhanced scanner to return an EnhancedScanResult
+                from adversary_mcp_server.enhanced_scanner import EnhancedScanResult
+                from adversary_mcp_server.threat_engine import Language
+                mock_result = EnhancedScanResult(
+                    rules_threats=[threat],
+                    llm_threats=[],
+                    file_path=temp_file,
+                    language=Language.PYTHON,
+                    scan_metadata={"rules_engine": {"findings": 1}, "llm_analysis": {"findings": 0}}
+                )
+                mock_scan.return_value = mock_result
 
                 result = await server._handle_scan_file(arguments)
 
@@ -121,7 +131,7 @@ class TestAdversaryMCPServerExtended:
                 "use_llm": False,
             }
 
-            with patch.object(server.ast_scanner, "scan_directory") as mock_scan:
+            with patch.object(server.enhanced_scanner, "scan_directory") as mock_scan:
                 threat = ThreatMatch(
                     rule_id="eval_injection",
                     rule_name="Code Injection",
@@ -131,7 +141,17 @@ class TestAdversaryMCPServerExtended:
                     file_path=str(test_file),
                     line_number=1,
                 )
-                mock_scan.return_value = [threat]
+                # Mock the enhanced scanner to return a list of EnhancedScanResults
+                from adversary_mcp_server.enhanced_scanner import EnhancedScanResult
+                from adversary_mcp_server.threat_engine import Language
+                mock_result = EnhancedScanResult(
+                    rules_threats=[threat],
+                    llm_threats=[],
+                    file_path=str(test_file),
+                    language=Language.PYTHON,
+                    scan_metadata={"rules_engine": {"findings": 1}, "llm_analysis": {"findings": 0}}
+                )
+                mock_scan.return_value = [mock_result]
 
                 with patch.object(
                     server.exploit_generator,
@@ -448,8 +468,22 @@ class TestAdversaryMCPServerExtended:
                     )
                 )
 
+            # Mock the enhanced scanner to return a list of EnhancedScanResults
+            from adversary_mcp_server.enhanced_scanner import EnhancedScanResult
+            from adversary_mcp_server.threat_engine import Language
+            mock_results = []
+            for threat in threats:
+                mock_result = EnhancedScanResult(
+                    rules_threats=[threat],
+                    llm_threats=[],
+                    file_path=threat.file_path,
+                    language=Language.PYTHON,
+                    scan_metadata={"rules_engine": {"findings": 1}, "llm_analysis": {"findings": 0}}
+                )
+                mock_results.append(mock_result)
+            
             with patch.object(
-                server.ast_scanner, "scan_directory", return_value=threats
+                server.enhanced_scanner, "scan_directory", return_value=mock_results
             ):
                 with patch.object(
                     server.exploit_generator, "generate_exploits"
