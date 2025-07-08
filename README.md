@@ -5,8 +5,9 @@
 [![PyPI version](https://badge.fury.io/py/adversary-mcp-server.svg)](https://badge.fury.io/py/adversary-mcp-server)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://img.shields.io/badge/tests-294%20passed-brightgreen.svg)](https://github.com/brettbergin/adversary-mcp-server)
-[![Version](https://img.shields.io/badge/version-v0.6.1-blue.svg)](https://pypi.org/project/adversary-mcp-server/)
+[![Tests](https://img.shields.io/badge/tests-334%20passed%20%7C%20100%25-brightgreen.svg)](https://github.com/brettbergin/adversary-mcp-server)
+[![Coverage](https://img.shields.io/badge/coverage-87.81%25-brightgreen.svg)](https://github.com/brettbergin/adversary-mcp-server)
+[![Version](https://img.shields.io/badge/version-v0.6.2-blue.svg)](https://pypi.org/project/adversary-mcp-server/)
 
 **Software security analysis with hybrid AI-powered threat detection and configurable built-in and custom rule management**
 
