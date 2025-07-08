@@ -1,6 +1,6 @@
 [project]
 name = "adversary-mcp-server"
-version = "0.6.2"
+version = "0.6.4"
 description = "MCP server for adversarial security analysis and vulnerability detection"
 readme = "README.md"
 authors = [
@@ -93,7 +93,7 @@ dev-dependencies = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/adversary_mcp_server"]
+packages = ["src/adversary_mcp_server", "rules"]
 
 [tool.mypy]
 python_version = "3.10"
