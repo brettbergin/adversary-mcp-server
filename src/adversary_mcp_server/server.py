@@ -12,7 +12,8 @@ from typing import Any, Dict, List, Optional
 from mcp import types
 from mcp.server import Server
 from mcp.server.models import InitializationOptions
-from mcp.types import Tool
+from mcp.server.stdio import stdio_server  # Add this import
+from mcp.types import Tool, ServerCapabilities, ToolsCapability
 from pydantic import BaseModel
 
 from .ast_scanner import ASTScanner
@@ -1036,15 +1037,18 @@ class AdversaryMCPServer:
 
     async def run(self) -> None:
         """Run the MCP server."""
-        # The stdio_server is no longer needed as the server is prompt-based.
-        # The server.run method expects a read_stream and write_stream.
-        # For a prompt-based server, these would typically be stdin/stdout or
-        # a socket connection.
-        # For now, we'll just run it with dummy streams or remove if not used.
-        # Since the prompt-based approach is client-side, we don't need a server.run here.
-        # The server object itself is still useful for listing tools and handling tool calls.
-        # The actual prompt exchange happens via the client.
-        pass # Removed stdio_server as it's not applicable for prompt-based LLM
+        async with stdio_server() as (read_stream, write_stream):
+            await self.server.run(
+                read_stream,
+                write_stream,
+                InitializationOptions(
+                    server_name="adversary-mcp-server",
+                    server_version="0.7.1",
+                    capabilities=ServerCapabilities(
+                        tools=ToolsCapability(listChanged=True)
+                    ),
+                ),
+            )
 
     def _add_llm_analysis_prompts(self, content: str, language: Language, file_path: str, include_header: bool = True) -> str:
         """Add LLM analysis prompts to scan results."""
@@ -1098,18 +1102,7 @@ class AdversaryMCPServer:
 async def async_main() -> None:
     """Async main function."""
     server = AdversaryMCPServer()
-    # The server is now prompt-based, so we don't run it in a loop here.
-    # The client will handle the prompt exchange.
-    # await server.run() # This line is removed as the server is now prompt-based
-    print("Adversary MCP Server is ready. Use the client to interact.")
-    print("Available tools: adv_scan_code, adv_scan_file, adv_scan_directory, adv_generate_exploit, adv_list_rules, adv_get_rule_details, adv_configure_settings, adv_get_status, adv_get_version")
-    print("")
-    print("🤖 LLM Integration: Set use_llm=true in scan tools to get prompts for your client's LLM")
-    print("")
-    print("Example usage:")
-    print("  adv_scan_code content='print(\"hello\")' language='python' use_llm=true")
-    print("  adv_scan_file file_path='script.py' use_llm=true")
-    print("  adv_generate_exploit vulnerability_type='xss' code_context='<script>alert(\"XSS\")</script>' target_language='javascript' use_llm=true")
+    await server.run()
 
 
 def main() -> None:

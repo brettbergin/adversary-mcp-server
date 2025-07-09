@@ -658,11 +658,32 @@ class TestAdversaryMCPServerRuntime:
         """Test server run method."""
         server = AdversaryMCPServer()
 
-        # Test that run method works (it's a pass statement in client-based mode)
-        await server.run()
-        
-        # Since run() is now a pass statement, we just verify it completes without error
-        assert server is not None
+        # Mock stdio_server since the run method now uses it
+        with patch("adversary_mcp_server.server.stdio_server") as mock_stdio:
+            # Create a proper async context manager mock
+            mock_context = AsyncMock()
+            mock_context.__aenter__ = AsyncMock(return_value=("read", "write"))
+            mock_context.__aexit__ = AsyncMock(return_value=None)
+            mock_stdio.return_value = mock_context
+            
+            # Mock the server.run method to avoid actually running the MCP server
+            with patch.object(server.server, "run") as mock_run:
+                mock_run.return_value = None
+                
+                # Test that run method works
+                await server.run()
+                
+                # Verify stdio_server was called
+                mock_stdio.assert_called_once()
+                # Verify server.run was called with the expected arguments
+                mock_run.assert_called_once()
+                
+                # Verify the call arguments - should be read_stream, write_stream, and InitializationOptions
+                call_args = mock_run.call_args
+                assert len(call_args[0]) == 3  # Should have 3 positional arguments
+                assert call_args[0][0] == "read"  # read_stream
+                assert call_args[0][1] == "write"  # write_stream
+                # The third argument should be InitializationOptions
 
     def test_main_functions(self):
         """Test main and async_main functions."""
@@ -671,13 +692,15 @@ class TestAdversaryMCPServerRuntime:
         # Test async_main
         with patch("adversary_mcp_server.server.AdversaryMCPServer") as mock_server:
             mock_instance = Mock()
+            mock_instance.run = AsyncMock()
             mock_server.return_value = mock_instance
 
-            # Run async_main (it doesn't call run() anymore, just prints messages)
+            # Run async_main (it now calls server.run())
             asyncio.run(async_main())
             
-            # Verify server was created
+            # Verify server was created and run() was called
             mock_server.assert_called_once()
+            mock_instance.run.assert_called_once()
 
         # Test main function
         with patch("adversary_mcp_server.server.asyncio.run") as mock_run:
