@@ -28,17 +28,29 @@ class TestSecurityConfigCorrected:
     def test_security_config_defaults(self):
         """Test SecurityConfig default values."""
         config = SecurityConfig()
-
-        assert config.openai_api_key == ""
-        assert config.openai_model == "gpt-4"
-        assert config.openai_max_tokens == 2048
+        
+        # Check LLM Configuration
+        assert config.enable_llm_analysis is False
+        
+        # Check Scanner Configuration 
         assert config.enable_ast_scanning is True
+        assert config.enable_semgrep_scanning is True
+        assert config.enable_bandit_scanning is True
+        
+        # Check Exploit Generation
         assert config.enable_exploit_generation is True
         assert config.exploit_safety_mode is True
+        
+        # Check Analysis Configuration
         assert config.max_file_size_mb == 10
         assert config.max_scan_depth == 5
         assert config.timeout_seconds == 300
+        
+        # Check Rule Configuration
+        assert config.custom_rules_path is None
         assert config.severity_threshold == "medium"
+        
+        # Check Reporting Configuration
         assert config.include_exploit_examples is True
         assert config.include_remediation_advice is True
         assert config.verbose_output is False
@@ -46,46 +58,41 @@ class TestSecurityConfigCorrected:
     def test_security_config_custom_values(self):
         """Test SecurityConfig with custom values."""
         config = SecurityConfig(
-            openai_api_key="sk-custom123",
-            openai_model="gpt-3.5-turbo",
-            openai_max_tokens=1024,
+            enable_llm_analysis=True,
             enable_ast_scanning=False,
-            enable_exploit_generation=False,
+            severity_threshold="high",
             exploit_safety_mode=False,
             max_file_size_mb=20,
-            max_scan_depth=10,
-            timeout_seconds=600,
-            severity_threshold="high",
-            include_exploit_examples=False,
-            include_remediation_advice=False,
-            verbose_output=True,
+            custom_rules_path="/path/to/rules",
+            verbose_output=True
         )
-
-        assert config.openai_api_key == "sk-custom123"
-        assert config.openai_model == "gpt-3.5-turbo"
-        assert config.openai_max_tokens == 1024
+        
+        assert config.enable_llm_analysis is True
         assert config.enable_ast_scanning is False
-        assert config.enable_exploit_generation is False
+        assert config.severity_threshold == "high"
         assert config.exploit_safety_mode is False
         assert config.max_file_size_mb == 20
-        assert config.max_scan_depth == 10
-        assert config.timeout_seconds == 600
-        assert config.severity_threshold == "high"
-        assert config.include_exploit_examples is False
-        assert config.include_remediation_advice is False
+        assert config.custom_rules_path == "/path/to/rules"
         assert config.verbose_output is True
 
     def test_security_config_is_dataclass(self):
-        """Test that SecurityConfig is a dataclass."""
+        """Test that SecurityConfig is a dataclass with expected fields."""
         config = SecurityConfig()
-
-        # Should be able to convert to dict using asdict
-        from dataclasses import asdict
-
-        config_dict = asdict(config)
-        assert isinstance(config_dict, dict)
-        assert "openai_api_key" in config_dict
-        assert "openai_model" in config_dict
+        
+        # Check that it's a dataclass with expected fields
+        expected_fields = {
+            'enable_llm_analysis', 'enable_ast_scanning', 'enable_semgrep_scanning',
+            'enable_bandit_scanning', 'enable_exploit_generation', 'exploit_safety_mode',
+            'max_file_size_mb', 'max_scan_depth', 'timeout_seconds', 'custom_rules_path',
+            'severity_threshold', 'include_exploit_examples', 'include_remediation_advice',
+            'verbose_output'
+        }
+        
+        actual_fields = set(config.__dict__.keys())
+        
+        # Check that all expected fields are present
+        for field in expected_fields:
+            assert field in actual_fields, f"Missing field: {field}"
 
 
 class TestCredentialManagerCorrected:
@@ -127,23 +134,25 @@ class TestCredentialManagerCorrected:
             mock_keyring.set_password.side_effect = KeyringError("Store failed")
 
             # Create a config
-            config = SecurityConfig(openai_api_key="sk-test123")
+            config = SecurityConfig(
+                enable_llm_analysis=True,
+                severity_threshold="high"
+            )
             manager.store_config(config)
 
             # Now should have config (stored in file since keyring failed)
             assert manager.has_config()
 
     def test_store_and_load_config(self):
-        """Test storing and loading config."""
+        """Test storing and loading configuration."""
         with tempfile.TemporaryDirectory() as temp_dir:
             manager = CredentialManager(config_dir=Path(temp_dir))
 
             # Create test config
             config = SecurityConfig(
-                openai_api_key="sk-test123",
-                openai_model="gpt-4",
-                enable_exploit_generation=True,
+                enable_llm_analysis=True,
                 severity_threshold="high",
+                exploit_safety_mode=False
             )
 
             # Store config
@@ -153,31 +162,35 @@ class TestCredentialManagerCorrected:
             loaded_config = manager.load_config()
 
             # Verify loaded config
-            assert loaded_config.openai_api_key == "sk-test123"
-            assert loaded_config.openai_model == "gpt-4"
-            assert loaded_config.enable_exploit_generation is True
+            assert loaded_config.enable_llm_analysis is True
             assert loaded_config.severity_threshold == "high"
+            assert loaded_config.exploit_safety_mode is False
 
     def test_load_config_default_when_missing(self):
-        """Test loading default config when file missing."""
+        """Test loading config returns default when missing."""
         with tempfile.TemporaryDirectory() as temp_dir:
             manager = CredentialManager(config_dir=Path(temp_dir))
 
-            # Load config when file doesn't exist
+            # Ensure no config exists
+            manager.delete_config()
+            
+            # Load config should return defaults
             config = manager.load_config()
-
-            # Should return default config
-            assert isinstance(config, SecurityConfig)
-            # Note: config may have values from environment or other sources
-            assert config.openai_model == "gpt-4"
+            
+            assert config.enable_llm_analysis is False
+            assert config.severity_threshold == "medium"
+            assert config.exploit_safety_mode is True
 
     def test_delete_config(self):
-        """Test deleting config."""
+        """Test deleting configuration."""
         with tempfile.TemporaryDirectory() as temp_dir:
             manager = CredentialManager(config_dir=Path(temp_dir))
 
             # Store a config
-            config = SecurityConfig(openai_api_key="sk-to-delete")
+            config = SecurityConfig(
+                enable_llm_analysis=True,
+                severity_threshold="critical"
+            )
             manager.store_config(config)
             assert manager.has_config()
 
@@ -187,62 +200,19 @@ class TestCredentialManagerCorrected:
             # Should no longer have config
             assert not manager.has_config()
 
-    def test_get_openai_api_key(self):
-        """Test getting OpenAI API key."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            manager = CredentialManager(config_dir=Path(temp_dir))
-
-            # No config initially
-            assert manager.get_openai_api_key() is None
-
-            # Store config with API key
-            config = SecurityConfig(openai_api_key="sk-test-key")
-            manager.store_config(config)
-
-            # Should retrieve API key
-            assert manager.get_openai_api_key() == "sk-test-key"
-
-    def test_update_openai_api_key(self):
-        """Test updating OpenAI API key."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            manager = CredentialManager(config_dir=Path(temp_dir))
-
-            # Update API key
-            manager.update_openai_api_key("sk-new-key")
-
-            # Should be stored
-            assert manager.get_openai_api_key() == "sk-new-key"
-
-    @patch("adversary_mcp_server.credential_manager.keyring")
-    def test_keyring_fallback(self, mock_keyring):
-        """Test keyring fallback when keyring fails."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            manager = CredentialManager(config_dir=Path(temp_dir))
-
-            # Configure keyring to fail on store but succeed on load (for this test)
-            from keyring.errors import KeyringError
-
-            mock_keyring.set_password.side_effect = KeyringError("Keyring error")
-            mock_keyring.get_password.side_effect = KeyringError("Keyring error")
-
-            config = SecurityConfig(openai_api_key="sk-fallback-test")
-
-            # Should fallback to file storage
-            manager.store_config(config)
-
-            # Should be able to load
-            loaded_config = manager.load_config()
-            assert loaded_config.openai_api_key == "sk-fallback-test"
-
     def test_machine_id_generation(self):
         """Test machine ID generation."""
         with tempfile.TemporaryDirectory() as temp_dir:
             manager = CredentialManager(config_dir=Path(temp_dir))
-
-            # Should generate some machine ID
-            machine_id = manager._get_machine_id()
-            assert isinstance(machine_id, str)
-            assert len(machine_id) > 0
+            
+            # Get machine ID
+            machine_id1 = manager._get_machine_id()
+            machine_id2 = manager._get_machine_id()
+            
+            # Should be consistent
+            assert machine_id1 == machine_id2
+            assert isinstance(machine_id1, str)
+            assert len(machine_id1) > 0
 
     def test_encryption_methods(self):
         """Test encryption and decryption methods."""
@@ -304,7 +274,7 @@ class TestCredentialManagerCorrected:
 
     @patch("adversary_mcp_server.credential_manager.keyring")
     def test_config_file_creation(self, mock_keyring):
-        """Test that config file is created properly."""
+        """Test that config file is created with proper permissions."""
         with tempfile.TemporaryDirectory() as temp_dir:
             manager = CredentialManager(config_dir=Path(temp_dir))
 
@@ -314,7 +284,10 @@ class TestCredentialManagerCorrected:
             mock_keyring.set_password.side_effect = KeyringError("Keyring error")
             mock_keyring.get_password.side_effect = KeyringError("Keyring error")
 
-            config = SecurityConfig(openai_api_key="sk-file-test", verbose_output=True)
+            config = SecurityConfig(
+                enable_llm_analysis=True,
+                severity_threshold="medium"
+            )
 
             # Store config
             manager.store_config(config)
@@ -328,34 +301,34 @@ class TestCredentialManagerCorrected:
                 assert "openai_api_key" in content or "encrypted_data" in content
 
     def test_concurrent_config_access(self):
-        """Test concurrent access to config."""
+        """Test concurrent access to configuration."""
         with tempfile.TemporaryDirectory() as temp_dir:
             manager1 = CredentialManager(config_dir=Path(temp_dir))
             manager2 = CredentialManager(config_dir=Path(temp_dir))
 
             # Store config with manager1
-            config1 = SecurityConfig(openai_api_key="sk-concurrent1")
-            manager1.store_config(config1)
+            config = SecurityConfig(
+                enable_llm_analysis=True,
+                severity_threshold="high"
+            )
+            manager1.store_config(config)
 
-            # Read with manager2
-            config2 = manager2.load_config()
-            assert config2.openai_api_key == "sk-concurrent1"
-
-            # Update with manager2
-            config2.openai_api_key = "sk-concurrent2"
-            manager2.store_config(config2)
-
-            # Read with manager1
-            config3 = manager1.load_config()
-            assert config3.openai_api_key == "sk-concurrent2"
+            # Load with second manager (different instance)
+            manager2 = CredentialManager(config_dir=Path(temp_dir))
+            loaded_config = manager2.load_config()
+            
+            assert loaded_config.enable_llm_analysis is True
+            assert loaded_config.severity_threshold == "high"
 
     def test_config_directory_permissions(self):
-        """Test config directory permissions."""
+        """Test that config directory has proper permissions."""
         with tempfile.TemporaryDirectory() as temp_dir:
             manager = CredentialManager(config_dir=Path(temp_dir) / "secure")
 
             # Store config (should create directory)
-            config = SecurityConfig(openai_api_key="sk-permissions")
+            config = SecurityConfig(
+                enable_llm_analysis=True
+            )
             manager.store_config(config)
 
             # Directory should exist
@@ -363,11 +336,19 @@ class TestCredentialManagerCorrected:
             assert manager.config_dir.is_dir()
 
     def test_config_with_none_values(self):
-        """Test config with None values."""
-        config = SecurityConfig(
-            openai_api_key=None, custom_rules_path=None  # This should work
-        )
+        """Test configuration with None values."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
 
-        # None should be converted to empty string for API key
-        assert config.openai_api_key is None or config.openai_api_key == ""
-        assert config.custom_rules_path is None
+            # Test data
+            config = SecurityConfig(
+                custom_rules_path=None,
+                enable_llm_analysis=False
+            )
+            
+            # Store config
+            manager.store_config(config)
+            loaded_config = manager.load_config()
+            
+            assert loaded_config.custom_rules_path is None
+            assert loaded_config.enable_llm_analysis is False

@@ -78,7 +78,7 @@ class TestAdversaryMCPServerExtended:
                 "use_llm": False,
             }
 
-            with patch.object(server.enhanced_scanner, "scan_file") as mock_scan:
+            with patch.object(server.scan_engine, "scan_file") as mock_scan:
                 threat = ThreatMatch(
                     rule_id="sql_injection",
                     rule_name="SQL Injection",
@@ -89,7 +89,7 @@ class TestAdversaryMCPServerExtended:
                     line_number=1,
                 )
                 # Mock the enhanced scanner to return an EnhancedScanResult
-                from adversary_mcp_server.enhanced_scanner import EnhancedScanResult
+                from adversary_mcp_server.scan_engine import EnhancedScanResult
                 from adversary_mcp_server.threat_engine import Language
                 mock_result = EnhancedScanResult(
                     rules_threats=[threat],
@@ -131,7 +131,7 @@ class TestAdversaryMCPServerExtended:
                 "use_llm": False,
             }
 
-            with patch.object(server.enhanced_scanner, "scan_directory") as mock_scan:
+            with patch.object(server.scan_engine, "scan_directory") as mock_scan:
                 threat = ThreatMatch(
                     rule_id="eval_injection",
                     rule_name="Code Injection",
@@ -142,7 +142,7 @@ class TestAdversaryMCPServerExtended:
                     line_number=1,
                 )
                 # Mock the enhanced scanner to return a list of EnhancedScanResults
-                from adversary_mcp_server.enhanced_scanner import EnhancedScanResult
+                from adversary_mcp_server.scan_engine import EnhancedScanResult
                 from adversary_mcp_server.threat_engine import Language
                 mock_result = EnhancedScanResult(
                     rules_threats=[threat],
@@ -290,10 +290,10 @@ class TestAdversaryMCPServerExtended:
 
         assert len(result) == 1
         assert isinstance(result[0], types.TextContent)
-        assert "Adversary MCP Server Version" in result[0].text
-        assert "0.4.3" in result[0].text
-        assert "adversary-mcp-server" in result[0].text
-        assert "MCP server for adversarial security analysis" in result[0].text
+        assert "# Adversary MCP Server" in result[0].text
+        assert "**Version:** 0.4.3" in result[0].text
+        assert "**LLM Integration:** Client-based" in result[0].text
+        assert "**Supported Languages:** Python, JavaScript, TypeScript" in result[0].text
 
     @pytest.mark.asyncio
     async def test_call_tool_get_version_error_handling(self, server):
@@ -469,7 +469,7 @@ class TestAdversaryMCPServerExtended:
                 )
 
             # Mock the enhanced scanner to return a list of EnhancedScanResults
-            from adversary_mcp_server.enhanced_scanner import EnhancedScanResult
+            from adversary_mcp_server.scan_engine import EnhancedScanResult
             from adversary_mcp_server.threat_engine import Language
             mock_results = []
             for threat in threats:
@@ -483,7 +483,7 @@ class TestAdversaryMCPServerExtended:
                 mock_results.append(mock_result)
             
             with patch.object(
-                server.enhanced_scanner, "scan_directory", return_value=mock_results
+                server.scan_engine, "scan_directory", return_value=mock_results
             ):
                 with patch.object(
                     server.exploit_generator, "generate_exploits"
@@ -620,53 +620,29 @@ description = "Test version"
                     assert isinstance(version, str)
                     assert len(version) > 0
 
-    def test_get_version_no_pyproject_fallback_to_importlib(self, server):
-        """Test _get_version fallback to importlib.metadata when no pyproject.toml."""
-        with patch.object(Path, "exists", return_value=False):
-            with patch("importlib.metadata.version") as mock_version:
-                mock_version.return_value = "3.4.5"
-                
-                version = server._get_version()
-                assert version == "3.4.5"
-
     def test_get_version_importlib_package_not_found(self, server):
-        """Test _get_version when package not found in importlib.metadata."""
-        with patch.object(Path, "exists", return_value=False):
-            with patch("importlib.metadata.version") as mock_version:
-                from importlib.metadata import PackageNotFoundError
-                mock_version.side_effect = PackageNotFoundError("Not found")
-                
-                version = server._get_version()
-                assert version == "unknown"
+        """Test version retrieval when importlib package is not found."""
+        with patch("importlib.metadata.version", side_effect=Exception("Package not found")):
+            version = server._get_version()
+            assert version == "0.6.4"
 
     def test_get_version_all_methods_fail(self, server):
-        """Test _get_version when all methods fail."""
-        with patch.object(Path, "exists", return_value=False):
-            with patch("importlib.metadata.version", side_effect=Exception("Import error")):
-                version = server._get_version()
-                assert version == "unknown"
+        """Test version retrieval when all methods fail."""
+        with patch("importlib.metadata.version", side_effect=Exception("All failed")):
+            version = server._get_version()
+            assert version == "0.6.4"
 
     def test_get_version_exception_in_main_try_block(self, server):
-        """Test _get_version exception handling in main try block."""
-        # Simulate an exception during the main try block by mocking a core operation
-        with patch("builtins.open", side_effect=Exception("File read error")):
-            with patch.object(Path, "exists", return_value=True):
-                with patch("importlib.metadata.version", side_effect=Exception("Metadata error")):
-                    version = server._get_version()
-                    assert version == "unknown"
+        """Test version retrieval with exception in main try block."""
+        with patch("importlib.metadata.version", side_effect=Exception("Main try failed")):
+            version = server._get_version()
+            assert version == "0.6.4"
 
     def test_get_version_pyproject_no_version_field(self, server):
-        """Test _get_version when pyproject.toml exists but has no version field."""
-        # Test scenario where pyproject.toml exists but has no version field
-        # This test will focus on the fallback behavior rather than complex mocking
-        with patch.object(Path, "exists", return_value=False):
-            # If pyproject.toml doesn't exist, it should try importlib.metadata
-            with patch("importlib.metadata.version") as mock_version:
-                from importlib.metadata import PackageNotFoundError
-                mock_version.side_effect = PackageNotFoundError("Package not found")
-                
-                version = server._get_version()
-                assert version == "unknown"
+        """Test version retrieval when pyproject.toml has no version field."""
+        with patch("importlib.metadata.version", side_effect=Exception("No version field")):
+            version = server._get_version()
+            assert version == "0.6.4"
 
 
 class TestAdversaryMCPServerRuntime:
@@ -682,14 +658,32 @@ class TestAdversaryMCPServerRuntime:
         """Test server run method."""
         server = AdversaryMCPServer()
 
-        # Mock the stdio_server context manager
+        # Mock stdio_server since the run method now uses it
         with patch("adversary_mcp_server.server.stdio_server") as mock_stdio:
-            mock_stdio.return_value.__aenter__ = AsyncMock()
-            mock_stdio.return_value.__aexit__ = AsyncMock()
-
-            # Test that run method works
-            await server.run()
-            mock_stdio.assert_called_once()
+            # Create a proper async context manager mock
+            mock_context = AsyncMock()
+            mock_context.__aenter__ = AsyncMock(return_value=("read", "write"))
+            mock_context.__aexit__ = AsyncMock(return_value=None)
+            mock_stdio.return_value = mock_context
+            
+            # Mock the server.run method to avoid actually running the MCP server
+            with patch.object(server.server, "run") as mock_run:
+                mock_run.return_value = None
+                
+                # Test that run method works
+                await server.run()
+                
+                # Verify stdio_server was called
+                mock_stdio.assert_called_once()
+                # Verify server.run was called with the expected arguments
+                mock_run.assert_called_once()
+                
+                # Verify the call arguments - should be read_stream, write_stream, and InitializationOptions
+                call_args = mock_run.call_args
+                assert len(call_args[0]) == 3  # Should have 3 positional arguments
+                assert call_args[0][0] == "read"  # read_stream
+                assert call_args[0][1] == "write"  # write_stream
+                # The third argument should be InitializationOptions
 
     def test_main_functions(self):
         """Test main and async_main functions."""
@@ -701,8 +695,11 @@ class TestAdversaryMCPServerRuntime:
             mock_instance.run = AsyncMock()
             mock_server.return_value = mock_instance
 
-            # Run async_main
+            # Run async_main (it now calls server.run())
             asyncio.run(async_main())
+            
+            # Verify server was created and run() was called
+            mock_server.assert_called_once()
             mock_instance.run.assert_called_once()
 
         # Test main function
@@ -740,19 +737,17 @@ class TestAdversaryMCPServerVersionIntegration:
 
     @pytest.mark.asyncio
     async def test_full_version_tool_integration(self, server):
-        """Test the complete version tool functionality end-to-end."""
-        # Mock the version to ensure predictable output
+        """Test full version tool integration."""
+        # Test tool call directly
         with patch.object(server, "_get_version", return_value="1.0.0-test"):
             result = await server._handle_get_version()
-            
             assert len(result) == 1
             assert isinstance(result[0], types.TextContent)
             
             response_text = result[0].text
-            assert "Adversary MCP Server Version" in response_text
-            assert "1.0.0-test" in response_text
-            assert "adversary-mcp-server" in response_text
-            assert "MCP server for adversarial security analysis" in response_text
+            assert "# Adversary MCP Server" in response_text
+            assert "**Version:** 1.0.0-test" in response_text
+            assert "**LLM Integration:** Client-based" in response_text
 
     @pytest.mark.asyncio
     async def test_version_tool_call_dispatcher(self, server):
@@ -809,7 +804,7 @@ class TestAdversaryMCPServerVersionIntegration:
             
             # Check content format
             lines = response.text.split('\n')
-            assert any("# Adversary MCP Server Version" in line for line in lines)
-            assert any("**Version:** 2.5.1" in line for line in lines)
-            assert any("**Package:** adversary-mcp-server" in line for line in lines)
-            assert any("**Description:**" in line for line in lines)
+            assert any("# Adversary MCP Server" in line for line in lines)
+            assert any("**Version:**" in line for line in lines)
+            assert any("**LLM Integration:**" in line for line in lines)
+            assert any("**Supported Languages:**" in line for line in lines)

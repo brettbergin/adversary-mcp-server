@@ -12,8 +12,8 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from adversary_mcp_server.credential_manager import CredentialManager, SecurityConfig
-from adversary_mcp_server.enhanced_scanner import EnhancedScanResult, EnhancedScanner
-from adversary_mcp_server.llm_security_analyzer import LLMSecurityFinding
+from adversary_mcp_server.scan_engine import EnhancedScanResult, ScanEngine
+from adversary_mcp_server.llm_scanner import LLMSecurityFinding
 from adversary_mcp_server.threat_engine import Category, Language, Severity, ThreatEngine, ThreatMatch
 
 
@@ -285,21 +285,21 @@ class TestEnhancedScanResult:
         assert critical_threats[0].rule_id == "rule_1"
 
 
-class TestEnhancedScanner:
-    """Test EnhancedScanner class."""
+class TestScanEngine:
+    """Test ScanEngine class."""
 
-    def test_enhanced_scanner_initialization(self):
-        """Test EnhancedScanner initialization."""
+    def test_scan_engine_initialization(self):
+        """Test ScanEngine initialization."""
         mock_threat_engine = Mock()
         mock_credential_manager = Mock()
 
-        with patch("adversary_mcp_server.enhanced_scanner.ASTScanner") as mock_ast_scanner:
-            with patch("adversary_mcp_server.enhanced_scanner.LLMSecurityAnalyzer") as mock_llm_analyzer:
+        with patch("adversary_mcp_server.scan_engine.ASTScanner") as mock_ast_scanner:
+            with patch("adversary_mcp_server.scan_engine.LLMScanner") as mock_llm_analyzer:
                 mock_llm_instance = Mock()
                 mock_llm_instance.is_available.return_value = True
                 mock_llm_analyzer.return_value = mock_llm_instance
 
-                scanner = EnhancedScanner(
+                scanner = ScanEngine(
                     threat_engine=mock_threat_engine,
                     credential_manager=mock_credential_manager,
                     enable_llm_analysis=True,
@@ -311,13 +311,13 @@ class TestEnhancedScanner:
                 mock_ast_scanner.assert_called_once_with(mock_threat_engine)
                 mock_llm_analyzer.assert_called_once_with(mock_credential_manager)
 
-    def test_enhanced_scanner_initialization_llm_disabled(self):
-        """Test EnhancedScanner initialization with LLM disabled."""
+    def test_scan_engine_initialization_llm_disabled(self):
+        """Test ScanEngine initialization with LLM disabled."""
         mock_threat_engine = Mock()
         mock_credential_manager = Mock()
 
-        with patch("adversary_mcp_server.enhanced_scanner.ASTScanner"):
-            scanner = EnhancedScanner(
+        with patch("adversary_mcp_server.scan_engine.ASTScanner"):
+            scanner = ScanEngine(
                 threat_engine=mock_threat_engine,
                 credential_manager=mock_credential_manager,
                 enable_llm_analysis=False,
@@ -326,18 +326,18 @@ class TestEnhancedScanner:
             assert scanner.enable_llm_analysis is False
             assert scanner.llm_analyzer is None
 
-    def test_enhanced_scanner_initialization_llm_unavailable(self):
-        """Test EnhancedScanner initialization with LLM unavailable."""
+    def test_scan_engine_initialization_llm_unavailable(self):
+        """Test ScanEngine initialization with LLM unavailable."""
         mock_threat_engine = Mock()
         mock_credential_manager = Mock()
 
-        with patch("adversary_mcp_server.enhanced_scanner.ASTScanner"):
-            with patch("adversary_mcp_server.enhanced_scanner.LLMSecurityAnalyzer") as mock_llm_analyzer:
+        with patch("adversary_mcp_server.scan_engine.ASTScanner"):
+            with patch("adversary_mcp_server.scan_engine.LLMScanner") as mock_llm_analyzer:
                 mock_llm_instance = Mock()
                 mock_llm_instance.is_available.return_value = False
                 mock_llm_analyzer.return_value = mock_llm_instance
 
-                scanner = EnhancedScanner(
+                scanner = ScanEngine(
                     threat_engine=mock_threat_engine,
                     credential_manager=mock_credential_manager,
                     enable_llm_analysis=True,
@@ -345,8 +345,8 @@ class TestEnhancedScanner:
 
                 assert scanner.enable_llm_analysis is False  # Should be disabled
 
-    @patch("adversary_mcp_server.enhanced_scanner.ASTScanner")
-    @patch("adversary_mcp_server.enhanced_scanner.LLMSecurityAnalyzer")
+    @patch("adversary_mcp_server.scan_engine.ASTScanner")
+    @patch("adversary_mcp_server.scan_engine.LLMScanner")
     def test_scan_code_rules_only(self, mock_llm_analyzer, mock_ast_scanner):
         """Test code scanning with rules only."""
         mock_threat_engine = Mock()
@@ -367,7 +367,7 @@ class TestEnhancedScanner:
         )
         mock_ast_instance.scan_code.return_value = [rule_threat]
 
-        scanner = EnhancedScanner(
+        scanner = ScanEngine(
             threat_engine=mock_threat_engine,
             credential_manager=mock_credential_manager,
             enable_llm_analysis=False,
@@ -389,10 +389,10 @@ class TestEnhancedScanner:
 
         mock_ast_instance.scan_code.assert_called_once_with("test code", "test.py", Language.PYTHON)
 
-    @patch("adversary_mcp_server.enhanced_scanner.ASTScanner")
-    @patch("adversary_mcp_server.enhanced_scanner.LLMSecurityAnalyzer")
+    @patch("adversary_mcp_server.scan_engine.ASTScanner")
+    @patch("adversary_mcp_server.scan_engine.LLMScanner")
     def test_scan_code_with_llm(self, mock_llm_analyzer, mock_ast_scanner):
-        """Test code scanning with both rules and LLM."""
+        """Test code scanning with both rules and LLM (client-based approach)."""
         mock_threat_engine = Mock()
         mock_credential_manager = Mock()
 
@@ -411,24 +411,24 @@ class TestEnhancedScanner:
         )
         mock_ast_instance.scan_code.return_value = [rule_threat]
 
-        # Mock LLM analyzer
+        # Mock LLM analyzer (client-based approach)
         mock_llm_instance = Mock()
         mock_llm_instance.is_available.return_value = True
         mock_llm_analyzer.return_value = mock_llm_instance
 
-        llm_finding = LLMSecurityFinding(
-            finding_type="xss",
-            severity="medium",
-            description="XSS vulnerability",
-            line_number=20,
-            code_snippet="innerHTML = user_input",
-            explanation="Direct DOM manipulation",
-            recommendation="Use textContent",
-            confidence=0.8,
+        # Mock prompt creation (client-based approach)
+        from adversary_mcp_server.llm_scanner import LLMAnalysisPrompt
+        mock_prompt = LLMAnalysisPrompt(
+            system_prompt="System prompt",
+            user_prompt="User prompt",
+            file_path="test.py",
+            language=Language.PYTHON,
+            max_findings=20
         )
-        mock_llm_instance.analyze_code.return_value = [llm_finding]
+        mock_llm_instance.create_analysis_prompt.return_value = mock_prompt
+        mock_llm_instance.analyze_code.return_value = []  # Client-based approach returns empty list
 
-        scanner = EnhancedScanner(
+        scanner = ScanEngine(
             threat_engine=mock_threat_engine,
             credential_manager=mock_credential_manager,
             enable_llm_analysis=True,
@@ -443,16 +443,17 @@ class TestEnhancedScanner:
 
         assert isinstance(result, EnhancedScanResult)
         assert len(result.rules_threats) == 1
-        assert len(result.llm_threats) == 1
-        assert len(result.all_threats) == 2
+        assert len(result.llm_threats) == 0  # Client-based approach doesn't populate this
+        assert len(result.all_threats) == 1  # Only rules threats
         assert result.scan_metadata["rules_scan_success"] is True
         assert result.scan_metadata["llm_scan_success"] is True
+        assert "llm_analysis_prompt" in result.scan_metadata
 
         mock_ast_instance.scan_code.assert_called_once()
-        mock_llm_instance.analyze_code.assert_called_once_with("test code", "test.py", Language.PYTHON)
+        mock_llm_instance.create_analysis_prompt.assert_called_once_with("test code", "test.py", Language.PYTHON)
 
-    @patch("adversary_mcp_server.enhanced_scanner.ASTScanner")
-    @patch("adversary_mcp_server.enhanced_scanner.LLMSecurityAnalyzer")
+    @patch("adversary_mcp_server.scan_engine.ASTScanner")
+    @patch("adversary_mcp_server.scan_engine.LLMScanner")
     def test_scan_code_ast_failure(self, mock_llm_analyzer, mock_ast_scanner):
         """Test code scanning with AST scanner failure."""
         mock_threat_engine = Mock()
@@ -463,7 +464,7 @@ class TestEnhancedScanner:
         mock_ast_scanner.return_value = mock_ast_instance
         mock_ast_instance.scan_code.side_effect = Exception("AST scanning failed")
 
-        scanner = EnhancedScanner(
+        scanner = ScanEngine(
             threat_engine=mock_threat_engine,
             credential_manager=mock_credential_manager,
             enable_llm_analysis=False,
@@ -481,8 +482,8 @@ class TestEnhancedScanner:
         assert result.scan_metadata["rules_scan_success"] is False
         assert "rules_scan_error" in result.scan_metadata
 
-    @patch("adversary_mcp_server.enhanced_scanner.ASTScanner")
-    @patch("adversary_mcp_server.enhanced_scanner.LLMSecurityAnalyzer")
+    @patch("adversary_mcp_server.scan_engine.ASTScanner")
+    @patch("adversary_mcp_server.scan_engine.LLMScanner")
     def test_scan_code_llm_failure(self, mock_llm_analyzer, mock_ast_scanner):
         """Test code scanning with LLM analyzer failure."""
         mock_threat_engine = Mock()
@@ -493,13 +494,13 @@ class TestEnhancedScanner:
         mock_ast_scanner.return_value = mock_ast_instance
         mock_ast_instance.scan_code.return_value = []
 
-        # Mock LLM analyzer with failure
+        # Mock LLM analyzer with failure at prompt creation level
         mock_llm_instance = Mock()
         mock_llm_instance.is_available.return_value = True
         mock_llm_analyzer.return_value = mock_llm_instance
-        mock_llm_instance.analyze_code.side_effect = Exception("LLM analysis failed")
+        mock_llm_instance.create_analysis_prompt.side_effect = Exception("LLM prompt creation failed")
 
-        scanner = EnhancedScanner(
+        scanner = ScanEngine(
             threat_engine=mock_threat_engine,
             credential_manager=mock_credential_manager,
             enable_llm_analysis=True,
@@ -517,7 +518,7 @@ class TestEnhancedScanner:
         assert result.scan_metadata["llm_scan_success"] is False
         assert "llm_scan_error" in result.scan_metadata
 
-    @patch("adversary_mcp_server.enhanced_scanner.ASTScanner")
+    @patch("adversary_mcp_server.scan_engine.ASTScanner")
     def test_scan_file_success(self, mock_ast_scanner):
         """Test file scanning success."""
         mock_threat_engine = Mock()
@@ -528,7 +529,7 @@ class TestEnhancedScanner:
         mock_ast_scanner.return_value = mock_ast_instance
         mock_ast_instance.scan_code.return_value = []
 
-        scanner = EnhancedScanner(
+        scanner = ScanEngine(
             threat_engine=mock_threat_engine,
             credential_manager=mock_credential_manager,
             enable_llm_analysis=False,
@@ -554,13 +555,13 @@ class TestEnhancedScanner:
             # Clean up
             temp_file.unlink()
 
-    @patch("adversary_mcp_server.enhanced_scanner.ASTScanner")
+    @patch("adversary_mcp_server.scan_engine.ASTScanner")
     def test_scan_file_not_found(self, mock_ast_scanner):
         """Test file scanning with non-existent file."""
         mock_threat_engine = Mock()
         mock_credential_manager = Mock()
 
-        scanner = EnhancedScanner(
+        scanner = ScanEngine(
             threat_engine=mock_threat_engine,
             credential_manager=mock_credential_manager,
             enable_llm_analysis=False,
@@ -573,7 +574,7 @@ class TestEnhancedScanner:
                 use_llm=False,
             )
 
-    @patch("adversary_mcp_server.enhanced_scanner.ASTScanner")
+    @patch("adversary_mcp_server.scan_engine.ASTScanner")
     def test_scan_directory_success(self, mock_ast_scanner):
         """Test directory scanning success."""
         mock_threat_engine = Mock()
@@ -584,7 +585,7 @@ class TestEnhancedScanner:
         mock_ast_scanner.return_value = mock_ast_instance
         mock_ast_instance.scan_code.return_value = []
 
-        scanner = EnhancedScanner(
+        scanner = ScanEngine(
             threat_engine=mock_threat_engine,
             credential_manager=mock_credential_manager,
             enable_llm_analysis=False,
@@ -609,13 +610,13 @@ class TestEnhancedScanner:
             assert len(results) == 2
             assert all(isinstance(result, EnhancedScanResult) for result in results)
 
-    @patch("adversary_mcp_server.enhanced_scanner.ASTScanner")
+    @patch("adversary_mcp_server.scan_engine.ASTScanner")
     def test_scan_directory_not_found(self, mock_ast_scanner):
         """Test directory scanning with non-existent directory."""
         mock_threat_engine = Mock()
         mock_credential_manager = Mock()
 
-        scanner = EnhancedScanner(
+        scanner = ScanEngine(
             threat_engine=mock_threat_engine,
             credential_manager=mock_credential_manager,
             enable_llm_analysis=False,
@@ -632,7 +633,7 @@ class TestEnhancedScanner:
         mock_threat_engine = Mock()
         mock_credential_manager = Mock()
 
-        scanner = EnhancedScanner(
+        scanner = ScanEngine(
             threat_engine=mock_threat_engine,
             credential_manager=mock_credential_manager,
             enable_llm_analysis=False,
@@ -656,7 +657,7 @@ class TestEnhancedScanner:
         mock_threat_engine = Mock()
         mock_credential_manager = Mock()
 
-        scanner = EnhancedScanner(
+        scanner = ScanEngine(
             threat_engine=mock_threat_engine,
             credential_manager=mock_credential_manager,
             enable_llm_analysis=False,
@@ -698,8 +699,8 @@ class TestEnhancedScanner:
         assert filtered[0].severity == Severity.HIGH
         assert filtered[1].severity == Severity.CRITICAL
 
-    @patch("adversary_mcp_server.enhanced_scanner.ASTScanner")
-    @patch("adversary_mcp_server.enhanced_scanner.LLMSecurityAnalyzer")
+    @patch("adversary_mcp_server.scan_engine.ASTScanner")
+    @patch("adversary_mcp_server.scan_engine.LLMScanner")
     def test_get_scanner_stats(self, mock_llm_analyzer, mock_ast_scanner):
         """Test getting scanner statistics."""
         mock_threat_engine = Mock()
@@ -712,7 +713,7 @@ class TestEnhancedScanner:
         mock_llm_instance.get_analysis_stats.return_value = {"available": True}
         mock_llm_analyzer.return_value = mock_llm_instance
 
-        scanner = EnhancedScanner(
+        scanner = ScanEngine(
             threat_engine=mock_threat_engine,
             credential_manager=mock_credential_manager,
             enable_llm_analysis=True,
@@ -726,8 +727,8 @@ class TestEnhancedScanner:
         assert stats["threat_engine_stats"]["total_rules"] == 10
         assert stats["llm_stats"]["available"] is True
 
-    @patch("adversary_mcp_server.enhanced_scanner.ASTScanner")
-    @patch("adversary_mcp_server.enhanced_scanner.LLMSecurityAnalyzer")
+    @patch("adversary_mcp_server.scan_engine.ASTScanner")
+    @patch("adversary_mcp_server.scan_engine.LLMScanner")
     def test_set_llm_enabled(self, mock_llm_analyzer, mock_ast_scanner):
         """Test enabling/disabling LLM analysis."""
         mock_threat_engine = Mock()
@@ -738,7 +739,7 @@ class TestEnhancedScanner:
         mock_llm_instance.is_available.return_value = True
         mock_llm_analyzer.return_value = mock_llm_instance
 
-        scanner = EnhancedScanner(
+        scanner = ScanEngine(
             threat_engine=mock_threat_engine,
             credential_manager=mock_credential_manager,
             enable_llm_analysis=False,
@@ -754,8 +755,8 @@ class TestEnhancedScanner:
         scanner.set_llm_enabled(False)
         assert scanner.enable_llm_analysis is False
 
-    @patch("adversary_mcp_server.enhanced_scanner.ASTScanner")
-    @patch("adversary_mcp_server.enhanced_scanner.LLMSecurityAnalyzer")
+    @patch("adversary_mcp_server.scan_engine.ASTScanner")
+    @patch("adversary_mcp_server.scan_engine.LLMScanner")
     def test_reload_configuration(self, mock_llm_analyzer, mock_ast_scanner):
         """Test configuration reload."""
         mock_threat_engine = Mock()
@@ -766,7 +767,7 @@ class TestEnhancedScanner:
         mock_llm_instance.is_available.return_value = True
         mock_llm_analyzer.return_value = mock_llm_instance
 
-        scanner = EnhancedScanner(
+        scanner = ScanEngine(
             threat_engine=mock_threat_engine,
             credential_manager=mock_credential_manager,
             enable_llm_analysis=True,

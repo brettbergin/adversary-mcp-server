@@ -5,9 +5,9 @@
 [![PyPI version](https://badge.fury.io/py/adversary-mcp-server.svg)](https://badge.fury.io/py/adversary-mcp-server)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://img.shields.io/badge/tests-334%20passed%20%7C%20100%25-brightgreen.svg)](https://github.com/brettbergin/adversary-mcp-server)
-[![Coverage](https://img.shields.io/badge/coverage-87.81%25-brightgreen.svg)](https://github.com/brettbergin/adversary-mcp-server)
-[![Version](https://img.shields.io/badge/version-v0.6.4-blue.svg)](https://pypi.org/project/adversary-mcp-server/)
+[![Tests](https://img.shields.io/badge/tests-332%20passed%20%7C%20100%25-brightgreen.svg)](https://github.com/brettbergin/adversary-mcp-server)
+[![Coverage](https://img.shields.io/badge/coverage-86.02%25-brightgreen.svg)](https://github.com/brettbergin/adversary-mcp-server)
+[![Version](https://img.shields.io/badge/version-v0.7.1-blue.svg)](https://pypi.org/project/adversary-mcp-server/)
 
 **Software security analysis with hybrid AI-powered threat detection and configurable built-in and custom rule management**
 
@@ -17,11 +17,11 @@
 
 ---
 
-## 🚀 What's New in v0.6.0
+## 🚀 What's New in v0.7.1
 
 ### **🤖 LLM-Powered Security Analysis**
 - **Hybrid Analysis Engine**: Combines rule-based detection with AI-powered analysis
-- **OpenAI Integration**: Uses GPT-4 for advanced vulnerability detection
+- **LLM Integration**: Uses external LLM services for advanced vulnerability detection
 - **Enhanced Threat Detection**: Identifies complex vulnerabilities that traditional rules might miss
 - **Intelligent Deduplication**: Smart merging of findings from multiple analysis engines
 
@@ -45,7 +45,7 @@
 
 - **Python 3.10+** (3.11+ recommended)
 - **Cursor IDE** with MCP support
-- **OpenAI API key** (optional, for enhanced AI-powered analysis)
+- **LLM API access** (optional, for enhanced AI-powered analysis)
 
 ### Quick Install
 
@@ -69,12 +69,6 @@ adversary-mcp-cli status
 ```bash
 # Configure the security engine  
 adversary-mcp-cli configure
-
-# 🔥 NEW: Add OpenAI API key for AI-powered analysis
-adversary-mcp-cli configure --openai-api-key sk-your-key-here
-
-# Enable LLM analysis for enhanced detection
-adversary-mcp-cli configure --enable-llm-analysis true
 
 # View available rules and setup
 adversary-mcp-cli rules stats
@@ -102,13 +96,13 @@ Create `.cursor/mcp.json` in your project or `~/.cursor/mcp.json` globally:
 
 Once configured, you can use these **enhanced** MCP tools in Cursor:
 
-- `adv_scan_code` - **🆕 Hybrid scan** with rules + AI analysis
-- `adv_scan_file` - **🆕 Enhanced** file scanning with LLM support
-- `adv_scan_directory` - **🆕 Intelligent** directory scanning
+- `adv_scan_code` - Hybrid scanning with rules + AI analysis
+- `adv_scan_file` - file scanning with LLM support
+- `adv_scan_directory` - directory scanning
 - `adv_list_rules` - List all 95+ security rules
 - `adv_get_rule_details` - Get details about specific rules
-- `adv_generate_exploit` - **🆕 AI-enhanced** exploit generation
-- `adv_configure_settings` - **🆕 Advanced** configuration management
+- `adv_generate_exploit` - exploit generation
+- `adv_configure_settings` - Configuration management
 - `adv_get_status` - Check server status and AI availability
 - `adv_get_version` - Get version information
 
@@ -129,14 +123,14 @@ adversary-mcp-cli watch start
 
 ### **Hybrid Detection Engine**
 
-The v0.6.0 release introduces a revolutionary **hybrid analysis approach** that combines:
+The v0.7.1 release introduces a revolutionary **hybrid analysis approach** that combines:
 
 1. **Rule-Based Detection** (95+ built-in rules)
    - Fast, deterministic vulnerability detection
    - Low false-positive rate
    - Comprehensive language support
 
-2. **🆕 LLM-Powered Analysis** (OpenAI GPT-4)
+2. **🆕 LLM-Powered Analysis** (External LLM Services)
    - Advanced pattern recognition
    - Context-aware vulnerability detection
    - Natural language explanations
@@ -151,7 +145,7 @@ Use adv_scan_code with use_llm=true for maximum coverage
 # Traditional rules-only scanning
 Use adv_scan_code with use_llm=false for fast analysis
 
-# Batch analysis with AI
+# Analysis with AI
 Use adv_scan_directory with LLM analysis for comprehensive coverage
 ```
 
@@ -163,18 +157,20 @@ Use adv_scan_directory with LLM analysis for comprehensive coverage
 - **🏷️ CWE/OWASP Mapping**: Automatic categorization with industry standards
 - **⚡ Intelligent Deduplication**: Merges similar findings from multiple engines
 
-### **Configuration Options**
+### **LLM Integration**
+
+The scanner can integrate with external LLM services through your client application:
 
 ```bash
-# Configure AI analysis
-adversary-mcp-cli configure --openai-api-key sk-your-key
-adversary-mcp-cli configure --openai-model gpt-4
-adversary-mcp-cli configure --enable-llm-analysis true
-adversary-mcp-cli configure --exploit-safety-mode true
-
-# Check AI availability
+# Check LLM availability
 adversary-mcp-cli status
 ```
+
+**Note**: LLM analysis is provided through prompts that can be used with your preferred LLM service. The scanner generates structured prompts for:
+- Security analysis
+- Exploit generation
+- Code review
+- Vulnerability explanations
 
 ---
 
@@ -184,10 +180,10 @@ adversary-mcp-cli status
 
 | Tool | Description | **🆕 AI Features** |
 |------|-------------|-------------------|
-| `adv_scan_code` | **🆕 Hybrid scan** of source code | ✅ LLM analysis, confidence scoring |
-| `adv_scan_file` | **🆕 Enhanced** file scanning | ✅ AI-powered detection, detailed explanations |
-| `adv_scan_directory` | **🆕 Intelligent** directory scanning | ✅ Batch AI analysis, statistical insights |
-| `adv_generate_exploit` | **🆕 AI-enhanced** exploit generation | ✅ Context-aware exploits, safety mode |
+| `adv_scan_code` | **🆕 Hybrid scan** of source code | ✅ LLM prompts, confidence scoring |
+| `adv_scan_file` | **🆕 Enhanced** file scanning | ✅ AI-powered prompts, detailed explanations |
+| `adv_scan_directory` | **🆕 Intelligent** directory scanning | ✅ Batch LLM prompts, statistical insights |
+| `adv_generate_exploit` | **🆕 AI-enhanced** exploit generation | ✅ Context-aware prompts, safety mode |
 | `adv_list_rules` | List all 95+ threat detection rules | Enhanced with AI rule categories |
 | `adv_get_rule_details` | Get detailed rule information | Improved formatting and examples |
 | `adv_configure_settings` | **🆕 Advanced** configuration management | ✅ LLM settings, validation |
@@ -200,7 +196,7 @@ All scanning tools now support:
 
 ```json
 {
-  "use_llm": true,              // Enable AI analysis
+  "use_llm": true,              // Enable LLM prompts
   "severity_threshold": "medium", // Filter by severity
   "include_exploits": true,       // Include exploit examples
   "confidence_threshold": 0.8     // AI confidence filtering
@@ -210,14 +206,14 @@ All scanning tools now support:
 ### Example Usage in Cursor
 
 ```
-# 🔥 NEW: AI-powered vulnerability scanning
-Use adv_scan_code with use_llm=true to analyze this function with both rules and AI
+# NEW: AI-powered vulnerability scanning
+Use adv_scan_code with use_llm=true to analyze this function
 
-# 🔥 NEW: Generate AI-enhanced exploits
-Use adv_generate_exploit for this SQL injection with AI-powered examples
+# NEW: Generate AI-enhanced exploits
+Use adv_generate_exploit for this SQL injection
 
-# 🔥 NEW: Check AI analysis availability
-Use adv_get_status to verify OpenAI configuration
+# NEW: Check AI analysis availability
+Use adv_get_status to get the MCP server status
 
 # Enhanced directory scanning with AI
 Use adv_scan_directory with use_llm=true for comprehensive analysis
@@ -229,7 +225,7 @@ Use adv_scan_directory with use_llm=true for comprehensive analysis
 
 ### **🆕 Enhanced Rule Engine**
 
-The v0.6.0 release includes significant improvements to rule management:
+The v0.7.1 release includes significant improvements to rule management:
 
 - **95+ Built-in Rules** (expanded from 85)
 - **🆕 AI-Enhanced Categories** with better organization
@@ -263,9 +259,6 @@ adversary-mcp-cli list-rules --show-ai-categories
 
 # Validate rules with AI assistance
 adversary-mcp-cli rules validate --use-ai
-
-# Generate custom rules with AI help
-adversary-mcp-cli rules generate --category xss --language python
 
 # Enhanced rule statistics
 adversary-mcp-cli rules stats --detailed
@@ -458,7 +451,7 @@ vim ~/.local/share/adversary-mcp-server/rules/custom/my-rule.yaml
 
 ## 🏗️ Enhanced Architecture
 
-The v0.6.0 release features a **hybrid architecture** combining multiple analysis engines:
+The v0.7.1 release features a **hybrid architecture** combining multiple analysis engines:
 
 ```mermaid
 graph TB
@@ -470,7 +463,7 @@ graph TB
     E --> F[95+ Built-in Rules]
     E --> G[Custom Rules]
     
-    D --> H[OpenAI GPT-4]
+    D --> H[LLM Service]
     H --> I[AI Security Analysis]
     
     C --> J[Threat Matches]
@@ -517,7 +510,7 @@ graph TB
 - **Statistical Analysis**: Generates comprehensive scan statistics
 
 #### **2. LLM Security Analyzer**
-- **OpenAI Integration**: Uses GPT-4 for advanced pattern recognition
+- **LLM Integration**: Uses external LLM services for advanced pattern recognition
 - **Context-Aware Analysis**: Understands code semantics and business logic
 - **Natural Language Explanations**: Provides detailed vulnerability descriptions
 - **CWE/OWASP Mapping**: Automatic categorization with industry standards
@@ -565,9 +558,9 @@ graph TB
                               ┌─────────────────────────┼─────────────────────────┐
                               │                         ▼                         │
                     ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-                    │ 🆕 OpenAI API   │    │🆕 Confidence    │    │🆕 Statistical   │
+                    │ 🆕 LLM Service  │    │🆕 Confidence    │    │🆕 Statistical   │
                     │   Integration   │    │   Scoring       │    │   Analysis      │
-                    │ • GPT-4 Analysis│    │ • Reliability   │    │ • Detailed      │
+                    │ • External APIs │    │ • Reliability   │    │ • Detailed      │
                     │ • Context-aware │    │ • Deduplication │    │   Metrics       │
                     │ • NL Explanations│    │ • Smart Merging │    │ • Trend Analysis│
                     └─────────────────┘    └─────────────────┘    └─────────────────┘
@@ -575,7 +568,7 @@ graph TB
 
 ---
 
-## 🆕 Advanced Features in v0.6.0
+## 🆕 Advanced Features in v0.7.1
 
 ### **Hybrid Analysis Examples**
 
@@ -587,13 +580,13 @@ adversary-mcp-cli scan myproject/ --use-llm=false --severity=medium
 
 #### **🆕 AI-Enhanced Analysis**
 ```bash
-# Comprehensive hybrid analysis
+# Comprehensive hybrid analysis with LLM prompts
 adversary-mcp-cli scan myproject/ --use-llm=true --confidence-threshold=0.8
 ```
 
 #### **🆕 Batch AI Analysis**
 ```bash
-# Process multiple files with AI
+# Process multiple files with LLM prompts
 adversary-mcp-cli scan-batch file1.py file2.js file3.ts --use-llm=true
 ```
 
@@ -601,10 +594,9 @@ adversary-mcp-cli scan-batch file1.py file2.js file3.ts --use-llm=true
 
 #### **LLM Configuration**
 ```bash
-# Configure AI analysis settings
-adversary-mcp-cli configure --openai-model gpt-4-turbo
-adversary-mcp-cli configure --openai-max-tokens 4096
-adversary-mcp-cli configure --exploit-safety-mode true
+# Configure LLM analysis settings
+adversary-mcp-cli configure --enable-llm-analysis=true
+adversary-mcp-cli configure --exploit-safety-mode=true
 ```
 
 #### **🆕 Confidence and Filtering**
@@ -640,7 +632,7 @@ The enhanced MCP server provides seamless integration with development environme
 - **Intelligent Deduplication**: No duplicate alerts from multiple engines
 - **Confidence Indicators**: Know which findings are most reliable
 
-#### **🆕 API Integration**
+#### **🆕 LLM Prompt Generation**
 ```python
 # Use the enhanced scanner programmatically
 from adversary_mcp_server.enhanced_scanner import EnhancedScanner
@@ -651,7 +643,7 @@ result = scanner.scan_code(source_code, file_path, language, use_llm=True)
 # Access hybrid results
 print(f"Total threats: {len(result.all_threats)}")
 print(f"Rules-based: {len(result.rules_threats)}")
-print(f"AI-detected: {len(result.llm_threats)}")
+print(f"LLM prompts generated: {len(result.llm_prompts)}")
 print(f"High confidence: {len(result.get_high_confidence_threats())}")
 ```
 
@@ -742,9 +734,9 @@ adversary-mcp-server/
 │   ├── hot_reload.py       # Real-time rule updates
 │   └── cli.py             # Command-line interface
 ├── rules/                 # Packaged rules (copied to user directory)
-│   ├── built-in/           # 109 core security rules
+│   ├── built-in/           # 95+ core security rules
 │   └── templates/         # Rule creation templates
-└── tests/                 # Comprehensive test suite (294 tests)
+└── tests/                 # Comprehensive test suite (332 tests)
 ```
 
 ---

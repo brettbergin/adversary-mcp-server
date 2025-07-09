@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .ast_scanner import ASTScanner
 from .credential_manager import CredentialManager
-from .llm_security_analyzer import LLMAnalysisError, LLMSecurityAnalyzer
+from .llm_scanner import LLMAnalysisError, LLMScanner
 from .threat_engine import Language, Severity, ThreatEngine, ThreatMatch
 
 logger = logging.getLogger(__name__)
@@ -132,14 +132,14 @@ class EnhancedScanResult:
         return [t for t in self.all_threats if t.severity == Severity.CRITICAL]
 
 
-class EnhancedScanner:
-    """Enhanced scanner combining AST-based rules with LLM analysis."""
+class ScanEngine:
+    """Scan engine combining AST-based rules with LLM analysis."""
     
     def __init__(
         self,
         threat_engine: Optional[ThreatEngine] = None,
         credential_manager: Optional[CredentialManager] = None,
-        enable_llm_analysis: bool = True,
+        enable_llm_analysis: bool = False,
     ):
         """Initialize enhanced scanner.
         
@@ -150,6 +150,8 @@ class EnhancedScanner:
         """
         self.threat_engine = threat_engine or ThreatEngine()
         self.credential_manager = credential_manager or CredentialManager()
+        
+        # Set LLM analysis based on parameter
         self.enable_llm_analysis = enable_llm_analysis
         
         # Initialize AST scanner
@@ -158,7 +160,7 @@ class EnhancedScanner:
         # Initialize LLM analyzer if enabled
         self.llm_analyzer = None
         if self.enable_llm_analysis:
-            self.llm_analyzer = LLMSecurityAnalyzer(self.credential_manager)
+            self.llm_analyzer = LLMScanner(self.credential_manager)
             if not self.llm_analyzer.is_available():
                 logger.warning("LLM analysis requested but not available - API key not configured")
                 self.enable_llm_analysis = False
@@ -201,22 +203,29 @@ class EnhancedScanner:
             scan_metadata['rules_scan_success'] = False
             scan_metadata['rules_scan_error'] = str(e)
         
-        # Perform LLM analysis if enabled
+        # Store LLM analysis prompt if enabled
         llm_threats = []
+        llm_analysis_prompt = None
         if use_llm and self.enable_llm_analysis and self.llm_analyzer:
             try:
+                # Create analysis prompt
+                llm_analysis_prompt = self.llm_analyzer.create_analysis_prompt(source_code, file_path, language)
+                scan_metadata['llm_analysis_prompt'] = llm_analysis_prompt.to_dict()
+                
+                # Try to analyze the code (in client-based mode, this returns empty list)
                 llm_findings = self.llm_analyzer.analyze_code(source_code, file_path, language)
-                llm_threats = [finding.to_threat_match(file_path) for finding in llm_findings]
+                # Convert LLM findings to threats
+                for finding in llm_findings:
+                    threat = finding.to_threat_match(file_path)
+                    llm_threats.append(threat)
                 scan_metadata['llm_scan_success'] = True
-                scan_metadata['llm_findings_count'] = len(llm_findings)
-            except LLMAnalysisError as e:
-                logger.warning(f"LLM analysis failed for {file_path}: {e}")
-                scan_metadata['llm_scan_success'] = False
-                scan_metadata['llm_scan_error'] = str(e)
+                scan_metadata['llm_scan_reason'] = 'analysis_completed'
+                    
             except Exception as e:
-                logger.error(f"Unexpected error in LLM analysis for {file_path}: {e}")
+                logger.error(f"Failed to create LLM analysis prompt for {file_path}: {e}")
                 scan_metadata['llm_scan_success'] = False
                 scan_metadata['llm_scan_error'] = str(e)
+                scan_metadata['llm_scan_reason'] = 'prompt_creation_failed'
         else:
             scan_metadata['llm_scan_success'] = False
             scan_metadata['llm_scan_reason'] = 'disabled' if not use_llm else 'not_available'
@@ -421,7 +430,7 @@ class EnhancedScanner:
             enabled: Whether to enable LLM analysis
         """
         if enabled and not self.llm_analyzer:
-            self.llm_analyzer = LLMSecurityAnalyzer(self.credential_manager)
+            self.llm_analyzer = LLMScanner(self.credential_manager)
         
         self.enable_llm_analysis = enabled and (
             self.llm_analyzer is not None and self.llm_analyzer.is_available()
@@ -434,7 +443,7 @@ class EnhancedScanner:
         
         # Reinitialize LLM analyzer with new configuration
         if self.enable_llm_analysis:
-            self.llm_analyzer = LLMSecurityAnalyzer(self.credential_manager)
+            self.llm_analyzer = LLMScanner(self.credential_manager)
             if not self.llm_analyzer.is_available():
                 logger.warning("LLM analysis disabled after reload - API key not configured")
                 self.enable_llm_analysis = False 
