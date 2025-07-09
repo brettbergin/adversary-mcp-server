@@ -24,7 +24,7 @@ class TestCLICommandsCoverage:
     @patch("adversary_mcp_server.cli.CredentialManager")
     @patch("adversary_mcp_server.cli.console")
     def test_configure_command_basic(self, mock_console, mock_cred_manager):
-        """Test configure command with basic options."""
+        """Test configure command basic functionality."""
         mock_manager = Mock()
         mock_config = SecurityConfig()
         mock_manager.load_config.return_value = mock_config
@@ -34,8 +34,6 @@ class TestCLICommandsCoverage:
             cli,
             [
                 "configure",
-                "--openai-api-key",
-                "sk-test123",
                 "--severity-threshold",
                 "high",
                 "--enable-safety-mode",
@@ -46,32 +44,21 @@ class TestCLICommandsCoverage:
         assert result.exit_code == 0
         mock_manager.store_config.assert_called_once()
 
-    @patch("adversary_mcp_server.cli.CredentialManager")
-    @patch("adversary_mcp_server.cli.console")
-    def test_configure_command_with_existing_config(
-        self, mock_console, mock_cred_manager
-    ):
-        """Test configure command with existing configuration."""
-        mock_manager = Mock()
-        mock_config = SecurityConfig(openai_api_key="existing-key")
-        mock_manager.load_config.return_value = mock_config
-        mock_cred_manager.return_value = mock_manager
-
-        result = self.runner.invoke(
-            cli,
-            [
-                "configure",
-                "--openai-api-key",
-                "new-key",
-                "--severity-threshold",
-                "critical",
-                "--disable-safety-mode",
-                "--disable-llm",
-            ],
-        )
-
-        assert result.exit_code == 0
-        mock_manager.store_config.assert_called_once()
+    def test_configure_command_with_existing_config(self):
+        """Test configure command with existing config."""
+        with patch("adversary_mcp_server.cli.CredentialManager") as mock_manager:
+            mock_instance = mock_manager.return_value
+            mock_config = SecurityConfig(
+                enable_llm_analysis=True,
+                severity_threshold="high"
+            )
+            mock_instance.load_config.return_value = mock_config
+            
+            runner = CliRunner()
+            result = runner.invoke(cli, ["configure", "--severity-threshold", "critical"])
+            
+            assert result.exit_code == 0
+            mock_instance.store_config.assert_called_once()
 
     @patch("adversary_mcp_server.cli.CredentialManager")
     @patch("adversary_mcp_server.cli.console")
@@ -85,8 +72,6 @@ class TestCLICommandsCoverage:
             cli,
             [
                 "configure",
-                "--openai-api-key",
-                "sk-test123",
                 "--severity-threshold",
                 "medium",
             ],
@@ -106,35 +91,42 @@ class TestCLICommandsCoverage:
         mock_cred_manager.return_value = mock_manager
 
         result = self.runner.invoke(
-            cli, ["configure", "--openai-api-key", "sk-test123"]
+            cli, ["configure", "--severity-threshold", "high"]
         )
 
         assert result.exit_code == 1
 
-    @patch("adversary_mcp_server.cli.CredentialManager")
     @patch("adversary_mcp_server.cli.ThreatEngine")
-    @patch("adversary_mcp_server.cli.console")
-    def test_status_command_configured(
-        self, mock_console, mock_threat_engine, mock_cred_manager
-    ):
+    def test_status_command_configured(self, mock_threat_engine):
         """Test status command with configured system."""
-        mock_manager = Mock()
-        mock_config = SecurityConfig(openai_api_key="sk-test123")
-        mock_manager.load_config.return_value = mock_config
-        mock_manager.has_config.return_value = True
-        mock_cred_manager.return_value = mock_manager
-
-        mock_engine = Mock()
-        mock_engine.list_rules.return_value = [
-            {"id": "rule1", "languages": ["python"]},
-            {"id": "rule2", "languages": ["javascript", "typescript"]},
-        ]
-        mock_threat_engine.return_value = mock_engine
-
-        result = self.runner.invoke(cli, ["status"])
-
-        assert result.exit_code == 0
-        mock_console.print.assert_called()
+        with patch("adversary_mcp_server.cli.CredentialManager") as mock_manager:
+            mock_instance = mock_manager.return_value
+            mock_config = SecurityConfig(
+                enable_llm_analysis=True,
+                severity_threshold="high"
+            )
+            mock_instance.load_config.return_value = mock_config
+            mock_instance.has_config.return_value = True
+            
+            # Mock ThreatEngine to return some sample rules
+            mock_engine = Mock()
+            mock_engine.list_rules.return_value = [
+                {
+                    "id": "test_rule",
+                    "name": "Test Rule",
+                    "category": "injection",
+                    "severity": "high",
+                    "languages": ["python"],
+                }
+            ]
+            mock_threat_engine.return_value = mock_engine
+            
+            runner = CliRunner()
+            result = runner.invoke(cli, ["status"])
+            
+            assert result.exit_code == 0
+            # Check for key content that should be in the output
+            assert "Server Status" in result.output or "Configuration" in result.output
 
     @patch("adversary_mcp_server.cli.CredentialManager")
     @patch("adversary_mcp_server.cli.ThreatEngine")

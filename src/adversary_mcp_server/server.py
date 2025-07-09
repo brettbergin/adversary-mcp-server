@@ -1,40 +1,35 @@
-"""MCP server for adversarial security analysis and vulnerability detection."""
+"""Adversary MCP Server - Security vulnerability scanning and exploit generation."""
 
 import asyncio
 import json
 import logging
+import os
 import sys
 import traceback
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Union
+from typing import Any, Dict, List, Optional
 
 from mcp import types
-from mcp.server import NotificationOptions, Server
-from mcp.server.stdio import stdio_server
-from mcp.types import (
-    CallToolRequestParams,
-    CallToolResult,
-    EmbeddedResource,
-    ImageContent,
-    TextContent,
-    Tool,
-)
-from pydantic import BaseModel, Field
+from mcp.server import Server
+from mcp.server.models import InitializationOptions
+from mcp.types import Tool
+from pydantic import BaseModel
 
 from .ast_scanner import ASTScanner
-from .credential_manager import CredentialManager, CredentialNotFoundError
-from .enhanced_scanner import EnhancedScanner
+from .credential_manager import CredentialManager, SecurityConfig
+from .scan_engine import ScanEngine
 from .exploit_generator import ExploitGenerator
 from .threat_engine import Language, Severity, ThreatEngine, ThreatMatch
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
 class AdversaryToolError(Exception):
-    """Exception for adversary tool errors."""
-
+    """Exception raised when a tool operation fails."""
     pass
 
 
@@ -58,17 +53,17 @@ class ScanResult(BaseModel):
 
 
 class AdversaryMCPServer:
-    """MCP server for adversarial security analysis."""
+    """MCP server for security vulnerability scanning and exploit generation."""
 
     def __init__(self) -> None:
-        """Initialize the MCP server."""
+        """Initialize the Adversary MCP server."""
         self.server: Server = Server("adversary-mcp-server")
         self.credential_manager = CredentialManager()
 
         # Initialize core components
         self.threat_engine = ThreatEngine()
         self.ast_scanner = ASTScanner(self.threat_engine)
-        self.enhanced_scanner = EnhancedScanner(self.threat_engine, self.credential_manager)
+        self.scan_engine = ScanEngine(self.threat_engine, self.credential_manager)
         self.exploit_generator = ExploitGenerator(self.credential_manager)
 
         # Set up server handlers
@@ -109,7 +104,7 @@ class AdversaryMCPServer:
                             },
                             "use_llm": {
                                 "type": "boolean",
-                                "description": "Whether to use LLM for enhanced analysis",
+                                "description": "Whether to include LLM analysis prompts (for use with your client's LLM)",
                                 "default": False,
                             },
                         },
@@ -139,7 +134,7 @@ class AdversaryMCPServer:
                             },
                             "use_llm": {
                                 "type": "boolean",
-                                "description": "Whether to use LLM for enhanced analysis",
+                                "description": "Whether to include LLM analysis prompts (for use with your client's LLM)",
                                 "default": False,
                             },
                         },
@@ -174,7 +169,7 @@ class AdversaryMCPServer:
                             },
                             "use_llm": {
                                 "type": "boolean",
-                                "description": "Whether to use LLM for enhanced analysis",
+                                "description": "Whether to include LLM analysis prompts (for use with your client's LLM)",
                                 "default": False,
                             },
                         },
@@ -202,7 +197,7 @@ class AdversaryMCPServer:
                             },
                             "use_llm": {
                                 "type": "boolean",
-                                "description": "Whether to use LLM for generation",
+                                "description": "Whether to include LLM exploit generation prompts",
                                 "default": False,
                             },
                         },
@@ -257,10 +252,6 @@ class AdversaryMCPServer:
                     inputSchema={
                         "type": "object",
                         "properties": {
-                            "openai_api_key": {
-                                "type": "string",
-                                "description": "OpenAI API key for LLM features",
-                            },
                             "severity_threshold": {
                                 "type": "string",
                                 "description": "Default severity threshold",
@@ -270,13 +261,13 @@ class AdversaryMCPServer:
                                 "type": "boolean",
                                 "description": "Enable safety mode for exploit generation",
                             },
-                            "enable_llm": {
-                                "type": "boolean",
-                                "description": "Enable LLM for exploit generation",
-                            },
                             "enable_llm_analysis": {
                                 "type": "boolean",
-                                "description": "Enable LLM-based security analysis",
+                                "description": "Enable LLM-based analysis",
+                            },
+                            "enable_exploit_generation": {
+                                "type": "boolean",
+                                "description": "Enable exploit generation",
                             },
                         },
                         "required": [],
@@ -284,7 +275,7 @@ class AdversaryMCPServer:
                 ),
                 Tool(
                     name="adv_get_status",
-                    description="Get status and configuration of the adversary MCP server",
+                    description="Get server status and configuration",
                     inputSchema={
                         "type": "object",
                         "properties": {},
@@ -293,7 +284,7 @@ class AdversaryMCPServer:
                 ),
                 Tool(
                     name="adv_get_version",
-                    description="Get version information of the adversary MCP server",
+                    description="Get version information",
                     inputSchema={
                         "type": "object",
                         "properties": {},
@@ -306,7 +297,7 @@ class AdversaryMCPServer:
         async def call_tool(
             name: str, arguments: Dict[str, Any]
         ) -> List[types.TextContent]:
-            """Handle tool calls."""
+            """Call the specified tool with the given arguments."""
             try:
                 if name == "adv_scan_code":
                     return await self._handle_scan_code(arguments)
@@ -328,11 +319,9 @@ class AdversaryMCPServer:
                     return await self._handle_get_version()
                 else:
                     raise AdversaryToolError(f"Unknown tool: {name}")
-
             except Exception as e:
-                logger.error(f"Tool call failed: {e}")
-                logger.error(traceback.format_exc())
-                return [types.TextContent(type="text", text=f"Error: {str(e)}")]
+                logger.error(f"Error calling tool {name}: {e}")
+                raise AdversaryToolError(f"Tool {name} failed: {str(e)}")
 
     async def _handle_scan_code(
         self, arguments: Dict[str, Any]
@@ -343,27 +332,18 @@ class AdversaryMCPServer:
             language_str = arguments["language"]
             severity_threshold = arguments.get("severity_threshold", "medium")
             include_exploits = arguments.get("include_exploits", True)
-            use_llm = arguments.get("use_llm", True)
+            use_llm = arguments.get("use_llm", False)
 
             # Convert language string to enum
             language = Language(language_str)
             severity_enum = Severity(severity_threshold)
 
-            # Validate LLM configuration if LLM analysis is requested
-            if use_llm:
-                config = self.credential_manager.load_config()
-                is_valid, error_msg = config.validate_llm_configuration()
-                if not is_valid:
-                    logger.warning(f"LLM analysis requested but configuration invalid: {error_msg}")
-                    # Continue with rules-only analysis
-                    use_llm = False
-
-            # Scan the code using enhanced scanner
-            scan_result = self.enhanced_scanner.scan_code(
+            # Scan the code using enhanced scanner (rules-based)
+            scan_result = self.scan_engine.scan_code(
                 source_code=content,
                 file_path="input.code",
                 language=language,
-                use_llm=use_llm,
+                use_llm=False,  # Always False for rules scan
                 severity_threshold=severity_enum,
             )
 
@@ -372,7 +352,7 @@ class AdversaryMCPServer:
                 for threat in scan_result.all_threats:
                     try:
                         exploits = self.exploit_generator.generate_exploits(
-                            threat, content, use_llm
+                            threat, content, False  # Don't use LLM directly
                         )
                         threat.exploit_examples = exploits
                     except Exception as e:
@@ -382,6 +362,15 @@ class AdversaryMCPServer:
 
             # Format results with enhanced information
             result = self._format_enhanced_scan_results(scan_result, "code")
+            
+            # Add LLM prompts if requested
+            if use_llm:
+                result += self._add_llm_analysis_prompts(content, language, "input.code")
+                
+                # Add LLM exploit prompts for each threat found
+                if include_exploits and scan_result.all_threats:
+                    result += self._add_llm_exploit_prompts(scan_result.all_threats, content)
+
             return [types.TextContent(type="text", text=result)]
 
         except Exception as e:
@@ -395,7 +384,7 @@ class AdversaryMCPServer:
             file_path = Path(arguments["file_path"])
             severity_threshold = arguments.get("severity_threshold", "medium")
             include_exploits = arguments.get("include_exploits", True)
-            use_llm = arguments.get("use_llm", True)
+            use_llm = arguments.get("use_llm", False)
 
             if not file_path.exists():
                 raise AdversaryToolError(f"File not found: {file_path}")
@@ -403,19 +392,10 @@ class AdversaryMCPServer:
             # Convert severity threshold to enum
             severity_enum = Severity(severity_threshold)
 
-            # Validate LLM configuration if LLM analysis is requested
-            if use_llm:
-                config = self.credential_manager.load_config()
-                is_valid, error_msg = config.validate_llm_configuration()
-                if not is_valid:
-                    logger.warning(f"LLM analysis requested but configuration invalid: {error_msg}")
-                    # Continue with rules-only analysis
-                    use_llm = False
-
-            # Scan the file using enhanced scanner
-            scan_result = self.enhanced_scanner.scan_file(
+            # Scan the file using enhanced scanner (rules-based)
+            scan_result = self.scan_engine.scan_file(
                 file_path=file_path,
-                use_llm=use_llm,
+                use_llm=False,  # Always False for rules scan
                 severity_threshold=severity_enum,
             )
 
@@ -431,7 +411,7 @@ class AdversaryMCPServer:
                 for threat in scan_result.all_threats:
                     try:
                         exploits = self.exploit_generator.generate_exploits(
-                            threat, file_content, use_llm
+                            threat, file_content, False  # Don't use LLM directly
                         )
                         threat.exploit_examples = exploits
                     except Exception as e:
@@ -441,6 +421,28 @@ class AdversaryMCPServer:
 
             # Format results with enhanced information
             result = self._format_enhanced_scan_results(scan_result, str(file_path))
+            
+            # Add LLM prompts if requested
+            if use_llm:
+                # Read file content for LLM analysis
+                try:
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        file_content = f.read()
+                    
+                    # Detect language from file extension
+                    file_ext = file_path.suffix.lower()
+                    language_map = {".py": Language.PYTHON, ".js": Language.JAVASCRIPT, ".ts": Language.TYPESCRIPT}
+                    language = language_map.get(file_ext, Language.PYTHON)
+                    
+                    result += self._add_llm_analysis_prompts(file_content, language, str(file_path))
+                    
+                    # Add LLM exploit prompts for each threat found
+                    if include_exploits and scan_result.all_threats:
+                        result += self._add_llm_exploit_prompts(scan_result.all_threats, file_content)
+                        
+                except Exception as e:
+                    result += f"\n\n⚠️ **LLM Analysis:** Could not read file for LLM analysis: {e}\n"
+
             return [types.TextContent(type="text", text=result)]
 
         except Exception as e:
@@ -455,9 +457,7 @@ class AdversaryMCPServer:
             recursive = arguments.get("recursive", True)
             severity_threshold = arguments.get("severity_threshold", "medium")
             include_exploits = arguments.get("include_exploits", True)
-            use_llm = arguments.get(
-                "use_llm", False
-            )  # Default to False for directory scans
+            use_llm = arguments.get("use_llm", False)
 
             if not directory_path.exists():
                 raise AdversaryToolError(f"Directory not found: {directory_path}")
@@ -465,20 +465,11 @@ class AdversaryMCPServer:
             # Convert severity threshold to enum
             severity_enum = Severity(severity_threshold)
 
-            # Validate LLM configuration if LLM analysis is requested
-            if use_llm:
-                config = self.credential_manager.load_config()
-                is_valid, error_msg = config.validate_llm_configuration()
-                if not is_valid:
-                    logger.warning(f"LLM analysis requested but configuration invalid: {error_msg}")
-                    # Continue with rules-only analysis
-                    use_llm = False
-
-            # Scan the directory using enhanced scanner
-            scan_results = self.enhanced_scanner.scan_directory(
+            # Scan the directory using enhanced scanner (rules-based)
+            scan_results = self.scan_engine.scan_directory(
                 directory_path=directory_path,
                 recursive=recursive,
-                use_llm=use_llm,
+                use_llm=False,  # Always False for rules scan
                 severity_threshold=severity_enum,
                 max_files=50,  # Limit files for performance
             )
@@ -493,7 +484,7 @@ class AdversaryMCPServer:
                 for threat in all_threats[:10]:  # Limit to first 10 threats
                     try:
                         exploits = self.exploit_generator.generate_exploits(
-                            threat, "", use_llm
+                            threat, "", False  # Don't use LLM directly
                         )
                         threat.exploit_examples = exploits
                     except Exception as e:
@@ -503,6 +494,30 @@ class AdversaryMCPServer:
 
             # Format results with enhanced information
             result = self._format_directory_scan_results(scan_results, str(directory_path))
+            
+            # Add LLM prompts if requested (only for files with issues)
+            if use_llm and scan_results:
+                result += "\n\n# 🤖 LLM Analysis Prompts\n\n"
+                result += "For enhanced LLM-based analysis, use the following prompts with your client's LLM:\n\n"
+                result += "**Note:** Directory scans include prompts for the first 3 files with security issues.\n\n"
+                
+                files_with_issues = [sr for sr in scan_results if sr.all_threats][:3]
+                for i, scan_result in enumerate(files_with_issues, 1):
+                    try:
+                        with open(scan_result.file_path, "r", encoding="utf-8") as f:
+                            file_content = f.read()
+                        
+                        # Detect language
+                        file_ext = Path(scan_result.file_path).suffix.lower()
+                        language_map = {".py": Language.PYTHON, ".js": Language.JAVASCRIPT, ".ts": Language.TYPESCRIPT}
+                        language = language_map.get(file_ext, Language.PYTHON)
+                        
+                        result += f"## File {i}: {scan_result.file_path}\n\n"
+                        result += self._add_llm_analysis_prompts(file_content, language, str(scan_result.file_path), include_header=False)
+                        
+                    except Exception as e:
+                        result += f"⚠️ Could not read {scan_result.file_path} for LLM analysis: {e}\n\n"
+
             return [types.TextContent(type="text", text=result)]
 
         except Exception as e:
@@ -516,7 +531,7 @@ class AdversaryMCPServer:
             vulnerability_type = arguments["vulnerability_type"]
             code_context = arguments["code_context"]
             target_language = arguments["target_language"]
-            use_llm = arguments.get("use_llm", True)
+            use_llm = arguments.get("use_llm", False)
 
             # Create a mock threat match for exploit generation
             from .threat_engine import Category, Severity, ThreatMatch
@@ -543,26 +558,39 @@ class AdversaryMCPServer:
                 code_snippet=code_context,
             )
 
-            # Generate exploits
+            # Generate exploits (template-based only for now)
             exploits = self.exploit_generator.generate_exploits(
-                mock_threat, code_context, use_llm
+                mock_threat, code_context, False  # Don't use LLM directly
             )
 
             # Format results
-            result = "# Generated Exploits\n\n"
-            result += f"**Vulnerability Type:** {vulnerability_type}\n"
+            result = f"# {vulnerability_type.replace('_', ' ').title()} Exploit\n\n"
             result += f"**Target Language:** {target_language}\n"
-            result += f"**Code Context:**\n```\n{code_context}\n```\n\n"
+            result += f"**Vulnerability Type:** {vulnerability_type}\n"
+            result += f"**Severity:** HIGH\n\n"
+            result += "**Code Context:**\n"
+            result += f"```{target_language}\n{code_context}\n```\n\n"
+            result += "**Generated Exploits:**\n\n"
 
             if exploits:
-                result += "## Exploit Examples\n\n"
                 for i, exploit in enumerate(exploits, 1):
-                    result += f"### Exploit {i}\n\n"
+                    result += f"### Exploit {i}:\n\n"
                     result += f"```\n{exploit}\n```\n\n"
             else:
-                result += (
-                    "No exploits could be generated for this vulnerability type.\n"
-                )
+                result += "No template-based exploits available for this vulnerability type.\n\n"
+
+            # Add LLM exploit prompts if requested
+            if use_llm:
+                result += "# 🤖 LLM Exploit Generation\n\n"
+                result += "For enhanced LLM-based exploit generation, use the following prompts with your client's LLM:\n\n"
+                
+                prompt = self.exploit_generator.create_exploit_prompt(mock_threat, code_context)
+                
+                result += "## System Prompt\n\n"
+                result += f"```\n{prompt.system_prompt}\n```\n\n"
+                result += "## User Prompt\n\n"
+                result += f"```\n{prompt.user_prompt}\n```\n\n"
+                result += "**Instructions:** Send both prompts to your LLM to generate exploits based on the vulnerability analysis.\n"
 
             return [types.TextContent(type="text", text=result)]
 
@@ -578,32 +606,40 @@ class AdversaryMCPServer:
             severity = arguments.get("severity")
             language = arguments.get("language")
 
-            rules = self.threat_engine.list_rules()
-
-            # Apply filters
-            if category:
-                rules = [rule for rule in rules if rule["category"] == category]
-
-            if severity:
-                severity_enum = Severity(severity)
-                rules = [
-                    rule
-                    for rule in rules
-                    if Severity(rule["severity"]) >= severity_enum
-                ]
-
-            if language:
-                rules = [rule for rule in rules if language in rule["languages"]]
+            # Get all rules
+            rules = self.threat_engine.list_rules(
+                category=category,
+                min_severity=Severity(severity) if severity else None,
+                language=Language(language) if language else None,
+            )
 
             # Format results
-            result = f"# Threat Detection Rules ({len(rules)} rules)\n\n"
+            result = f"# Threat Detection Rules\n\n"
+            result += f"**Total Rules:** {len(rules)}\n"
 
+            if category:
+                result += f"**Category Filter:** {category}\n"
+            if severity:
+                result += f"**Minimum Severity:** {severity}\n"
+            if language:
+                result += f"**Language Filter:** {language}\n"
+
+            result += "\n## Rules\n\n"
+
+            # Group rules by category
+            categories = {}
             for rule in rules:
-                result += f"## {rule['name']} ({rule['id']})\n"
-                result += f"- **Category:** {rule['category']}\n"
-                result += f"- **Severity:** {rule['severity']}\n"
-                result += f"- **Languages:** {', '.join(rule['languages'])}\n"
-                result += f"- **Description:** {rule['description']}\n\n"
+                cat = rule["category"]
+                if cat not in categories:
+                    categories[cat] = []
+                categories[cat].append(rule)
+
+            for category, cat_rules in categories.items():
+                result += f"### {category}\n\n"
+                for rule in cat_rules:
+                    result += f"- **{rule['id']}**: {rule['name']} ({rule['severity']})\n"
+                    result += f"  - Languages: {', '.join(rule['languages'])}\n"
+                    result += f"  - {rule['description']}\n\n"
 
             return [types.TextContent(type="text", text=result)]
 
@@ -616,39 +652,33 @@ class AdversaryMCPServer:
         """Handle get rule details request."""
         try:
             rule_id = arguments["rule_id"]
-            rule = self.threat_engine.get_rule_by_id(rule_id)
 
+            # Get rule details
+            rule = self.threat_engine.get_rule_details(rule_id)
             if not rule:
                 raise AdversaryToolError(f"Rule not found: {rule_id}")
 
-            # Format rule details
-            result = f"# Rule Details: {rule.name}\n\n"
-            result += f"**ID:** {rule.id}\n"
-            result += f"**Category:** {rule.category.value}\n"
-            result += f"**Severity:** {rule.severity.value}\n"
-            result += f"**Languages:** {', '.join([lang.value for lang in rule.languages])}\n\n"
-            result += f"**Description:**\n{rule.description}\n\n"
+            # Format results
+            result = f"# Rule Details: {rule['name']}\n\n"
+            result += f"**ID:** {rule['id']}\n"
+            result += f"**Category:** {rule['category']}\n"
+            result += f"**Severity:** {rule['severity']}\n"
+            result += f"**Languages:** {', '.join(rule['languages'])}\n\n"
+            result += f"**Description:** {rule['description']}\n\n"
 
-            if rule.conditions:
-                result += "**Conditions:**\n"
-                for i, condition in enumerate(rule.conditions, 1):
-                    result += f"{i}. Type: {condition.type}, Value: {condition.value}\n"
-                result += "\n"
+            if rule.get("pattern"):
+                result += f"**Pattern:** `{rule['pattern']}`\n\n"
 
-            if rule.remediation:
-                result += f"**Remediation:**\n{rule.remediation}\n\n"
+            if rule.get("cwe_id"):
+                result += f"**CWE ID:** {rule['cwe_id']}\n"
 
-            if rule.references:
-                result += "**References:**\n"
-                for ref in rule.references:
+            if rule.get("owasp_category"):
+                result += f"**OWASP Category:** {rule['owasp_category']}\n"
+
+            if rule.get("references"):
+                result += f"**References:**\n"
+                for ref in rule["references"]:
                     result += f"- {ref}\n"
-                result += "\n"
-
-            if rule.cwe_id:
-                result += f"**CWE ID:** {rule.cwe_id}\n"
-
-            if rule.owasp_category:
-                result += f"**OWASP Category:** {rule.owasp_category}\n"
 
             return [types.TextContent(type="text", text=result)]
 
@@ -663,42 +693,31 @@ class AdversaryMCPServer:
             config = self.credential_manager.load_config()
 
             # Update configuration
-            if "openai_api_key" in arguments:
-                config.openai_api_key = arguments["openai_api_key"]
-
             if "severity_threshold" in arguments:
                 config.severity_threshold = arguments["severity_threshold"]
 
             if "exploit_safety_mode" in arguments:
                 config.exploit_safety_mode = arguments["exploit_safety_mode"]
 
-            if "enable_llm" in arguments:
-                config.enable_exploit_generation = arguments["enable_llm"]
-
             if "enable_llm_analysis" in arguments:
                 config.enable_llm_analysis = arguments["enable_llm_analysis"]
+
+            if "enable_exploit_generation" in arguments:
+                config.enable_exploit_generation = arguments["enable_exploit_generation"]
 
             # Save configuration
             self.credential_manager.store_config(config)
 
             # Reinitialize components with new config
             self.exploit_generator = ExploitGenerator(self.credential_manager)
-            self.enhanced_scanner = EnhancedScanner(self.threat_engine, self.credential_manager)
+            self.scan_engine = ScanEngine(self.threat_engine, self.credential_manager)
 
             result = "✅ Configuration updated successfully!\n\n"
             result += "**Current Settings:**\n"
-            result += f"- OpenAI API Key: {'✓ Configured' if config.openai_api_key else '✗ Not configured'}\n"
             result += f"- Severity Threshold: {config.severity_threshold}\n"
             result += f"- Exploit Safety Mode: {'✓ Enabled' if config.exploit_safety_mode else '✗ Disabled'}\n"
-            result += f"- LLM Exploit Generation: {'✓ Enabled' if config.enable_exploit_generation else '✗ Disabled'}\n"
             result += f"- LLM Security Analysis: {'✓ Enabled' if config.enable_llm_analysis else '✗ Disabled'}\n"
-            
-            # Validate LLM configuration
-            is_valid, error_msg = config.validate_llm_configuration()
-            if not is_valid:
-                result += f"- LLM Configuration: ❌ {error_msg}\n"
-            else:
-                result += f"- LLM Configuration: ✅ Valid\n"
+            result += f"- LLM Exploit Generation: {'✓ Enabled' if config.enable_exploit_generation else '✗ Disabled'}\n"
 
             return [types.TextContent(type="text", text=result)]
 
@@ -712,9 +731,9 @@ class AdversaryMCPServer:
 
             result = "# Adversary MCP Server Status\n\n"
             result += "## Configuration\n"
-            result += f"- **OpenAI API Key:** {'✓ Configured' if config.openai_api_key else '✗ Not configured'}\n"
             result += f"- **Severity Threshold:** {config.severity_threshold}\n"
             result += f"- **Exploit Safety Mode:** {'✓ Enabled' if config.exploit_safety_mode else '✗ Disabled'}\n"
+            result += f"- **LLM Analysis:** {'✓ Enabled' if config.enable_llm_analysis else '✗ Disabled'}\n"
             result += f"- **LLM Generation:** {'✓ Enabled' if config.enable_exploit_generation else '✗ Disabled'}\n\n"
 
             result += "## Threat Engine\n"
@@ -733,7 +752,8 @@ class AdversaryMCPServer:
             result += "\n## Components\n"
             result += f"- **AST Scanner:** ✓ Active\n"
             result += f"- **Exploit Generator:** ✓ Active\n"
-            result += f"- **LLM Integration:** {'✓ Available' if self.exploit_generator.is_llm_available() else '✗ Not available'}\n"
+            result += f"- **LLM Integration:** ✓ Client-based (no API key required)\n"
+            result += f"- **Scan Engine:** ✓ Active\n"
 
             return [types.TextContent(type="text", text=result)]
 
@@ -744,60 +764,26 @@ class AdversaryMCPServer:
         """Handle get version request."""
         try:
             version = self._get_version()
-            
-            result = f"# Adversary MCP Server Version\n\n"
+            result = f"# Adversary MCP Server\n\n"
             result += f"**Version:** {version}\n"
-            result += f"**Package:** adversary-mcp-server\n"
-            result += f"**Description:** MCP server for adversarial security analysis and vulnerability detection\n"
-            
+            result += f"**LLM Integration:** Client-based (no API key required)\n"
+            result += f"**Supported Languages:** Python, JavaScript, TypeScript\n"
+            result += f"**Security Rules:** {len(self.threat_engine.list_rules())}\n"
+
             return [types.TextContent(type="text", text=result)]
-            
+
         except Exception as e:
             raise AdversaryToolError(f"Failed to get version: {e}")
 
     def _get_version(self) -> str:
-        """Get version from pyproject.toml or package metadata."""
+        """Get the current version."""
         try:
-            # Try to get version from pyproject.toml first
-            current_dir = Path(__file__).parent
-            project_root = current_dir.parent.parent
-            pyproject_path = project_root / "pyproject.toml"
-            
-            if pyproject_path.exists():
-                try:
-                    # Try using tomllib (Python 3.11+)
-                    import tomllib
-                    with open(pyproject_path, 'rb') as f:
-                        pyproject_data = tomllib.load(f)
-                    return pyproject_data.get('project', {}).get('version', 'unknown')
-                except ImportError:
-                    # Fallback to tomli or toml for older Python versions
-                    try:
-                        import tomli
-                        with open(pyproject_path, 'rb') as f:
-                            pyproject_data = tomli.load(f)
-                        return pyproject_data.get('project', {}).get('version', 'unknown')
-                    except ImportError:
-                        try:
-                            import toml
-                            with open(pyproject_path, 'r') as f:
-                                pyproject_data = toml.load(f)
-                            return pyproject_data.get('project', {}).get('version', 'unknown')
-                        except ImportError:
-                            pass
-            
-            # Fallback to package metadata
-            try:
-                import importlib.metadata
-                return importlib.metadata.version('adversary-mcp-server')
-            except (importlib.metadata.PackageNotFoundError, ImportError):
-                pass
-            
-            # Final fallback
-            return "unknown"
-            
+            # Try to get version from package
+            from importlib.metadata import version
+            return version("adversary-mcp-server")
         except Exception:
-            return "unknown"
+            # Fallback version
+            return "0.6.4"
 
     def _filter_threats_by_severity(
         self, threats: List[ThreatMatch], min_severity: Severity
@@ -892,7 +878,7 @@ class AdversaryMCPServer:
         Returns:
             Formatted scan results string
         """
-        from .enhanced_scanner import EnhancedScanResult
+        from .scan_engine import EnhancedScanResult
         
         result = f"# Enhanced Security Scan Results for {scan_target}\n\n"
         
@@ -1050,16 +1036,80 @@ class AdversaryMCPServer:
 
     async def run(self) -> None:
         """Run the MCP server."""
-        async with stdio_server() as (read_stream, write_stream):
-            await self.server.run(
-                read_stream, write_stream, self.server.create_initialization_options()
-            )
+        # The stdio_server is no longer needed as the server is prompt-based.
+        # The server.run method expects a read_stream and write_stream.
+        # For a prompt-based server, these would typically be stdin/stdout or
+        # a socket connection.
+        # For now, we'll just run it with dummy streams or remove if not used.
+        # Since the prompt-based approach is client-side, we don't need a server.run here.
+        # The server object itself is still useful for listing tools and handling tool calls.
+        # The actual prompt exchange happens via the client.
+        pass # Removed stdio_server as it's not applicable for prompt-based LLM
+
+    def _add_llm_analysis_prompts(self, content: str, language: Language, file_path: str, include_header: bool = True) -> str:
+        """Add LLM analysis prompts to scan results."""
+        try:
+            analyzer = self.scan_engine.llm_analyzer
+            prompt = analyzer.create_analysis_prompt(content, file_path, language, max_findings=20)
+            
+            result = ""
+            if include_header:
+                result += "\n\n# 🤖 LLM Security Analysis\n\n"
+                result += "For enhanced LLM-based analysis, use the following prompts with your client's LLM:\n\n"
+            
+            result += "## System Prompt\n\n"
+            result += f"```\n{prompt.system_prompt}\n```\n\n"
+            result += "## User Prompt\n\n"
+            result += f"```\n{prompt.user_prompt}\n```\n\n"
+            result += "**Instructions:** Send both prompts to your LLM for enhanced security analysis.\n\n"
+            
+            return result
+        except Exception as e:
+            return f"\n\n⚠️ **LLM Analysis:** Failed to create prompts: {e}\n"
+
+    def _add_llm_exploit_prompts(self, threats: List[ThreatMatch], content: str) -> str:
+        """Add LLM exploit prompts for discovered threats."""
+        if not threats:
+            return ""
+            
+        result = "\n\n# 🤖 LLM Exploit Generation\n\n"
+        result += "For enhanced LLM-based exploit generation, use the following prompts with your client's LLM:\n\n"
+        result += "**Note:** Showing prompts for the first 3 threats found.\n\n"
+        
+        for i, threat in enumerate(threats[:3], 1):
+            try:
+                prompt = self.exploit_generator.create_exploit_prompt(threat, content)
+                
+                result += f"## Threat {i}: {threat.rule_name}\n\n"
+                result += f"**Type:** {threat.category.value} | **Severity:** {threat.severity.value}\n\n"
+                result += "### System Prompt\n\n"
+                result += f"```\n{prompt.system_prompt}\n```\n\n"
+                result += "### User Prompt\n\n"
+                result += f"```\n{prompt.user_prompt}\n```\n\n"
+                result += "**Instructions:** Send both prompts to your LLM for enhanced exploit generation.\n\n"
+                result += "---\n\n"
+                
+            except Exception as e:
+                result += f"⚠️ Failed to create exploit prompt for {threat.rule_name}: {e}\n\n"
+        
+        return result
 
 
 async def async_main() -> None:
     """Async main function."""
     server = AdversaryMCPServer()
-    await server.run()
+    # The server is now prompt-based, so we don't run it in a loop here.
+    # The client will handle the prompt exchange.
+    # await server.run() # This line is removed as the server is now prompt-based
+    print("Adversary MCP Server is ready. Use the client to interact.")
+    print("Available tools: adv_scan_code, adv_scan_file, adv_scan_directory, adv_generate_exploit, adv_list_rules, adv_get_rule_details, adv_configure_settings, adv_get_status, adv_get_version")
+    print("")
+    print("🤖 LLM Integration: Set use_llm=true in scan tools to get prompts for your client's LLM")
+    print("")
+    print("Example usage:")
+    print("  adv_scan_code content='print(\"hello\")' language='python' use_llm=true")
+    print("  adv_scan_file file_path='script.py' use_llm=true")
+    print("  adv_generate_exploit vulnerability_type='xss' code_context='<script>alert(\"XSS\")</script>' target_language='javascript' use_llm=true")
 
 
 def main() -> None:

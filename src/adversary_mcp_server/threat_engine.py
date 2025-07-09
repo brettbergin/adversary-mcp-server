@@ -51,6 +51,7 @@ class Category(str, Enum):
     FILE_UPLOAD = "file_upload"
     XXE = "xxe"
     CLICKJACKING = "clickjacking"
+    MISC = "misc"  # Generic category for miscellaneous threats
 
 
 class Language(str, Enum):
@@ -410,6 +411,43 @@ class ThreatEngine:
             The rule if found, None otherwise
         """
         return self.rules.get(rule_id)
+
+    def get_rule_details(self, rule_id: str) -> Optional[Dict[str, Any]]:
+        """Get detailed information about a rule.
+
+        Args:
+            rule_id: Rule identifier
+
+        Returns:
+            Dictionary with rule details if found, None otherwise
+        """
+        rule = self.get_rule_by_id(rule_id)
+        if not rule:
+            return None
+        
+        return {
+            "id": rule.id,
+            "name": rule.name,
+            "description": rule.description,
+            "category": rule.category.value,
+            "severity": rule.severity.value,
+            "languages": [lang.value for lang in rule.languages],
+            "conditions": [{"type": c.type, "value": c.value} for c in rule.conditions],
+            "exploit_templates": [
+                {
+                    "type": t.type,
+                    "template": t.template,
+                    "description": t.description,
+                    "parameters": t.parameters,
+                }
+                for t in rule.exploit_templates
+            ],
+            "remediation": rule.remediation,
+            "references": rule.references,
+            "cwe_id": rule.cwe_id,
+            "owasp_category": rule.owasp_category,
+            "tags": rule.tags,
+        }
 
     def get_rules_by_category(self, category: Category) -> List[ThreatRule]:
         """Get all rules in a specific category.

@@ -40,13 +40,6 @@ def cli():
 
 @cli.command()
 @click.option(
-    "--openai-api-key",
-    help="OpenAI API key for LLM-based analysis",
-    prompt="OpenAI API Key (optional, press Enter to skip)",
-    default="",
-    hide_input=True,
-)
-@click.option(
     "--severity-threshold",
     type=click.Choice(["low", "medium", "high", "critical"]),
     default="medium",
@@ -60,10 +53,9 @@ def cli():
 @click.option(
     "--enable-llm/--disable-llm",
     default=None,
-    help="Enable LLM-based analysis and exploit generation (auto-enabled when API key is set)",
+    help="Enable LLM-based analysis and exploit generation (uses client's LLM)",
 )
 def configure(
-    openai_api_key: str,
     severity_threshold: str,
     enable_safety_mode: bool,
     enable_llm: Optional[bool],
@@ -79,17 +71,10 @@ def configure(
             config = SecurityConfig()
 
         # Update configuration
-        if openai_api_key:
-            config.openai_api_key = openai_api_key
-            # Auto-enable LLM features when API key is provided (unless explicitly disabled)
-            if enable_llm is None:
-                config.enable_llm_analysis = True
-                config.enable_exploit_generation = True
-
         config.severity_threshold = severity_threshold
         config.exploit_safety_mode = enable_safety_mode
         
-        # Only override LLM settings if explicitly specified
+        # Override LLM settings if explicitly specified
         if enable_llm is not None:
             config.enable_llm_analysis = enable_llm
             config.enable_exploit_generation = enable_llm
@@ -104,10 +89,6 @@ def configure(
         table.add_column("Setting", style="cyan")
         table.add_column("Value", style="magenta")
 
-        table.add_row(
-            "OpenAI API Key",
-            "✓ Configured" if config.openai_api_key else "✗ Not configured",
-        )
         table.add_row("Severity Threshold", config.severity_threshold)
         table.add_row(
             "Safety Mode", "✓ Enabled" if config.exploit_safety_mode else "✗ Disabled"
@@ -139,7 +120,7 @@ def status():
         # Status panel
         status_text = "🟢 **Server Status:** Running\n"
         status_text += f"🔧 **Configuration:** {'✓ Configured' if credential_manager.has_config() else '✗ Not configured'}\n"
-        status_text += f"🤖 **LLM Integration:** {'✓ Available' if config.openai_api_key else '✗ Not available'}\n"
+        status_text += f"🤖 **LLM Integration:** Client-based (no API key required)\n"
 
         console.print(
             Panel(
@@ -152,10 +133,6 @@ def status():
         config_table.add_column("Setting", style="cyan")
         config_table.add_column("Value", style="magenta")
 
-        config_table.add_row(
-            "OpenAI API Key",
-            "✓ Configured" if config.openai_api_key else "✗ Not configured",
-        )
         config_table.add_row("Severity Threshold", config.severity_threshold)
         config_table.add_row(
             "Safety Mode", "✓ Enabled" if config.exploit_safety_mode else "✗ Disabled"

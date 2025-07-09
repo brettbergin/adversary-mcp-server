@@ -21,11 +21,8 @@ from keyring.errors import KeyringError
 class SecurityConfig:
     """Security configuration for the adversary MCP server."""
 
-    # LLM Configuration
-    openai_api_key: str = ""
-    openai_model: str = "gpt-4"
-    openai_max_tokens: int = 2048
-    enable_llm_analysis: bool = False  # Enable LLM-based security analysis (requires API key)
+    # LLM Configuration (now client-based)
+    enable_llm_analysis: bool = False  # Enable LLM-based security analysis (uses client LLM)
 
     # Scanner Configuration
     enable_ast_scanning: bool = True
@@ -56,22 +53,17 @@ class SecurityConfig:
         Returns:
             Tuple of (is_valid, error_message)
         """
-        if self.enable_llm_analysis and not self.openai_api_key:
-            return False, "OpenAI API key is required when LLM analysis is enabled. Set it using adv_configure_settings."
-        
-        if self.enable_llm_analysis and self.openai_api_key and not self.openai_api_key.startswith("sk-"):
-            return False, "Invalid OpenAI API key format. API keys should start with 'sk-'."
-        
+        # LLM analysis now uses client-side LLM, so always valid
         return True, ""
     
     def is_llm_analysis_available(self) -> bool:
         """Check if LLM analysis is available and properly configured.
         
         Returns:
-            True if LLM analysis can be used
+            True if LLM analysis can be used (always true now since we use client LLM)
         """
-        # Check if LLM analysis is either explicitly enabled or can be auto-enabled
-        return (self.enable_llm_analysis or bool(self.openai_api_key)) and bool(self.openai_api_key)
+        # LLM analysis now uses client-side LLM, so always available
+        return True
     
     def get_configuration_summary(self) -> dict[str, Any]:
         """Get a summary of the current configuration.
@@ -79,15 +71,10 @@ class SecurityConfig:
         Returns:
             Dictionary with configuration summary
         """
-        is_valid, error = self.validate_llm_configuration()
-        
         return {
             "llm_analysis_enabled": self.enable_llm_analysis,
             "llm_analysis_available": self.is_llm_analysis_available(),
-            "openai_api_key_configured": bool(self.openai_api_key),
-            "openai_model": self.openai_model,
-            "configuration_valid": is_valid,
-            "configuration_error": error if not is_valid else None,
+            "llm_mode": "client_based",
             "exploit_generation_enabled": self.enable_exploit_generation,
             "exploit_safety_mode": self.exploit_safety_mode,
             "severity_threshold": self.severity_threshold,
@@ -410,25 +397,3 @@ class CredentialManager:
             return True
             
         return False
-
-    def get_openai_api_key(self) -> Optional[str]:
-        """Get OpenAI API key from configuration.
-
-        Returns:
-            OpenAI API key if configured, None otherwise
-        """
-        try:
-            config = self.load_config()
-            return config.openai_api_key if config.openai_api_key else None
-        except CredentialNotFoundError:
-            return None
-
-    def update_openai_api_key(self, api_key: str) -> None:
-        """Update OpenAI API key in configuration.
-
-        Args:
-            api_key: OpenAI API key to store
-        """
-        config = self.load_config()
-        config.openai_api_key = api_key
-        self.store_config(config)
