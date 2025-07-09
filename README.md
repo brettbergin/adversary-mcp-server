@@ -17,28 +17,6 @@
 
 ---
 
-## 🚀 What's New in v0.7.1
-
-### **🤖 LLM-Powered Security Analysis**
-- **Hybrid Analysis Engine**: Combines rule-based detection with AI-powered analysis
-- **LLM Integration**: Uses external LLM services for advanced vulnerability detection
-- **Enhanced Threat Detection**: Identifies complex vulnerabilities that traditional rules might miss
-- **Intelligent Deduplication**: Smart merging of findings from multiple analysis engines
-
-### **🔧 Enhanced Scanner Architecture**
-- **Comprehensive Scanning**: Multi-layered approach with AST rules + LLM analysis
-- **Confidence Scoring**: AI-powered confidence levels for each finding
-- **Statistical Analysis**: Detailed scan statistics and threat categorization
-- **Batch Processing**: Optimized for large codebases with parallel analysis
-
-### **🔐 Improved Credential Management**
-- **Secure API Key Storage**: Enhanced encryption and keyring integration
-- **Configuration Validation**: Automatic validation of LLM configuration
-- **Flexible Settings**: Fine-grained control over analysis features
-- **Better Error Handling**: Clear feedback on configuration issues
-
----
-
 ## Installation
 
 ### Prerequisites
