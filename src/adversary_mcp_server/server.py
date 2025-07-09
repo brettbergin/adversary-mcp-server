@@ -1043,7 +1043,7 @@ class AdversaryMCPServer:
                 write_stream,
                 InitializationOptions(
                     server_name="adversary-mcp-server",
-                    server_version="0.7.3",
+                    server_version="0.7.4",
                     capabilities=ServerCapabilities(
                         tools=ToolsCapability(listChanged=True)
                     ),

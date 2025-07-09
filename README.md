@@ -23,7 +23,6 @@
 
 - **Python 3.10+** (3.11+ recommended)
 - **Cursor IDE** with MCP support
-- **LLM API access** (optional, for enhanced AI-powered analysis)
 
 ### Quick Install
 
@@ -72,7 +71,7 @@ Create `.cursor/mcp.json` in your project or `~/.cursor/mcp.json` globally:
 
 ### 3. Start Using in Cursor
 
-Once configured, you can use these **enhanced** MCP tools in Cursor:
+Once configured, you can use these MCP tools in Cursor:
 
 - `adv_scan_code` - Hybrid scanning with rules + AI analysis
 - `adv_scan_file` - file scanning with LLM support
@@ -92,39 +91,19 @@ For real-time rule updates during development:
 # Start hot-reload service
 adversary-mcp-cli watch start
 
-# Now edit rules and they'll automatically reload!
+# Now edit rules and they'll automatically reload
 ```
 
 ---
 
-## 🤖 AI-Powered Analysis
-
-### **Hybrid Detection Engine**
-
-The v0.7.1 release introduces a revolutionary **hybrid analysis approach** that combines:
-
-1. **Rule-Based Detection** (95+ built-in rules)
-   - Fast, deterministic vulnerability detection
-   - Low false-positive rate
-   - Comprehensive language support
-
-2. **🆕 LLM-Powered Analysis** (External LLM Services)
-   - Advanced pattern recognition
-   - Context-aware vulnerability detection
-   - Natural language explanations
-   - Complex vulnerability chains
-
-### **Enhanced Scanning Capabilities**
+### ** Scanning **
 
 ```bash
 # Scan with AI enhancement (hybrid mode)
-Use adv_scan_code with use_llm=true for maximum coverage
+Use adv_scan_code with use_llm=true for comprehensive analysis
 
 # Traditional rules-only scanning
-Use adv_scan_code with use_llm=false for fast analysis
-
-# Analysis with AI
-Use adv_scan_directory with LLM analysis for comprehensive coverage
+Use adv_scan_code with use_llm=false for simple analysis
 ```
 
 ### **AI Analysis Features**
@@ -137,10 +116,9 @@ Use adv_scan_directory with LLM analysis for comprehensive coverage
 
 ### **LLM Integration**
 
-The scanner can integrate with external LLM services through your client application:
+The scanner integrates with the existing models in your client application.
 
 ```bash
-# Check LLM availability
 adversary-mcp-cli status
 ```
 
@@ -192,9 +170,6 @@ Use adv_generate_exploit for this SQL injection
 
 # NEW: Check AI analysis availability
 Use adv_get_status to get the MCP server status
-
-# Enhanced directory scanning with AI
-Use adv_scan_directory with use_llm=true for comprehensive analysis
 ```
 
 ---
@@ -202,9 +177,6 @@ Use adv_scan_directory with use_llm=true for comprehensive analysis
 ## Rule Management
 
 ### **🆕 Enhanced Rule Engine**
-
-The v0.7.1 release includes significant improvements to rule management:
-
 - **95+ Built-in Rules** (expanded from 85)
 - **🆕 AI-Enhanced Categories** with better organization
 - **🆕 Confidence-Based Filtering** for more accurate results
@@ -419,12 +391,14 @@ vim ~/.local/share/adversary-mcp-server/rules/custom/my-rule.yaml
 - **🆕 MITRE ATT&CK** - Threat modeling integration
 - **🆕 ASVS** - Application Security Verification Standard
 
-### **🆕 Advanced Language Support**
+### **Full Language Support**
 
 - **Python** - AST-based analysis + AI semantic understanding
 - **JavaScript** - Modern ES6+ and Node.js patterns + AI context analysis
 - **TypeScript** - Type safety vulnerabilities + AI-powered type inference analysis
 
+### **Limited Language Support**
+- TBD
 ---
 
 ## 🏗️ Enhanced Architecture
@@ -479,40 +453,6 @@ graph TB
     end
 ```
 
-### **🆕 Core Components**
-
-#### **1. Enhanced Scanner**
-- **Hybrid Analysis Engine**: Orchestrates both rule-based and AI analysis
-- **Intelligent Deduplication**: Merges findings from multiple sources
-- **Confidence Scoring**: Provides reliability metrics for each finding
-- **Statistical Analysis**: Generates comprehensive scan statistics
-
-#### **2. LLM Security Analyzer**
-- **LLM Integration**: Uses external LLM services for advanced pattern recognition
-- **Context-Aware Analysis**: Understands code semantics and business logic
-- **Natural Language Explanations**: Provides detailed vulnerability descriptions
-- **CWE/OWASP Mapping**: Automatic categorization with industry standards
-
-#### **3. Enhanced Credential Manager**
-- **Secure Storage**: Encrypted API key management with keyring integration
-- **Configuration Validation**: Automatic validation of LLM settings
-- **Flexible Configuration**: Fine-grained control over analysis features
-- **Error Handling**: Clear feedback on configuration issues
-
-#### **4. Traditional Components (Enhanced)**
-- **AST Scanner**: Enhanced with better language support
-- **Threat Engine**: Improved rule management and validation
-- **Exploit Generator**: AI-enhanced exploit generation capabilities
-- **Hot-Reload Service**: Real-time rule updates
-
-### **🆕 Analysis Flow**
-
-1. **Input Processing**: Code is prepared for multi-engine analysis
-2. **Parallel Analysis**: AST rules and LLM analysis run concurrently
-3. **Intelligent Merging**: Findings are deduplicated and merged
-4. **Confidence Scoring**: AI provides reliability metrics
-5. **Enhanced Output**: Results include detailed explanations and statistics
-
 ### **🆕 Integration Architecture**
 
 ```
@@ -536,19 +476,16 @@ graph TB
                               ┌─────────────────────────┼─────────────────────────┐
                               │                         ▼                         │
                     ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-                    │ 🆕 LLM Service  │    │🆕 Confidence    │    │🆕 Statistical   │
+                    │ 🆕 LLM Service  │     │🆕 Confidence    │    │🆕 Statistical   │
                     │   Integration   │    │   Scoring       │    │   Analysis      │
                     │ • External APIs │    │ • Reliability   │    │ • Detailed      │
                     │ • Context-aware │    │ • Deduplication │    │   Metrics       │
-                    │ • NL Explanations│    │ • Smart Merging │    │ • Trend Analysis│
+                    │ • NL Explanations│   │ • Smart Merging │    │ • Trend Analysis│
                     └─────────────────┘    └─────────────────┘    └─────────────────┘
 ```
 
 ---
 
-## 🆕 Advanced Features in v0.7.1
-
-### **Hybrid Analysis Examples**
 
 #### **Traditional Rules-Only Analysis**
 ```bash
