@@ -139,7 +139,7 @@ class EnhancedScanner:
         self,
         threat_engine: Optional[ThreatEngine] = None,
         credential_manager: Optional[CredentialManager] = None,
-        enable_llm_analysis: bool = True,
+        enable_llm_analysis: bool = False,
     ):
         """Initialize enhanced scanner.
         
@@ -150,7 +150,16 @@ class EnhancedScanner:
         """
         self.threat_engine = threat_engine or ThreatEngine()
         self.credential_manager = credential_manager or CredentialManager()
-        self.enable_llm_analysis = enable_llm_analysis
+        
+        # Check if LLM analysis should be enabled based on configuration
+        config = self.credential_manager.load_config()
+        if enable_llm_analysis:
+            self.enable_llm_analysis = True
+        elif config.is_llm_analysis_available():
+            # Auto-enable if API key is configured and user hasn't explicitly disabled it
+            self.enable_llm_analysis = True
+        else:
+            self.enable_llm_analysis = False
         
         # Initialize AST scanner
         self.ast_scanner = ASTScanner(self.threat_engine)

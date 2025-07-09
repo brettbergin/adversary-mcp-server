@@ -46,7 +46,7 @@ class ScanRequest(BaseModel):
     language: Optional[str] = None
     severity_threshold: Optional[str] = "medium"
     include_exploits: bool = True
-    use_llm: bool = True
+    use_llm: bool = False
 
 
 class ScanResult(BaseModel):
@@ -110,7 +110,7 @@ class AdversaryMCPServer:
                             "use_llm": {
                                 "type": "boolean",
                                 "description": "Whether to use LLM for enhanced analysis",
-                                "default": True,
+                                "default": False,
                             },
                         },
                         "required": ["content", "language"],
@@ -140,7 +140,7 @@ class AdversaryMCPServer:
                             "use_llm": {
                                 "type": "boolean",
                                 "description": "Whether to use LLM for enhanced analysis",
-                                "default": True,
+                                "default": False,
                             },
                         },
                         "required": ["file_path"],
@@ -203,7 +203,7 @@ class AdversaryMCPServer:
                             "use_llm": {
                                 "type": "boolean",
                                 "description": "Whether to use LLM for generation",
-                                "default": True,
+                                "default": False,
                             },
                         },
                         "required": [

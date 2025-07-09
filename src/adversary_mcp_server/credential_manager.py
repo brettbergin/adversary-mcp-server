@@ -25,7 +25,7 @@ class SecurityConfig:
     openai_api_key: str = ""
     openai_model: str = "gpt-4"
     openai_max_tokens: int = 2048
-    enable_llm_analysis: bool = True  # Enable LLM-based security analysis
+    enable_llm_analysis: bool = False  # Enable LLM-based security analysis (requires API key)
 
     # Scanner Configuration
     enable_ast_scanning: bool = True
@@ -70,7 +70,8 @@ class SecurityConfig:
         Returns:
             True if LLM analysis can be used
         """
-        return self.enable_llm_analysis and bool(self.openai_api_key)
+        # Check if LLM analysis is either explicitly enabled or can be auto-enabled
+        return (self.enable_llm_analysis or bool(self.openai_api_key)) and bool(self.openai_api_key)
     
     def get_configuration_summary(self) -> dict[str, Any]:
         """Get a summary of the current configuration.

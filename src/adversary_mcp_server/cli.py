@@ -59,14 +59,14 @@ def cli():
 )
 @click.option(
     "--enable-llm/--disable-llm",
-    default=True,
-    help="Enable LLM-based analysis and exploit generation",
+    default=None,
+    help="Enable LLM-based analysis and exploit generation (auto-enabled when API key is set)",
 )
 def configure(
     openai_api_key: str,
     severity_threshold: str,
     enable_safety_mode: bool,
-    enable_llm: bool,
+    enable_llm: Optional[bool],
 ):
     """Configure the Adversary MCP server settings."""
     try:
@@ -81,10 +81,18 @@ def configure(
         # Update configuration
         if openai_api_key:
             config.openai_api_key = openai_api_key
+            # Auto-enable LLM features when API key is provided (unless explicitly disabled)
+            if enable_llm is None:
+                config.enable_llm_analysis = True
+                config.enable_exploit_generation = True
 
         config.severity_threshold = severity_threshold
         config.exploit_safety_mode = enable_safety_mode
-        config.enable_exploit_generation = enable_llm
+        
+        # Only override LLM settings if explicitly specified
+        if enable_llm is not None:
+            config.enable_llm_analysis = enable_llm
+            config.enable_exploit_generation = enable_llm
 
         # Save configuration
         credential_manager.store_config(config)
@@ -103,6 +111,10 @@ def configure(
         table.add_row("Severity Threshold", config.severity_threshold)
         table.add_row(
             "Safety Mode", "✓ Enabled" if config.exploit_safety_mode else "✗ Disabled"
+        )
+        table.add_row(
+            "LLM Analysis",
+            "✓ Enabled" if config.enable_llm_analysis else "✗ Disabled",
         )
         table.add_row(
             "LLM Generation",
@@ -147,6 +159,10 @@ def status():
         config_table.add_row("Severity Threshold", config.severity_threshold)
         config_table.add_row(
             "Safety Mode", "✓ Enabled" if config.exploit_safety_mode else "✗ Disabled"
+        )
+        config_table.add_row(
+            "LLM Analysis",
+            "✓ Enabled" if config.enable_llm_analysis else "✗ Disabled",
         )
         config_table.add_row(
             "LLM Generation",
