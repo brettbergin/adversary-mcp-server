@@ -1,9 +1,9 @@
 """Extended tests for server module to improve coverage."""
 
-import re
-import os
-import sys
 import asyncio
+import os
+import re
+import sys
 import tempfile
 import tomllib
 from pathlib import Path
@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from mcp import types
 
+from adversary_mcp_server import DEFAULT_VERSION
 from adversary_mcp_server.server import (
     AdversaryMCPServer,
     AdversaryToolError,
@@ -23,21 +24,19 @@ from adversary_mcp_server.server import (
     ScanResult,
 )
 from adversary_mcp_server.threat_engine import Category, Language, Severity, ThreatMatch
-from adversary_mcp_server import DEFAULT_VERSION
 
 
 def _read_version_from_pyproject() -> str:
     """Helper function to read version from pyproject.toml for tests."""
     try:
-        # Get the project root 
+        # Get the project root
         project_root = Path(__file__).parent.parent
         pyproject_path = project_root / "pyproject.toml"
-        
+
         if pyproject_path.exists():
             # Use tomllib for Python 3.11+ or simple parsing for older versions
             if sys.version_info >= (3, 11):
-                
-                
+
                 with open(pyproject_path, "rb") as f:
                     pyproject_data = tomllib.load(f)
                     return pyproject_data.get("project", {}).get("version", "unknown")
@@ -672,7 +671,7 @@ description = "Test version"
     def test_get_version_importlib_package_not_found(self, server):
         """Test version retrieval when importlib package is not found."""
         expected_version = _read_version_from_pyproject()
-        
+
         with patch(
             "importlib.metadata.version", side_effect=Exception("Package not found")
         ):
@@ -683,8 +682,11 @@ description = "Test version"
     def test_get_version_all_methods_fail(self, server):
         """Test version retrieval when all methods fail."""
         with patch("importlib.metadata.version", side_effect=Exception("All failed")):
-            # Mock the pyproject.toml reading to also fail  
-            with patch("adversary_mcp_server._read_version_from_pyproject", side_effect=Exception("Pyproject failed")):
+            # Mock the pyproject.toml reading to also fail
+            with patch(
+                "adversary_mcp_server._read_version_from_pyproject",
+                side_effect=Exception("Pyproject failed"),
+            ):
                 version = server._get_version()
                 # Should fallback to DEFAULT_VERSION constant
                 assert version == DEFAULT_VERSION
@@ -692,7 +694,7 @@ description = "Test version"
     def test_get_version_exception_in_main_try_block(self, server):
         """Test version retrieval with exception in main try block."""
         expected_version = _read_version_from_pyproject()
-        
+
         with patch(
             "importlib.metadata.version", side_effect=Exception("Main try failed")
         ):
@@ -703,7 +705,7 @@ description = "Test version"
     def test_get_version_pyproject_fallback_works(self, server):
         """Test version retrieval successfully falls back to pyproject.toml."""
         expected_version = _read_version_from_pyproject()
-        
+
         with patch(
             "importlib.metadata.version", side_effect=Exception("No package metadata")
         ):
@@ -716,7 +718,9 @@ description = "Test version"
 
     def test_get_version_pyproject_file_missing(self, server):
         """Test version retrieval when pyproject.toml file is missing."""
-        with patch("importlib.metadata.version", side_effect=Exception("No package metadata")):
+        with patch(
+            "importlib.metadata.version", side_effect=Exception("No package metadata")
+        ):
             # Mock Path.exists() to return False for pyproject.toml
             with patch("pathlib.Path.exists", return_value=False):
                 version = server._get_version()
@@ -729,10 +733,13 @@ description = "Test version"
         version = server._get_version()
         assert isinstance(version, str)
         assert len(version) > 0
-        
+
         # Test fallback case
         with patch("importlib.metadata.version", side_effect=Exception("Failed")):
-            with patch("adversary_mcp_server._read_version_from_pyproject", side_effect=Exception("Failed")):
+            with patch(
+                "adversary_mcp_server._read_version_from_pyproject",
+                side_effect=Exception("Failed"),
+            ):
                 version = server._get_version()
                 assert isinstance(version, str)
                 assert len(version) > 0

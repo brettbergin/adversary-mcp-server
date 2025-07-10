@@ -208,6 +208,7 @@ The new `adv_diff_scan` tool enables intelligent scanning of only changed files 
 {
   "source_branch": "main",        // Branch to compare from
   "target_branch": "feature/new", // Branch to compare to
+  "working_directory": ".",       // Working directory for git operations (defaults to current directory)
   "severity_threshold": "medium", // Filter results by severity
   "include_exploits": true,       // Include exploit examples
   "use_llm": true                // Enable AI analysis
@@ -219,8 +220,8 @@ The new `adv_diff_scan` tool enables intelligent scanning of only changed files 
 # Scan changes in current branch vs main
 Use adv_diff_scan with source_branch="main" and target_branch="HEAD"
 
-# Scan changes between specific branches
-Use adv_diff_scan with source_branch="staging" and target_branch="production"
+# Scan changes between specific branches in a specific directory
+Use adv_diff_scan with source_branch="staging", target_branch="production", and working_directory="/path/to/repo"
 
 # Scan with high severity filter
 Use adv_diff_scan with severity_threshold="high"
@@ -828,3 +829,74 @@ The project uses centralized version management - you only need to update the ve
 **Built with ❤️ for secure development**
 
 </div>
+
+## Troubleshooting
+
+### Git Diff Scanning Issues
+
+If you encounter the error `"Failed to get diff summary"` when using `adv_diff_scan`, this is typically caused by one of these issues:
+
+#### **Common Causes & Solutions:**
+
+1. **Working Directory Issue**
+   ```
+   Error: Tool adv_diff_scan failed: Diff scanning failed: Git diff operation failed: Failed to get diff summary
+   ```
+   
+   **Solution:** Specify the correct working directory:
+   ```json
+   {
+     "source_branch": "main",
+     "target_branch": "feature/my-branch", 
+     "working_directory": "/path/to/your/git/repository"
+   }
+   ```
+
+2. **Branch Not Found**
+   ```
+   Error: Branch validation failed: Branch not found
+   ```
+   
+   **Solution:** Verify branch names exist:
+   ```bash
+   cd /path/to/your/repo
+   git branch -a  # List all branches
+   ```
+
+3. **Not a Git Repository**
+   ```
+   Error: Git command failed: fatal: not a git repository
+   ```
+   
+   **Solution:** Ensure you're pointing to a valid git repository:
+   ```json
+   {
+     "working_directory": "/path/to/valid/git/repo"
+   }
+   ```
+
+4. **Git Not Available**
+   ```
+   Error: Git command not found
+   ```
+   
+   **Solution:** Install git or ensure it's in your PATH.
+
+#### **Best Practices:**
+
+- Always specify the `working_directory` parameter when the repository is not in the current directory
+- Use full/absolute paths for `working_directory` to avoid confusion  
+- Verify branch names with `git branch -a` before running scans
+- For remote branches, use the full name (e.g., `origin/main` not just `main`)
+
+#### **Example Working Configuration:**
+```json
+{
+  "source_branch": "origin/main",
+  "target_branch": "HEAD", 
+  "working_directory": "/Users/username/my-project",
+  "severity_threshold": "medium",
+  "include_exploits": true,
+  "use_llm": false
+}
+```

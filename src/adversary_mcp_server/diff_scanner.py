@@ -153,11 +153,14 @@ class GitDiffScanner:
         self.working_dir = working_dir or Path.cwd()
         self.parser = GitDiffParser()
 
-    def _run_git_command(self, args: List[str]) -> str:
+    def _run_git_command(
+        self, args: List[str], working_dir: Optional[Path] = None
+    ) -> str:
         """Run a git command and return its output.
 
         Args:
             args: Git command arguments
+            working_dir: Working directory for git operations (uses self.working_dir if not specified)
 
         Returns:
             Command output as string
@@ -165,10 +168,11 @@ class GitDiffScanner:
         Raises:
             GitDiffError: If the git command fails
         """
+        target_dir = working_dir or self.working_dir
         try:
             result = subprocess.run(
                 ["git"] + args,
-                cwd=self.working_dir,
+                cwd=target_dir,
                 capture_output=True,
                 text=True,
                 check=True,
@@ -181,12 +185,15 @@ class GitDiffScanner:
                 "Git command not found. Please ensure git is installed and in PATH."
             )
 
-    def _validate_branches(self, source_branch: str, target_branch: str) -> None:
+    def _validate_branches(
+        self, source_branch: str, target_branch: str, working_dir: Optional[Path] = None
+    ) -> None:
         """Validate that the specified branches exist.
 
         Args:
             source_branch: Source branch name
             target_branch: Target branch name
+            working_dir: Working directory for git operations (uses self.working_dir if not specified)
 
         Raises:
             GitDiffError: If either branch doesn't exist
@@ -194,12 +201,12 @@ class GitDiffScanner:
         try:
             # Check if source branch exists
             self._run_git_command(
-                ["rev-parse", "--verify", f"{source_branch}^{{commit}}"]
+                ["rev-parse", "--verify", f"{source_branch}^{{commit}}"], working_dir
             )
 
             # Check if target branch exists
             self._run_git_command(
-                ["rev-parse", "--verify", f"{target_branch}^{{commit}}"]
+                ["rev-parse", "--verify", f"{target_branch}^{{commit}}"], working_dir
             )
 
         except GitDiffError as e:
@@ -227,13 +234,14 @@ class GitDiffScanner:
         return language_map.get(extension)
 
     def get_diff_changes(
-        self, source_branch: str, target_branch: str
+        self, source_branch: str, target_branch: str, working_dir: Optional[Path] = None
     ) -> Dict[str, List[DiffChunk]]:
         """Get diff changes between two branches.
 
         Args:
             source_branch: Source branch (e.g., 'feature-branch')
             target_branch: Target branch (e.g., 'main')
+            working_dir: Working directory for git operations (uses self.working_dir if not specified)
 
         Returns:
             Dictionary mapping file paths to lists of DiffChunk objects
@@ -242,11 +250,11 @@ class GitDiffScanner:
             GitDiffError: If git operations fail
         """
         # Validate branches exist
-        self._validate_branches(source_branch, target_branch)
+        self._validate_branches(source_branch, target_branch, working_dir)
 
         # Get diff between branches
         diff_args = ["diff", f"{target_branch}...{source_branch}"]
-        diff_output = self._run_git_command(diff_args)
+        diff_output = self._run_git_command(diff_args, working_dir)
 
         if not diff_output.strip():
             logger.info(
@@ -261,6 +269,7 @@ class GitDiffScanner:
         self,
         source_branch: str,
         target_branch: str,
+        working_dir: Optional[Path] = None,
         use_llm: bool = False,
         severity_threshold: Optional[Severity] = None,
     ) -> Dict[str, List[EnhancedScanResult]]:
@@ -269,6 +278,7 @@ class GitDiffScanner:
         Args:
             source_branch: Source branch name
             target_branch: Target branch name
+            working_dir: Working directory for git operations (uses self.working_dir if not specified)
             use_llm: Whether to use LLM analysis
             severity_threshold: Minimum severity threshold for filtering
 
@@ -279,7 +289,7 @@ class GitDiffScanner:
             GitDiffError: If git operations fail
         """
         # Get diff changes
-        diff_changes = self.get_diff_changes(source_branch, target_branch)
+        diff_changes = self.get_diff_changes(source_branch, target_branch, working_dir)
 
         if not diff_changes:
             return {}
@@ -341,19 +351,22 @@ class GitDiffScanner:
         return scan_results
 
     def get_diff_summary(
-        self, source_branch: str, target_branch: str
+        self, source_branch: str, target_branch: str, working_dir: Optional[Path] = None
     ) -> Dict[str, any]:
         """Get a summary of the diff between two branches.
 
         Args:
             source_branch: Source branch name
             target_branch: Target branch name
+            working_dir: Working directory for git operations (uses self.working_dir if not specified)
 
         Returns:
             Dictionary with diff summary information
         """
         try:
-            diff_changes = self.get_diff_changes(source_branch, target_branch)
+            diff_changes = self.get_diff_changes(
+                source_branch, target_branch, working_dir
+            )
 
             total_files = len(diff_changes)
             total_chunks = sum(len(chunks) for chunks in diff_changes.values())

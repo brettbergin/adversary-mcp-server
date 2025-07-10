@@ -2,6 +2,7 @@
 
 import os
 import sys
+from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -287,6 +288,7 @@ class TestServerDiffScanIntegration:
         server.diff_scanner.scan_diff.assert_called_with(
             source_branch="feature",
             target_branch="main",
+            working_dir=Path(".").resolve(),
             use_llm=False,
             severity_threshold=Severity.HIGH,
         )
@@ -515,10 +517,13 @@ class TestServerDiffScanIntegrationComplete:
         assert "🔴" in result[0].text  # Critical severity emoji
 
         # Verify methods were called
-        server.diff_scanner.get_diff_summary.assert_called_once_with("feature", "main")
+        server.diff_scanner.get_diff_summary.assert_called_once_with(
+            "feature", "main", Path(".").resolve()
+        )
         server.diff_scanner.scan_diff.assert_called_once_with(
             source_branch="feature",
             target_branch="main",
+            working_dir=Path(".").resolve(),
             use_llm=False,
             severity_threshold=Severity.MEDIUM,
         )

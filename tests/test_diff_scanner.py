@@ -246,8 +246,10 @@ class TestGitDiffScanner:
         scanner._validate_branches("feature", "main")
 
         assert mock_run_git.call_count == 2
-        mock_run_git.assert_any_call(["rev-parse", "--verify", "feature^{commit}"])
-        mock_run_git.assert_any_call(["rev-parse", "--verify", "main^{commit}"])
+        mock_run_git.assert_any_call(
+            ["rev-parse", "--verify", "feature^{commit}"], None
+        )
+        mock_run_git.assert_any_call(["rev-parse", "--verify", "main^{commit}"], None)
 
     @patch("adversary_mcp_server.diff_scanner.GitDiffScanner._run_git_command")
     def test_validate_branches_failure(self, mock_run_git):

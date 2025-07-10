@@ -195,6 +195,11 @@ class AdversaryMCPServer:
                                 "type": "string",
                                 "description": "Target branch name (e.g., 'main')",
                             },
+                            "working_directory": {
+                                "type": "string",
+                                "description": "Working directory path for git operations (defaults to current directory)",
+                                "default": ".",
+                            },
                             "severity_threshold": {
                                 "type": "string",
                                 "description": "Minimum severity threshold (low, medium, high, critical)",
@@ -594,6 +599,7 @@ class AdversaryMCPServer:
         try:
             source_branch = arguments["source_branch"]
             target_branch = arguments["target_branch"]
+            working_directory = arguments.get("working_directory", ".")
             severity_threshold = arguments.get("severity_threshold", "medium")
             include_exploits = arguments.get("include_exploits", True)
             use_llm = arguments.get("use_llm", False)
@@ -601,9 +607,12 @@ class AdversaryMCPServer:
             # Convert severity threshold to enum
             severity_enum = Severity(severity_threshold)
 
+            # Convert working directory to Path object
+            working_dir_path = Path(working_directory).resolve()
+
             # Get diff summary first
             diff_summary = self.diff_scanner.get_diff_summary(
-                source_branch, target_branch
+                source_branch, target_branch, working_dir_path
             )
 
             # Check if there's an error in the summary
@@ -616,6 +625,7 @@ class AdversaryMCPServer:
             scan_results = self.diff_scanner.scan_diff(
                 source_branch=source_branch,
                 target_branch=target_branch,
+                working_dir=working_dir_path,
                 use_llm=False,  # Always False for rules scan
                 severity_threshold=severity_enum,
             )
@@ -661,7 +671,7 @@ class AdversaryMCPServer:
                     try:
                         # Get the changed code from the diff
                         diff_changes = self.diff_scanner.get_diff_changes(
-                            source_branch, target_branch
+                            source_branch, target_branch, working_dir_path
                         )
                         if file_path in diff_changes:
                             chunks = diff_changes[file_path]

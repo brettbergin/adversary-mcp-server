@@ -2,8 +2,8 @@
 
 import re
 import sys
-from pathlib import Path
 from importlib.metadata import version
+from pathlib import Path
 
 
 def _get_default_version() -> str:
@@ -58,7 +58,6 @@ def _read_version_from_pyproject() -> str:
                 # Simple regex parsing for older Python versions
                 with open(pyproject_path, "r") as f:
                     content = f.read()
-                    
 
                     match = re.search(
                         r'^version\s*=\s*["\']([^"\']+)["\']', content, re.MULTILINE
