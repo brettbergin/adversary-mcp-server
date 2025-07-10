@@ -76,6 +76,7 @@ Once configured, you can use these MCP tools in Cursor:
 - `adv_scan_code` - Hybrid scanning with rules + AI analysis
 - `adv_scan_file` - file scanning with LLM support
 - `adv_scan_directory` - directory scanning
+- `adv_diff_scan` - **🆕 Git diff-aware scanning** - scans only changed files between branches
 - `adv_list_rules` - List all 95+ security rules
 - `adv_get_rule_details` - Get details about specific rules
 - `adv_generate_exploit` - exploit generation
@@ -92,6 +93,21 @@ For real-time rule updates during development:
 adversary-mcp-cli watch start
 
 # Now edit rules and they'll automatically reload
+```
+
+### 5. **🆕 Git Diff-Aware Scanning**
+
+Scan only changed files between git branches for efficient CI/CD integration:
+
+```bash
+# Scan changes in your current branch vs main
+adversary-mcp-cli scan --diff
+
+# Scan changes between specific branches
+adversary-mcp-cli scan --diff --source-branch=develop --target-branch=feature/auth
+
+# Scan with high severity filter
+adversary-mcp-cli scan --diff --severity=high --use-llm=true
 ```
 
 ---
@@ -139,6 +155,7 @@ adversary-mcp-cli status
 | `adv_scan_code` | **🆕 Hybrid scan** of source code | ✅ LLM prompts, confidence scoring |
 | `adv_scan_file` | **🆕 Enhanced** file scanning | ✅ AI-powered prompts, detailed explanations |
 | `adv_scan_directory` | **🆕 Intelligent** directory scanning | ✅ Batch LLM prompts, statistical insights |
+| `adv_diff_scan` | **🆕 Git diff-aware scanning** - scans only newly added lines | ✅ Smart change detection, branch comparison, requires `working_directory` |
 | `adv_generate_exploit` | **🆕 AI-enhanced** exploit generation | ✅ Context-aware prompts, safety mode |
 | `adv_list_rules` | List all 95+ threat detection rules | Enhanced with AI rule categories |
 | `adv_get_rule_details` | Get detailed rule information | Improved formatting and examples |
@@ -165,12 +182,64 @@ All scanning tools now support:
 # NEW: AI-powered vulnerability scanning
 Use adv_scan_code with use_llm=true to analyze this function
 
+# NEW: Git diff-aware scanning
+Use adv_diff_scan to scan only changed files between branches
+
 # NEW: Generate AI-enhanced exploits
 Use adv_generate_exploit for this SQL injection
 
 # NEW: Check AI analysis availability
 Use adv_get_status to get the MCP server status
 ```
+
+### **🆕 Git Diff-Aware Scanning**
+
+The new `adv_diff_scan` tool enables intelligent scanning of only changed files between git branches:
+
+#### **Key Features:**
+- **Smart Change Detection**: Analyzes only modified code, not entire repository
+- **Branch Comparison**: Compares any two branches (main vs. feature, staging vs. production)
+- **Line-Level Precision**: Scans **only newly added lines** (lines with `+` in git diff), ignoring context lines and removed code
+- **Statistics Generation**: Provides comprehensive diff statistics and threat metrics
+- **Full Integration**: Works with all existing scan options (LLM, exploits, severity filtering)
+
+#### **🎯 Scanning Scope (Updated)**
+- ✅ **Newly added lines** (lines starting with `+` in git diff)
+- ❌ **Context lines** (unchanged code shown for reference)
+- ❌ **Removed lines** (deleted code)
+- ❌ **Existing code** in the repository
+
+This prevents false positives from flagging existing code as new vulnerabilities.
+
+#### **MCP Tool Parameters:**
+```json
+{
+  "source_branch": "main",        // Branch to compare from
+  "target_branch": "feature/new", // Branch to compare to
+  "working_directory": "/absolute/path/to/repo",  // ⚠️ REQUIRED: Working directory for git operations
+  "severity_threshold": "medium", // Filter results by severity
+  "include_exploits": true,       // Include exploit examples
+  "use_llm": true                // Enable AI analysis
+}
+```
+
+#### **Example Usage:**
+```
+# Scan changes in current branch vs main
+Use adv_diff_scan with source_branch="main", target_branch="HEAD", and working_directory="/path/to/your/repo"
+
+# Scan changes between specific branches
+Use adv_diff_scan with source_branch="staging", target_branch="production", and working_directory="/path/to/your/repo"
+
+# Scan with high severity filter
+Use adv_diff_scan with severity_threshold="high" and working_directory="/path/to/your/repo"
+```
+
+#### **⚠️ Important Requirements:**
+1. **Must specify `working_directory`**: The absolute path to your git repository
+2. **Valid git repository**: The directory must contain a `.git` folder
+3. **Valid branches**: Both source and target branches must exist
+4. **Git available**: `git` command must be available in PATH
 
 ---
 
@@ -331,6 +400,7 @@ vim ~/.local/share/adversary-mcp-server/rules/custom/my-rule.yaml
 | `adversary-mcp-cli configure` | Initial setup and configuration |
 | `adversary-mcp-cli status` | Show server status and configuration |
 | `adversary-mcp-cli scan <target>` | Scan files/directories for vulnerabilities |
+| `adversary-mcp-cli scan --diff` | **🆕 Git diff-aware scanning** - scan only newly added lines (no context) |
 | `adversary-mcp-cli server` | Start MCP server (used by Cursor) |
 
 ### Rule Management Commands
@@ -352,6 +422,41 @@ vim ~/.local/share/adversary-mcp-server/rules/custom/my-rule.yaml
 | `adversary-mcp-cli watch start` | Start hot-reload service |
 | `adversary-mcp-cli watch status` | Show service status |
 | `adversary-mcp-cli watch test` | Test hot-reload functionality |
+
+### **🆕 Git Diff-Aware Scanning Options**
+
+The `scan` command now supports git diff-aware scanning with the following options:
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--diff/--no-diff` | Enable git diff-aware scanning | `false` |
+| `--source-branch` | Source branch for comparison | `main` |
+| `--target-branch` | Target branch for comparison | `HEAD` |
+| `--severity` | Minimum severity threshold | `medium` |
+| `--include-exploits/--no-exploits` | Include exploit examples | `true` |
+| `--use-llm/--no-llm` | Enable AI analysis | `true` |
+| `--output` | Output results to JSON file | None |
+
+#### **Diff Scanning Examples:**
+```bash
+# Basic diff scan (main vs current branch) - scans only newly added lines
+adversary-mcp-cli scan --diff
+
+# Compare specific branches - scans only new code between branches
+adversary-mcp-cli scan --diff --source-branch=develop --target-branch=feature/auth
+
+# High severity threats only - filters results to high/critical severity
+adversary-mcp-cli scan --diff --severity=high
+
+# Save diff scan results to JSON file
+adversary-mcp-cli scan --diff --output=security-diff.json
+
+# Comprehensive diff analysis with AI - includes LLM prompts for enhanced analysis
+adversary-mcp-cli scan --diff --use-llm=true --include-exploits=true
+
+# Specify custom directory for git operations
+adversary-mcp-cli scan /path/to/repo --diff --source-branch=main --target-branch=HEAD
+```
 
 ### Utility Commands
 
@@ -499,10 +604,19 @@ adversary-mcp-cli scan myproject/ --use-llm=false --severity=medium
 adversary-mcp-cli scan myproject/ --use-llm=true --confidence-threshold=0.8
 ```
 
-#### **🆕 Batch AI Analysis**
+#### **🆕 Git Diff-Aware Scanning**
 ```bash
-# Process multiple files with LLM prompts
-adversary-mcp-cli scan-batch file1.py file2.js file3.ts --use-llm=true
+# Scan only newly added lines between branches (no context lines)
+adversary-mcp-cli scan --diff --source-branch=main --target-branch=HEAD
+
+# Scan changes with specific severity threshold - only new code
+adversary-mcp-cli scan --diff --source-branch=staging --target-branch=production --severity=high
+
+# Scan current branch changes with AI analysis - includes LLM prompts for new code
+adversary-mcp-cli scan --diff --use-llm=true --include-exploits=true
+
+# Specify repository directory for git operations
+adversary-mcp-cli scan /path/to/repo --diff --source-branch=main --target-branch=feature/new
 ```
 
 ### **🆕 Advanced Configuration**
@@ -568,6 +682,10 @@ print(f"High confidence: {len(result.get_high_confidence_threats())}")
 
 ### CI/CD Integration
 
+#### **🆕 Git Diff-Aware CI/CD Scanning**
+
+For efficient CI/CD pipelines, scan only newly added lines in pull requests:
+
 ```yaml
 # .github/workflows/security.yml
 name: Security Analysis
@@ -578,6 +696,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0  # Required for git diff analysis
+      
       - uses: actions/setup-python@v4
         with:
           python-version: '3.11'
@@ -585,18 +706,41 @@ jobs:
       - name: Install Adversary MCP
         run: pip install adversary-mcp-server
       
-      - name: Security Scan
+      - name: Diff Security Scan (PR) - Scans only newly added lines
+        if: github.event_name == 'pull_request'
+        run: |
+          adversary-mcp-cli scan . --diff \
+            --source-branch=origin/main \
+            --target-branch=HEAD \
+            --severity=medium \
+            --output=security-diff.json
+        env:
+          GITHUB_WORKSPACE: ${{ github.workspace }}
+      
+      - name: Full Security Scan (Push to main)
+        if: github.ref == 'refs/heads/main'
         run: |
           adversary-mcp-cli scan . \
             --severity medium \
-            --format json \
-            --output security-report.json
+            --output=security-full.json
       
       - name: Upload Results
         uses: actions/upload-artifact@v3
         with:
           name: security-report
-          path: security-report.json
+          path: security-*.json
+```
+
+#### **Traditional Full Repository Scanning**
+
+```yaml
+# Traditional approach (scans entire repository)
+- name: Full Security Scan
+  run: |
+    adversary-mcp-cli scan . \
+      --severity medium \
+      --format json \
+      --output security-report.json
 ```
 
 ### Environment Configuration
@@ -670,6 +814,28 @@ MIT License - see [LICENSE](LICENSE) file for details.
 4. Run the test suite: `make test`
 5. Submit a pull request
 
+### Version Management
+
+The project uses centralized version management - you only need to update the version in one place:
+
+1. **Update version in `pyproject.toml`:**
+   ```toml
+   [project]
+   version = "0.7.5"  # Update this line only
+   ```
+
+2. **All components automatically use the updated version:**
+   - CLI: `adversary-mcp-cli --version`
+   - Server: MCP server initialization 
+   - Package: `from adversary_mcp_server import __version__`
+
+3. **Lock file updates automatically:**
+   ```bash
+   uv sync  # Updates uv.lock with new version
+   ```
+
+**No manual updates needed** in `server.py` or elsewhere - the version is read dynamically from `pyproject.toml`.
+
 ---
 
 ## Support
@@ -685,3 +851,87 @@ MIT License - see [LICENSE](LICENSE) file for details.
 **Built with ❤️ for secure development**
 
 </div>
+
+## Important Notes
+
+### Diff Scanning Scope
+
+The `adv_diff_scan` tool **only scans newly added lines** (lines starting with `+` in git diff), not context lines or existing code. This prevents false positives from flagging existing code as new vulnerabilities.
+
+**What gets scanned:**
+- ✅ Newly added lines (actual changes)
+- ❌ Context lines (unchanged code shown for reference)
+- ❌ Removed lines (deleted code)
+
+This means you'll only see security issues for code you've actually added or modified, not for existing code in the repository.
+
+## Troubleshooting
+
+### Git Diff Scanning Issues
+
+If you encounter the error `"Failed to get diff summary"` when using `adv_diff_scan`, this is typically caused by one of these issues:
+
+#### **Common Causes & Solutions:**
+
+1. **Working Directory Issue**
+   ```
+   Error: Tool adv_diff_scan failed: Diff scanning failed: Git diff operation failed: Failed to get diff summary
+   ```
+   
+   **Solution:** Specify the correct working directory:
+   ```json
+   {
+     "source_branch": "main",
+     "target_branch": "feature/my-branch", 
+     "working_directory": "/path/to/your/git/repository"
+   }
+   ```
+
+2. **Branch Not Found**
+   ```
+   Error: Branch validation failed: Branch not found
+   ```
+   
+   **Solution:** Verify branch names exist:
+   ```bash
+   cd /path/to/your/repo
+   git branch -a  # List all branches
+   ```
+
+3. **Not a Git Repository**
+   ```
+   Error: Git command failed: fatal: not a git repository
+   ```
+   
+   **Solution:** Ensure you're pointing to a valid git repository:
+   ```json
+   {
+     "working_directory": "/path/to/valid/git/repo"
+   }
+   ```
+
+4. **Git Not Available**
+   ```
+   Error: Git command not found
+   ```
+   
+   **Solution:** Install git or ensure it's in your PATH.
+
+#### **Best Practices:**
+
+- Always specify the `working_directory` parameter when the repository is not in the current directory
+- Use full/absolute paths for `working_directory` to avoid confusion  
+- Verify branch names with `git branch -a` before running scans
+- For remote branches, use the full name (e.g., `origin/main` not just `main`)
+
+#### **Example Working Configuration:**
+```json
+{
+  "source_branch": "origin/main",
+  "target_branch": "HEAD", 
+  "working_directory": "/Users/username/my-project",
+  "severity_threshold": "medium",
+  "include_exploits": true,
+  "use_llm": false
+}
+```

@@ -12,12 +12,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from adversary_mcp_server.credential_manager import CredentialManager, SecurityConfig
 from adversary_mcp_server.llm_scanner import (
     LLMAnalysisError,
+    LLMAnalysisPrompt,
     LLMScanner,
     LLMSecurityFinding,
-    LLMAnalysisPrompt,
 )
-from adversary_mcp_server.threat_engine import Category, Language, Severity
-from adversary_mcp_server.threat_engine import ThreatMatch
+from adversary_mcp_server.threat_engine import Category, Language, Severity, ThreatMatch
 
 
 class TestLLMSecurityFinding:
@@ -60,9 +59,9 @@ class TestLLMSecurityFinding:
             cwe_id="CWE-89",
             owasp_category="A03:2021",
         )
-        
+
         threat_match = finding.to_threat_match("/path/to/file.py")
-        
+
         assert isinstance(threat_match, ThreatMatch)
         assert threat_match.rule_id == "llm_sql_injection"
         assert threat_match.rule_name == "Sql Injection"
@@ -71,7 +70,10 @@ class TestLLMSecurityFinding:
         assert threat_match.severity == Severity.HIGH
         assert threat_match.file_path == "/path/to/file.py"
         assert threat_match.line_number == 42
-        assert threat_match.code_snippet == "SELECT * FROM users WHERE id = " + "user_input"
+        assert (
+            threat_match.code_snippet
+            == "SELECT * FROM users WHERE id = " + "user_input"
+        )
         assert threat_match.confidence == 0.95
         assert threat_match.cwe_id == "CWE-89"
         assert threat_match.owasp_category == "A03:2021"
@@ -87,7 +89,7 @@ class TestLLMSecurityFinding:
             ("csrf", Category.CSRF),
             ("unknown_type", Category.MISC),  # Default fallback
         ]
-        
+
         for finding_type, expected_category in test_cases:
             finding = LLMSecurityFinding(
                 finding_type=finding_type,
@@ -99,7 +101,7 @@ class TestLLMSecurityFinding:
                 recommendation="Test recommendation",
                 confidence=0.8,
             )
-            
+
             threat_match = finding.to_threat_match("test.py")
             assert threat_match.category == expected_category
 
@@ -135,86 +137,72 @@ class TestLLMScanner:
     def test_initialization_with_api_key(self):
         """Test analyzer initialization with LLM enabled."""
         mock_manager = Mock()
-        mock_config = SecurityConfig(
-            enable_llm_analysis=True
-        )
+        mock_config = SecurityConfig(enable_llm_analysis=True)
         mock_manager.load_config.return_value = mock_config
-        
+
         analyzer = LLMScanner(mock_manager)
-        
+
         assert analyzer.credential_manager == mock_manager
         assert analyzer.is_available() is True
 
     def test_initialization_without_api_key(self):
         """Test analyzer initialization with LLM disabled."""
         mock_manager = Mock()
-        mock_config = SecurityConfig(
-            enable_llm_analysis=False
-        )
+        mock_config = SecurityConfig(enable_llm_analysis=False)
         mock_manager.load_config.return_value = mock_config
-        
+
         analyzer = LLMScanner(mock_manager)
-        
+
         assert analyzer.credential_manager == mock_manager
         assert analyzer.is_available() is True  # Client-based LLM is always available
 
     def test_is_available(self):
         """Test availability check."""
         mock_manager = Mock()
-        
+
         # With LLM enabled
-        mock_config = SecurityConfig(
-            enable_llm_analysis=True
-        )
+        mock_config = SecurityConfig(enable_llm_analysis=True)
         mock_manager.load_config.return_value = mock_config
-        
+
         analyzer = LLMScanner(mock_manager)
         assert analyzer.is_available() is True
-        
+
         # With LLM disabled (still available for client-based)
-        mock_config = SecurityConfig(
-            enable_llm_analysis=False
-        )
+        mock_config = SecurityConfig(enable_llm_analysis=False)
         mock_manager.load_config.return_value = mock_config
-        
+
         analyzer = LLMScanner(mock_manager)
         assert analyzer.is_available() is True
 
     def test_analyze_code_not_available(self):
         """Test code analysis when analyzer is configured but not used."""
         mock_manager = Mock()
-        mock_config = SecurityConfig(
-            enable_llm_analysis=False
-        )
+        mock_config = SecurityConfig(enable_llm_analysis=False)
         mock_manager.load_config.return_value = mock_config
-        
+
         analyzer = LLMScanner(mock_manager)
-        
+
         # Even when disabled, analyzer should work (client-based)
-        result = analyzer.analyze_code(
-            "test code", "test.py", Language.PYTHON
-        )
-        
+        result = analyzer.analyze_code("test code", "test.py", Language.PYTHON)
+
         assert isinstance(result, list)
 
     def test_analyze_code_success(self):
         """Test successful code analysis (client-based)."""
         mock_manager = Mock()
-        mock_config = SecurityConfig(
-            enable_llm_analysis=True
-        )
+        mock_config = SecurityConfig(enable_llm_analysis=True)
         mock_manager.load_config.return_value = mock_config
-        
+
         analyzer = LLMScanner(mock_manager)
-        
+
         # Client-based analysis returns prompts instead of making API calls
         result = analyzer.analyze_code(
             "SELECT * FROM users WHERE id = user_input",
             "test.py",
             Language.PYTHON,
-            max_findings=5
+            max_findings=5,
         )
-        
+
         assert isinstance(result, list)
         # Should be empty since no actual LLM call is made
         assert len(result) == 0
@@ -222,18 +210,14 @@ class TestLLMScanner:
     def test_analyze_code_api_error(self):
         """Test code analysis error handling."""
         mock_manager = Mock()
-        mock_config = SecurityConfig(
-            enable_llm_analysis=True
-        )
+        mock_config = SecurityConfig(enable_llm_analysis=True)
         mock_manager.load_config.return_value = mock_config
-        
+
         analyzer = LLMScanner(mock_manager)
-        
+
         # Client-based approach doesn't make API calls, so no API errors
-        result = analyzer.analyze_code(
-            "test code", "test.py", Language.PYTHON
-        )
-        
+        result = analyzer.analyze_code("test code", "test.py", Language.PYTHON)
+
         assert isinstance(result, list)
         assert len(result) == 0
 
@@ -261,7 +245,9 @@ class TestLLMScanner:
         analyzer = LLMScanner(mock_manager)
 
         source_code = "SELECT * FROM users WHERE id = user_input"
-        prompt = analyzer.create_analysis_prompt(source_code, "test.py", Language.PYTHON, 5)
+        prompt = analyzer.create_analysis_prompt(
+            source_code, "test.py", Language.PYTHON, 5
+        )
 
         assert isinstance(prompt, LLMAnalysisPrompt)
         assert prompt.file_path == "test.py"
@@ -282,7 +268,9 @@ class TestLLMScanner:
 
         # Create very long source code
         long_code = "print('test')\n" * 1000
-        prompt = analyzer.create_analysis_prompt(long_code, "test.py", Language.PYTHON, 5)
+        prompt = analyzer.create_analysis_prompt(
+            long_code, "test.py", Language.PYTHON, 5
+        )
 
         assert isinstance(prompt, LLMAnalysisPrompt)
         assert "truncated for analysis" in prompt.user_prompt
@@ -397,35 +385,31 @@ class TestLLMScanner:
     def test_batch_analyze_code(self):
         """Test batch code analysis."""
         mock_manager = Mock()
-        mock_config = SecurityConfig(
-            enable_llm_analysis=True
-        )
+        mock_config = SecurityConfig(enable_llm_analysis=True)
         mock_manager.load_config.return_value = mock_config
-        
+
         analyzer = LLMScanner(mock_manager)
-        
+
         code_samples = [
             ("code1", "file1.py", Language.PYTHON),
             ("code2", "file2.py", Language.PYTHON),
         ]
-        
+
         result = analyzer.batch_analyze_code(code_samples)
-        
+
         assert isinstance(result, list)
         assert len(result) == 2  # Should return results for both samples
 
     def test_get_analysis_stats(self):
         """Test getting analysis statistics."""
         mock_manager = Mock()
-        mock_config = SecurityConfig(
-            enable_llm_analysis=True
-        )
+        mock_config = SecurityConfig(enable_llm_analysis=True)
         mock_manager.load_config.return_value = mock_config
-        
+
         analyzer = LLMScanner(mock_manager)
-        
+
         stats = analyzer.get_analysis_stats()
-        
+
         assert isinstance(stats, dict)
         assert "total_analyses" in stats
         assert "successful_analyses" in stats
@@ -434,16 +418,14 @@ class TestLLMScanner:
     def test_get_analysis_stats_not_available(self):
         """Test getting analysis statistics when not available."""
         mock_manager = Mock()
-        mock_config = SecurityConfig(
-            enable_llm_analysis=False
-        )
+        mock_config = SecurityConfig(enable_llm_analysis=False)
         mock_manager.load_config.return_value = mock_config
-        
+
         analyzer = LLMScanner(mock_manager)
-        
+
         stats = analyzer.get_analysis_stats()
-        
+
         assert isinstance(stats, dict)
         assert "total_analyses" in stats
         assert "successful_analyses" in stats
-        assert "failed_analyses" in stats 
+        assert "failed_analyses" in stats

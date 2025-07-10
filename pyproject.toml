@@ -1,6 +1,6 @@
 [project]
 name = "adversary-mcp-server"
-version = "0.7.4"
+version = "0.7.7"
 description = "MCP server for adversarial security analysis and vulnerability detection"
 readme = "README.md"
 authors = [

@@ -219,16 +219,16 @@ def initialize_user_rules_directory() -> None:
         Path(__file__).parent.parent.parent / "rules",
         # In installed package (site-packages/rules - same level as adversary_mcp_server)
         Path(__file__).parent.parent / "rules",
-        # Alternative installed package location  
+        # Alternative installed package location
         Path(__file__).parent / "rules",
     ]
-    
+
     package_rules_dir = None
     for rules_dir in possible_package_rules_dirs:
         if rules_dir.exists():
             package_rules_dir = rules_dir
             break
-    
+
     if not package_rules_dir:
         print("Warning: Could not find packaged rules directory")
         return
@@ -239,16 +239,19 @@ def initialize_user_rules_directory() -> None:
         for rule_file in package_builtin_dir.glob("*.yaml"):
             user_rule_file = builtin_rules_dir / rule_file.name
             should_copy = False
-            
+
             if not user_rule_file.exists():
                 should_copy = True
             else:
                 # Check if package version is newer than user version
                 package_stat = rule_file.stat()
                 user_stat = user_rule_file.stat()
-                if package_stat.st_mtime > user_stat.st_mtime or package_stat.st_size != user_stat.st_size:
+                if (
+                    package_stat.st_mtime > user_stat.st_mtime
+                    or package_stat.st_size != user_stat.st_size
+                ):
                     should_copy = True
-            
+
             if should_copy:
                 shutil.copy2(rule_file, user_rule_file)
                 print(f"Copied built-in rule: {rule_file.name}")
@@ -259,16 +262,19 @@ def initialize_user_rules_directory() -> None:
         for template_file in package_templates_dir.glob("*.yaml"):
             user_template_file = templates_dir / template_file.name
             should_copy = False
-            
+
             if not user_template_file.exists():
                 should_copy = True
             else:
                 # Check if package version is newer than user version
                 package_stat = template_file.stat()
                 user_stat = user_template_file.stat()
-                if package_stat.st_mtime > user_stat.st_mtime or package_stat.st_size != user_stat.st_size:
+                if (
+                    package_stat.st_mtime > user_stat.st_mtime
+                    or package_stat.st_size != user_stat.st_size
+                ):
                     should_copy = True
-            
+
             if should_copy:
                 shutil.copy2(template_file, user_template_file)
                 print(f"Copied rule template: {template_file.name}")
@@ -424,7 +430,7 @@ class ThreatEngine:
         rule = self.get_rule_by_id(rule_id)
         if not rule:
             return None
-        
+
         return {
             "id": rule.id,
             "name": rule.name,
@@ -768,8 +774,6 @@ class ThreatEngine:
         if target_dir:
             target_dir.mkdir(parents=True, exist_ok=True)
             target_file = target_dir / import_file.name
-
-            import shutil
 
             shutil.copy2(import_file, target_file)
             print(f"Copied rule file to {target_file}")

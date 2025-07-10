@@ -553,8 +553,6 @@ class TestHotReloadIntegration:
                 # Stop service
                 service.stop()
 
-
-
     def test_non_yaml_file_ignored(self):
         """Test that non-YAML files are ignored."""
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -591,8 +589,6 @@ class TestHotReloadIntegration:
 
 class TestHotReloadServiceAdvanced:
     """Advanced tests for hot-reload service."""
-
-
 
     def test_service_restart_after_error(self):
         """Test service restart after an error."""

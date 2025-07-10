@@ -28,28 +28,28 @@ class TestSecurityConfigCorrected:
     def test_security_config_defaults(self):
         """Test SecurityConfig default values."""
         config = SecurityConfig()
-        
+
         # Check LLM Configuration
         assert config.enable_llm_analysis is False
-        
-        # Check Scanner Configuration 
+
+        # Check Scanner Configuration
         assert config.enable_ast_scanning is True
         assert config.enable_semgrep_scanning is True
         assert config.enable_bandit_scanning is True
-        
+
         # Check Exploit Generation
         assert config.enable_exploit_generation is True
         assert config.exploit_safety_mode is True
-        
+
         # Check Analysis Configuration
         assert config.max_file_size_mb == 10
         assert config.max_scan_depth == 5
         assert config.timeout_seconds == 300
-        
+
         # Check Rule Configuration
         assert config.custom_rules_path is None
         assert config.severity_threshold == "medium"
-        
+
         # Check Reporting Configuration
         assert config.include_exploit_examples is True
         assert config.include_remediation_advice is True
@@ -64,9 +64,9 @@ class TestSecurityConfigCorrected:
             exploit_safety_mode=False,
             max_file_size_mb=20,
             custom_rules_path="/path/to/rules",
-            verbose_output=True
+            verbose_output=True,
         )
-        
+
         assert config.enable_llm_analysis is True
         assert config.enable_ast_scanning is False
         assert config.severity_threshold == "high"
@@ -78,18 +78,27 @@ class TestSecurityConfigCorrected:
     def test_security_config_is_dataclass(self):
         """Test that SecurityConfig is a dataclass with expected fields."""
         config = SecurityConfig()
-        
+
         # Check that it's a dataclass with expected fields
         expected_fields = {
-            'enable_llm_analysis', 'enable_ast_scanning', 'enable_semgrep_scanning',
-            'enable_bandit_scanning', 'enable_exploit_generation', 'exploit_safety_mode',
-            'max_file_size_mb', 'max_scan_depth', 'timeout_seconds', 'custom_rules_path',
-            'severity_threshold', 'include_exploit_examples', 'include_remediation_advice',
-            'verbose_output'
+            "enable_llm_analysis",
+            "enable_ast_scanning",
+            "enable_semgrep_scanning",
+            "enable_bandit_scanning",
+            "enable_exploit_generation",
+            "exploit_safety_mode",
+            "max_file_size_mb",
+            "max_scan_depth",
+            "timeout_seconds",
+            "custom_rules_path",
+            "severity_threshold",
+            "include_exploit_examples",
+            "include_remediation_advice",
+            "verbose_output",
         }
-        
+
         actual_fields = set(config.__dict__.keys())
-        
+
         # Check that all expected fields are present
         for field in expected_fields:
             assert field in actual_fields, f"Missing field: {field}"
@@ -134,10 +143,7 @@ class TestCredentialManagerCorrected:
             mock_keyring.set_password.side_effect = KeyringError("Store failed")
 
             # Create a config
-            config = SecurityConfig(
-                enable_llm_analysis=True,
-                severity_threshold="high"
-            )
+            config = SecurityConfig(enable_llm_analysis=True, severity_threshold="high")
             manager.store_config(config)
 
             # Now should have config (stored in file since keyring failed)
@@ -152,7 +158,7 @@ class TestCredentialManagerCorrected:
             config = SecurityConfig(
                 enable_llm_analysis=True,
                 severity_threshold="high",
-                exploit_safety_mode=False
+                exploit_safety_mode=False,
             )
 
             # Store config
@@ -173,10 +179,10 @@ class TestCredentialManagerCorrected:
 
             # Ensure no config exists
             manager.delete_config()
-            
+
             # Load config should return defaults
             config = manager.load_config()
-            
+
             assert config.enable_llm_analysis is False
             assert config.severity_threshold == "medium"
             assert config.exploit_safety_mode is True
@@ -188,8 +194,7 @@ class TestCredentialManagerCorrected:
 
             # Store a config
             config = SecurityConfig(
-                enable_llm_analysis=True,
-                severity_threshold="critical"
+                enable_llm_analysis=True, severity_threshold="critical"
             )
             manager.store_config(config)
             assert manager.has_config()
@@ -204,11 +209,11 @@ class TestCredentialManagerCorrected:
         """Test machine ID generation."""
         with tempfile.TemporaryDirectory() as temp_dir:
             manager = CredentialManager(config_dir=Path(temp_dir))
-            
+
             # Get machine ID
             machine_id1 = manager._get_machine_id()
             machine_id2 = manager._get_machine_id()
-            
+
             # Should be consistent
             assert machine_id1 == machine_id2
             assert isinstance(machine_id1, str)
@@ -285,8 +290,7 @@ class TestCredentialManagerCorrected:
             mock_keyring.get_password.side_effect = KeyringError("Keyring error")
 
             config = SecurityConfig(
-                enable_llm_analysis=True,
-                severity_threshold="medium"
+                enable_llm_analysis=True, severity_threshold="medium"
             )
 
             # Store config
@@ -307,16 +311,13 @@ class TestCredentialManagerCorrected:
             manager2 = CredentialManager(config_dir=Path(temp_dir))
 
             # Store config with manager1
-            config = SecurityConfig(
-                enable_llm_analysis=True,
-                severity_threshold="high"
-            )
+            config = SecurityConfig(enable_llm_analysis=True, severity_threshold="high")
             manager1.store_config(config)
 
             # Load with second manager (different instance)
             manager2 = CredentialManager(config_dir=Path(temp_dir))
             loaded_config = manager2.load_config()
-            
+
             assert loaded_config.enable_llm_analysis is True
             assert loaded_config.severity_threshold == "high"
 
@@ -326,9 +327,7 @@ class TestCredentialManagerCorrected:
             manager = CredentialManager(config_dir=Path(temp_dir) / "secure")
 
             # Store config (should create directory)
-            config = SecurityConfig(
-                enable_llm_analysis=True
-            )
+            config = SecurityConfig(enable_llm_analysis=True)
             manager.store_config(config)
 
             # Directory should exist
@@ -341,14 +340,11 @@ class TestCredentialManagerCorrected:
             manager = CredentialManager(config_dir=Path(temp_dir))
 
             # Test data
-            config = SecurityConfig(
-                custom_rules_path=None,
-                enable_llm_analysis=False
-            )
-            
+            config = SecurityConfig(custom_rules_path=None, enable_llm_analysis=False)
+
             # Store config
             manager.store_config(config)
             loaded_config = manager.load_config()
-            
+
             assert loaded_config.custom_rules_path is None
             assert loaded_config.enable_llm_analysis is False

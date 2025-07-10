@@ -13,14 +13,16 @@ from mcp import types
 from mcp.server import Server
 from mcp.server.models import InitializationOptions
 from mcp.server.stdio import stdio_server  # Add this import
-from mcp.types import Tool, ServerCapabilities, ToolsCapability
+from mcp.types import ServerCapabilities, Tool, ToolsCapability
 from pydantic import BaseModel
 
+from . import get_version
 from .ast_scanner import ASTScanner
 from .credential_manager import CredentialManager, SecurityConfig
-from .scan_engine import ScanEngine
+from .diff_scanner import GitDiffScanner
 from .exploit_generator import ExploitGenerator
-from .threat_engine import Language, Severity, ThreatEngine, ThreatMatch
+from .scan_engine import EnhancedScanResult, ScanEngine
+from .threat_engine import Category, Language, Severity, ThreatEngine, ThreatMatch
 
 # Set up logging
 logging.basicConfig(
@@ -31,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 class AdversaryToolError(Exception):
     """Exception raised when a tool operation fails."""
+
     pass
 
 
@@ -66,6 +69,7 @@ class AdversaryMCPServer:
         self.ast_scanner = ASTScanner(self.threat_engine)
         self.scan_engine = ScanEngine(self.threat_engine, self.credential_manager)
         self.exploit_generator = ExploitGenerator(self.credential_manager)
+        self.diff_scanner = GitDiffScanner(self.scan_engine)
 
         # Set up server handlers
         self._setup_handlers()
@@ -175,6 +179,45 @@ class AdversaryMCPServer:
                             },
                         },
                         "required": ["directory_path"],
+                    },
+                ),
+                Tool(
+                    name="adv_diff_scan",
+                    description="Scan security vulnerabilities in git diff changes between branches",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "source_branch": {
+                                "type": "string",
+                                "description": "Source branch name (e.g., 'feature-branch')",
+                            },
+                            "target_branch": {
+                                "type": "string",
+                                "description": "Target branch name (e.g., 'main')",
+                            },
+                            "working_directory": {
+                                "type": "string",
+                                "description": "Working directory path for git operations (defaults to current directory)",
+                                "default": ".",
+                            },
+                            "severity_threshold": {
+                                "type": "string",
+                                "description": "Minimum severity threshold (low, medium, high, critical)",
+                                "enum": ["low", "medium", "high", "critical"],
+                                "default": "medium",
+                            },
+                            "include_exploits": {
+                                "type": "boolean",
+                                "description": "Whether to include exploit examples",
+                                "default": True,
+                            },
+                            "use_llm": {
+                                "type": "boolean",
+                                "description": "Whether to include LLM analysis prompts (for use with your client's LLM)",
+                                "default": False,
+                            },
+                        },
+                        "required": ["source_branch", "target_branch"],
                     },
                 ),
                 Tool(
@@ -306,6 +349,8 @@ class AdversaryMCPServer:
                     return await self._handle_scan_file(arguments)
                 elif name == "adv_scan_directory":
                     return await self._handle_scan_directory(arguments)
+                elif name == "adv_diff_scan":
+                    return await self._handle_diff_scan(arguments)
                 elif name == "adv_generate_exploit":
                     return await self._handle_generate_exploit(arguments)
                 elif name == "adv_list_rules":
@@ -363,14 +408,18 @@ class AdversaryMCPServer:
 
             # Format results with enhanced information
             result = self._format_enhanced_scan_results(scan_result, "code")
-            
+
             # Add LLM prompts if requested
             if use_llm:
-                result += self._add_llm_analysis_prompts(content, language, "input.code")
-                
+                result += self._add_llm_analysis_prompts(
+                    content, language, "input.code"
+                )
+
                 # Add LLM exploit prompts for each threat found
                 if include_exploits and scan_result.all_threats:
-                    result += self._add_llm_exploit_prompts(scan_result.all_threats, content)
+                    result += self._add_llm_exploit_prompts(
+                        scan_result.all_threats, content
+                    )
 
             return [types.TextContent(type="text", text=result)]
 
@@ -422,25 +471,33 @@ class AdversaryMCPServer:
 
             # Format results with enhanced information
             result = self._format_enhanced_scan_results(scan_result, str(file_path))
-            
+
             # Add LLM prompts if requested
             if use_llm:
                 # Read file content for LLM analysis
                 try:
                     with open(file_path, "r", encoding="utf-8") as f:
                         file_content = f.read()
-                    
+
                     # Detect language from file extension
                     file_ext = file_path.suffix.lower()
-                    language_map = {".py": Language.PYTHON, ".js": Language.JAVASCRIPT, ".ts": Language.TYPESCRIPT}
+                    language_map = {
+                        ".py": Language.PYTHON,
+                        ".js": Language.JAVASCRIPT,
+                        ".ts": Language.TYPESCRIPT,
+                    }
                     language = language_map.get(file_ext, Language.PYTHON)
-                    
-                    result += self._add_llm_analysis_prompts(file_content, language, str(file_path))
-                    
+
+                    result += self._add_llm_analysis_prompts(
+                        file_content, language, str(file_path)
+                    )
+
                     # Add LLM exploit prompts for each threat found
                     if include_exploits and scan_result.all_threats:
-                        result += self._add_llm_exploit_prompts(scan_result.all_threats, file_content)
-                        
+                        result += self._add_llm_exploit_prompts(
+                            scan_result.all_threats, file_content
+                        )
+
                 except Exception as e:
                     result += f"\n\n⚠️ **LLM Analysis:** Could not read file for LLM analysis: {e}\n"
 
@@ -494,28 +551,39 @@ class AdversaryMCPServer:
                         )
 
             # Format results with enhanced information
-            result = self._format_directory_scan_results(scan_results, str(directory_path))
-            
+            result = self._format_directory_scan_results(
+                scan_results, str(directory_path)
+            )
+
             # Add LLM prompts if requested (only for files with issues)
             if use_llm and scan_results:
                 result += "\n\n# 🤖 LLM Analysis Prompts\n\n"
                 result += "For enhanced LLM-based analysis, use the following prompts with your client's LLM:\n\n"
                 result += "**Note:** Directory scans include prompts for the first 3 files with security issues.\n\n"
-                
+
                 files_with_issues = [sr for sr in scan_results if sr.all_threats][:3]
                 for i, scan_result in enumerate(files_with_issues, 1):
                     try:
                         with open(scan_result.file_path, "r", encoding="utf-8") as f:
                             file_content = f.read()
-                        
+
                         # Detect language
                         file_ext = Path(scan_result.file_path).suffix.lower()
-                        language_map = {".py": Language.PYTHON, ".js": Language.JAVASCRIPT, ".ts": Language.TYPESCRIPT}
+                        language_map = {
+                            ".py": Language.PYTHON,
+                            ".js": Language.JAVASCRIPT,
+                            ".ts": Language.TYPESCRIPT,
+                        }
                         language = language_map.get(file_ext, Language.PYTHON)
-                        
+
                         result += f"## File {i}: {scan_result.file_path}\n\n"
-                        result += self._add_llm_analysis_prompts(file_content, language, str(scan_result.file_path), include_header=False)
-                        
+                        result += self._add_llm_analysis_prompts(
+                            file_content,
+                            language,
+                            str(scan_result.file_path),
+                            include_header=False,
+                        )
+
                     except Exception as e:
                         result += f"⚠️ Could not read {scan_result.file_path} for LLM analysis: {e}\n\n"
 
@@ -523,6 +591,119 @@ class AdversaryMCPServer:
 
         except Exception as e:
             raise AdversaryToolError(f"Directory scanning failed: {e}")
+
+    async def _handle_diff_scan(
+        self, arguments: Dict[str, Any]
+    ) -> List[types.TextContent]:
+        """Handle git diff scanning request."""
+        try:
+            source_branch = arguments["source_branch"]
+            target_branch = arguments["target_branch"]
+            working_directory = arguments.get("working_directory", ".")
+            severity_threshold = arguments.get("severity_threshold", "medium")
+            include_exploits = arguments.get("include_exploits", True)
+            use_llm = arguments.get("use_llm", False)
+
+            # Convert severity threshold to enum
+            severity_enum = Severity(severity_threshold)
+
+            # Convert working directory to Path object
+            working_dir_path = Path(working_directory).resolve()
+
+            # Get diff summary first
+            diff_summary = self.diff_scanner.get_diff_summary(
+                source_branch, target_branch, working_dir_path
+            )
+
+            # Check if there's an error in the summary
+            if "error" in diff_summary:
+                raise AdversaryToolError(
+                    f"Git diff operation failed: {diff_summary['error']}"
+                )
+
+            # Scan the diff changes
+            scan_results = self.diff_scanner.scan_diff(
+                source_branch=source_branch,
+                target_branch=target_branch,
+                working_dir=working_dir_path,
+                use_llm=False,  # Always False for rules scan
+                severity_threshold=severity_enum,
+            )
+
+            # Collect all threats
+            all_threats = []
+            for file_path, file_scan_results in scan_results.items():
+                for scan_result in file_scan_results:
+                    all_threats.extend(scan_result.all_threats)
+
+            # Generate exploits if requested
+            if include_exploits:
+                for threat in all_threats[:10]:  # Limit to first 10 threats
+                    try:
+                        exploits = self.exploit_generator.generate_exploits(
+                            threat, "", False  # Don't use LLM directly
+                        )
+                        threat.exploit_examples = exploits
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to generate exploits for {threat.rule_id}: {e}"
+                        )
+
+            # Format results
+            result = self._format_diff_scan_results(
+                scan_results, diff_summary, source_branch, target_branch
+            )
+
+            # Add LLM prompts if requested
+            if use_llm and scan_results:
+                result += "\n\n# 🤖 LLM Analysis Prompts\n\n"
+                result += "For enhanced LLM-based analysis, use the following prompts with your client's LLM:\n\n"
+                result += "**Note:** Diff scans include prompts for changed code in files with security issues.\n\n"
+
+                files_with_issues = [
+                    (path, results)
+                    for path, results in scan_results.items()
+                    if any(r.all_threats for r in results)
+                ][:3]
+                for i, (file_path, file_scan_results) in enumerate(
+                    files_with_issues, 1
+                ):
+                    try:
+                        # Get the changed code from the diff
+                        diff_changes = self.diff_scanner.get_diff_changes(
+                            source_branch, target_branch, working_dir_path
+                        )
+                        if file_path in diff_changes:
+                            chunks = diff_changes[file_path]
+                            # For LLM analysis, include minimal context for better understanding
+                            changed_code = "\n".join(
+                                chunk.get_added_lines_with_minimal_context()
+                                for chunk in chunks
+                            )
+
+                            # Detect language
+                            file_ext = Path(file_path).suffix.lower()
+                            language_map = {
+                                ".py": Language.PYTHON,
+                                ".js": Language.JAVASCRIPT,
+                                ".ts": Language.TYPESCRIPT,
+                            }
+                            language = language_map.get(file_ext, Language.PYTHON)
+
+                            result += f"## File {i}: {file_path}\n\n"
+                            result += self._add_llm_analysis_prompts(
+                                changed_code, language, file_path, include_header=False
+                            )
+
+                    except Exception as e:
+                        result += (
+                            f"⚠️ Could not get changed code for {file_path}: {e}\n\n"
+                        )
+
+            return [types.TextContent(type="text", text=result)]
+
+        except Exception as e:
+            raise AdversaryToolError(f"Diff scanning failed: {e}")
 
     async def _handle_generate_exploit(
         self, arguments: Dict[str, Any]
@@ -535,8 +716,6 @@ class AdversaryMCPServer:
             use_llm = arguments.get("use_llm", False)
 
             # Create a mock threat match for exploit generation
-            from .threat_engine import Category, Severity, ThreatMatch
-
             # Map vulnerability type to category
             type_to_category = {
                 "sql_injection": Category.INJECTION,
@@ -584,9 +763,11 @@ class AdversaryMCPServer:
             if use_llm:
                 result += "# 🤖 LLM Exploit Generation\n\n"
                 result += "For enhanced LLM-based exploit generation, use the following prompts with your client's LLM:\n\n"
-                
-                prompt = self.exploit_generator.create_exploit_prompt(mock_threat, code_context)
-                
+
+                prompt = self.exploit_generator.create_exploit_prompt(
+                    mock_threat, code_context
+                )
+
                 result += "## System Prompt\n\n"
                 result += f"```\n{prompt.system_prompt}\n```\n\n"
                 result += "## User Prompt\n\n"
@@ -638,7 +819,9 @@ class AdversaryMCPServer:
             for category, cat_rules in categories.items():
                 result += f"### {category}\n\n"
                 for rule in cat_rules:
-                    result += f"- **{rule['id']}**: {rule['name']} ({rule['severity']})\n"
+                    result += (
+                        f"- **{rule['id']}**: {rule['name']} ({rule['severity']})\n"
+                    )
                     result += f"  - Languages: {', '.join(rule['languages'])}\n"
                     result += f"  - {rule['description']}\n\n"
 
@@ -704,7 +887,9 @@ class AdversaryMCPServer:
                 config.enable_llm_analysis = arguments["enable_llm_analysis"]
 
             if "enable_exploit_generation" in arguments:
-                config.enable_exploit_generation = arguments["enable_exploit_generation"]
+                config.enable_exploit_generation = arguments[
+                    "enable_exploit_generation"
+                ]
 
             # Save configuration
             self.credential_manager.store_config(config)
@@ -778,13 +963,7 @@ class AdversaryMCPServer:
 
     def _get_version(self) -> str:
         """Get the current version."""
-        try:
-            # Try to get version from package
-            from importlib.metadata import version
-            return version("adversary-mcp-server")
-        except Exception:
-            # Fallback version
-            return "0.6.4"
+        return get_version()
 
     def _filter_threats_by_severity(
         self, threats: List[ThreatMatch], min_severity: Severity
@@ -868,7 +1047,7 @@ class AdversaryMCPServer:
             result += "---\n\n"
 
         return result
-    
+
     def _format_enhanced_scan_results(self, scan_result, scan_target: str) -> str:
         """Format enhanced scan results for display.
 
@@ -879,15 +1058,15 @@ class AdversaryMCPServer:
         Returns:
             Formatted scan results string
         """
-        from .scan_engine import EnhancedScanResult
-        
         result = f"# Enhanced Security Scan Results for {scan_target}\n\n"
-        
+
         if not scan_result.all_threats:
             result += "🎉 **No security vulnerabilities found!**\n\n"
             # Still show analysis overview
             result += "## Analysis Overview\n\n"
-            result += f"**Rules Engine:** {scan_result.stats['rules_threats']} findings\n"
+            result += (
+                f"**Rules Engine:** {scan_result.stats['rules_threats']} findings\n"
+            )
             result += f"**LLM Analysis:** {scan_result.stats['llm_threats']} findings\n"
             result += f"**Language:** {scan_result.language.value}\n\n"
             return result
@@ -900,23 +1079,25 @@ class AdversaryMCPServer:
         result += f"**Language:** {scan_result.language.value}\n\n"
 
         # Summary by severity
-        severity_counts = scan_result.stats['severity_counts']
+        severity_counts = scan_result.stats["severity_counts"]
         result += "## Summary\n"
         result += f"**Total Threats:** {len(scan_result.all_threats)}\n"
         for severity in ["critical", "high", "medium", "low"]:
             count = severity_counts.get(severity, 0)
             if count > 0:
-                emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}[severity]
+                emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}[
+                    severity
+                ]
                 result += f"**{severity.capitalize()}:** {count} {emoji}\n"
         result += "\n"
 
         # Scan metadata
         metadata = scan_result.scan_metadata
-        if metadata.get('llm_scan_success') is not None:
+        if metadata.get("llm_scan_success") is not None:
             result += "## Scan Details\n\n"
             result += f"**Rules Scan:** {'✅ Success' if metadata.get('rules_scan_success') else '❌ Failed'}\n"
             result += f"**LLM Scan:** {'✅ Success' if metadata.get('llm_scan_success') else '❌ Failed'}\n"
-            if metadata.get('source_lines'):
+            if metadata.get("source_lines"):
                 result += f"**Source Lines:** {metadata['source_lines']}\n"
             result += "\n"
 
@@ -933,7 +1114,9 @@ class AdversaryMCPServer:
 
             # Identify source (rules vs LLM)
             source_icon = "🤖" if threat.rule_id.startswith("llm_") else "📋"
-            source_text = "LLM Analysis" if threat.rule_id.startswith("llm_") else "Rules Engine"
+            source_text = (
+                "LLM Analysis" if threat.rule_id.startswith("llm_") else "Rules Engine"
+            )
 
             result += f"### {i}. {threat.rule_name} {severity_emoji} {source_icon}\n"
             result += f"**Source:** {source_text}\n"
@@ -965,7 +1148,7 @@ class AdversaryMCPServer:
             result += "---\n\n"
 
         return result
-    
+
     def _format_directory_scan_results(self, scan_results, scan_target: str) -> str:
         """Format directory scan results for display.
 
@@ -983,16 +1166,16 @@ class AdversaryMCPServer:
         total_threats = sum(len(result.all_threats) for result in scan_results)
         total_files = len(scan_results)
         files_with_threats = sum(1 for result in scan_results if result.all_threats)
-        
+
         # Count by severity across all files
         severity_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
         for result in scan_results:
-            for severity, count in result.stats['severity_counts'].items():
+            for severity, count in result.stats["severity_counts"].items():
                 severity_counts[severity] += count
 
         # Build result string
         result = f"# Enhanced Directory Scan Results for {scan_target}\n\n"
-        
+
         if total_threats == 0:
             result += "🎉 **No security vulnerabilities found in any files!**\n\n"
             result += f"**Files Scanned:** {total_files}\n"
@@ -1008,18 +1191,20 @@ class AdversaryMCPServer:
         for severity in ["critical", "high", "medium", "low"]:
             count = severity_counts.get(severity, 0)
             if count > 0:
-                emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}[severity]
+                emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}[
+                    severity
+                ]
                 result += f"**{severity.capitalize()}:** {count} {emoji}\n"
         result += "\n"
 
         # File-by-file breakdown
         result += "## Files with Security Issues\n\n"
-        
+
         for scan_result in scan_results:
             if scan_result.all_threats:
                 result += f"### {scan_result.file_path}\n"
                 result += f"Found {len(scan_result.all_threats)} issue(s)\n\n"
-                
+
                 for threat in scan_result.all_threats:
                     severity_emoji = {
                         "critical": "🔴",
@@ -1027,11 +1212,139 @@ class AdversaryMCPServer:
                         "medium": "🟡",
                         "low": "🟢",
                     }.get(threat.severity.value, "⚪")
-                    
+
                     source_icon = "🤖" if threat.rule_id.startswith("llm_") else "📋"
-                    
-                    result += f"- **{threat.rule_name}** {severity_emoji} {source_icon}\n"
+
+                    result += (
+                        f"- **{threat.rule_name}** {severity_emoji} {source_icon}\n"
+                    )
                     result += f"  Line {threat.line_number}: {threat.description}\n\n"
+
+        return result
+
+    def _format_diff_scan_results(
+        self,
+        scan_results,
+        diff_summary: Dict[str, any],
+        source_branch: str,
+        target_branch: str,
+    ) -> str:
+        """Format diff scan results for display.
+
+        Args:
+            scan_results: Dictionary mapping file paths to lists of scan results
+            diff_summary: Summary of the diff changes
+            source_branch: Source branch name
+            target_branch: Target branch name
+
+        Returns:
+            Formatted scan results string
+        """
+        if not scan_results:
+            result = f"# Git Diff Scan Results\n\n"
+            result += f"**Source Branch:** {source_branch}\n"
+            result += f"**Target Branch:** {target_branch}\n\n"
+
+            if diff_summary.get("total_files_changed", 0) == 0:
+                result += "🎉 **No changes found between branches!**\n\n"
+            else:
+                result += (
+                    "🎉 **No security vulnerabilities found in diff changes!**\n\n"
+                )
+                result += (
+                    f"**Files Changed:** {diff_summary.get('total_files_changed', 0)}\n"
+                )
+                result += (
+                    f"**Supported Files:** {diff_summary.get('supported_files', 0)}\n"
+                )
+                result += f"**Lines Added:** {diff_summary.get('lines_added', 0)}\n"
+                result += f"**Lines Removed:** {diff_summary.get('lines_removed', 0)}\n"
+
+            return result
+
+        # Combine statistics
+        total_threats = sum(
+            len(result.all_threats)
+            for file_results in scan_results.values()
+            for result in file_results
+        )
+        total_files = len(scan_results)
+        files_with_threats = sum(
+            1
+            for file_results in scan_results.values()
+            if any(result.all_threats for result in file_results)
+        )
+
+        # Count by severity across all files
+        severity_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+        for file_results in scan_results.values():
+            for result in file_results:
+                for severity, count in result.stats["severity_counts"].items():
+                    severity_counts[severity] += count
+
+        # Build result string
+        result = f"# Git Diff Scan Results\n\n"
+        result += f"**Source Branch:** {source_branch}\n"
+        result += f"**Target Branch:** {target_branch}\n\n"
+
+        result += "## Diff Summary\n\n"
+        result += (
+            f"**Total Files Changed:** {diff_summary.get('total_files_changed', 0)}\n"
+        )
+        result += f"**Supported Files:** {diff_summary.get('supported_files', 0)}\n"
+        result += f"**Lines Added:** {diff_summary.get('lines_added', 0)}\n"
+        result += f"**Lines Removed:** {diff_summary.get('lines_removed', 0)}\n"
+        result += f"**Files with Security Issues:** {files_with_threats}\n"
+        result += f"**Total Threats:** {total_threats}\n\n"
+
+        if total_threats == 0:
+            result += "🎉 **No security vulnerabilities found in diff changes!**\n\n"
+            return result
+
+        # Summary by severity
+        result += "## Security Issues Summary\n"
+        for severity in ["critical", "high", "medium", "low"]:
+            count = severity_counts.get(severity, 0)
+            if count > 0:
+                emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}[
+                    severity
+                ]
+                result += f"**{severity.capitalize()}:** {count} {emoji}\n"
+        result += "\n"
+
+        # File-by-file breakdown
+        result += "## Files with Security Issues\n\n"
+
+        for file_path, file_results in scan_results.items():
+            for scan_result in file_results:
+                if scan_result.all_threats:
+                    result += f"### {file_path}\n"
+                    result += f"Found {len(scan_result.all_threats)} issue(s) in diff changes\n\n"
+
+                    for threat in scan_result.all_threats:
+                        severity_emoji = {
+                            "critical": "🔴",
+                            "high": "🟠",
+                            "medium": "🟡",
+                            "low": "🟢",
+                        }.get(threat.severity.value, "⚪")
+
+                        source_icon = (
+                            "🤖" if threat.rule_id.startswith("llm_") else "📋"
+                        )
+
+                        result += (
+                            f"- **{threat.rule_name}** {severity_emoji} {source_icon}\n"
+                        )
+                        result += f"  Line {threat.line_number}: {threat.description}\n"
+
+                        if threat.code_snippet:
+                            result += f"  Code: `{threat.code_snippet.strip()}`\n"
+
+                        if threat.exploit_examples:
+                            result += f"  Exploit Examples: {len(threat.exploit_examples)} available\n"
+
+                        result += "\n"
 
         return result
 
@@ -1043,30 +1356,38 @@ class AdversaryMCPServer:
                 write_stream,
                 InitializationOptions(
                     server_name="adversary-mcp-server",
-                    server_version="0.7.4",
+                    server_version=self._get_version(),
                     capabilities=ServerCapabilities(
                         tools=ToolsCapability(listChanged=True)
                     ),
                 ),
             )
 
-    def _add_llm_analysis_prompts(self, content: str, language: Language, file_path: str, include_header: bool = True) -> str:
+    def _add_llm_analysis_prompts(
+        self,
+        content: str,
+        language: Language,
+        file_path: str,
+        include_header: bool = True,
+    ) -> str:
         """Add LLM analysis prompts to scan results."""
         try:
             analyzer = self.scan_engine.llm_analyzer
-            prompt = analyzer.create_analysis_prompt(content, file_path, language, max_findings=20)
-            
+            prompt = analyzer.create_analysis_prompt(
+                content, file_path, language, max_findings=20
+            )
+
             result = ""
             if include_header:
                 result += "\n\n# 🤖 LLM Security Analysis\n\n"
                 result += "For enhanced LLM-based analysis, use the following prompts with your client's LLM:\n\n"
-            
+
             result += "## System Prompt\n\n"
             result += f"```\n{prompt.system_prompt}\n```\n\n"
             result += "## User Prompt\n\n"
             result += f"```\n{prompt.user_prompt}\n```\n\n"
             result += "**Instructions:** Send both prompts to your LLM for enhanced security analysis.\n\n"
-            
+
             return result
         except Exception as e:
             return f"\n\n⚠️ **LLM Analysis:** Failed to create prompts: {e}\n"
@@ -1075,15 +1396,15 @@ class AdversaryMCPServer:
         """Add LLM exploit prompts for discovered threats."""
         if not threats:
             return ""
-            
+
         result = "\n\n# 🤖 LLM Exploit Generation\n\n"
         result += "For enhanced LLM-based exploit generation, use the following prompts with your client's LLM:\n\n"
         result += "**Note:** Showing prompts for the first 3 threats found.\n\n"
-        
+
         for i, threat in enumerate(threats[:3], 1):
             try:
                 prompt = self.exploit_generator.create_exploit_prompt(threat, content)
-                
+
                 result += f"## Threat {i}: {threat.rule_name}\n\n"
                 result += f"**Type:** {threat.category.value} | **Severity:** {threat.severity.value}\n\n"
                 result += "### System Prompt\n\n"
@@ -1092,10 +1413,12 @@ class AdversaryMCPServer:
                 result += f"```\n{prompt.user_prompt}\n```\n\n"
                 result += "**Instructions:** Send both prompts to your LLM for enhanced exploit generation.\n\n"
                 result += "---\n\n"
-                
+
             except Exception as e:
-                result += f"⚠️ Failed to create exploit prompt for {threat.rule_name}: {e}\n\n"
-        
+                result += (
+                    f"⚠️ Failed to create exploit prompt for {threat.rule_name}: {e}\n\n"
+                )
+
         return result
 
 

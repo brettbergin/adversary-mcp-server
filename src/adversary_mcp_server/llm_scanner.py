@@ -13,13 +13,14 @@ logger = logging.getLogger(__name__)
 
 class LLMAnalysisError(Exception):
     """Exception raised when LLM analysis fails."""
+
     pass
 
 
 @dataclass
 class LLMSecurityFinding:
     """Represents a security finding from LLM analysis."""
-    
+
     finding_type: str
     severity: str
     description: str
@@ -30,13 +31,13 @@ class LLMSecurityFinding:
     confidence: float
     cwe_id: Optional[str] = None
     owasp_category: Optional[str] = None
-    
+
     def to_threat_match(self, file_path: str) -> ThreatMatch:
         """Convert to ThreatMatch for compatibility with existing code.
-        
+
         Args:
             file_path: Path to the analyzed file
-            
+
         Returns:
             ThreatMatch object
         """
@@ -45,9 +46,9 @@ class LLMSecurityFinding:
             "low": Severity.LOW,
             "medium": Severity.MEDIUM,
             "high": Severity.HIGH,
-            "critical": Severity.CRITICAL
+            "critical": Severity.CRITICAL,
         }
-        
+
         # Map finding type to category (simplified mapping)
         category_map = {
             "sql_injection": Category.INJECTION,
@@ -98,12 +99,12 @@ class LLMSecurityFinding:
             "config": Category.CONFIGURATION,
             "type_safety": Category.TYPE_SAFETY,
         }
-        
+
         # Get category, defaulting to MISC if not found
         category = category_map.get(self.finding_type.lower(), Category.MISC)
-        
+
         severity = severity_map.get(self.severity.lower(), Severity.MEDIUM)
-        
+
         return ThreatMatch(
             rule_id=f"llm_{self.finding_type}",
             rule_name=self.finding_type.replace("_", " ").title(),
@@ -122,13 +123,13 @@ class LLMSecurityFinding:
 @dataclass
 class LLMAnalysisPrompt:
     """Represents a prompt for LLM analysis."""
-    
+
     system_prompt: str
     user_prompt: str
     file_path: str
     language: Language
     max_findings: int = 20
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
@@ -136,73 +137,75 @@ class LLMAnalysisPrompt:
             "user_prompt": self.user_prompt,
             "file_path": self.file_path,
             "language": self.language.value,
-            "max_findings": self.max_findings
+            "max_findings": self.max_findings,
         }
 
 
 class LLMScanner:
     """LLM-based security scanner that generates prompts for client LLMs."""
-    
+
     def __init__(self, credential_manager: CredentialManager):
         """Initialize the LLM security analyzer.
-        
+
         Args:
             credential_manager: Credential manager for configuration
         """
         self.credential_manager = credential_manager
         self.config = credential_manager.load_config()
-    
+
     def is_available(self) -> bool:
         """Check if LLM analysis is available.
-        
+
         Returns:
             True if LLM analysis is available (always true now since we use client LLM)
         """
         return True
-    
+
     def create_analysis_prompt(
-        self, 
-        source_code: str, 
-        file_path: str, 
+        self,
+        source_code: str,
+        file_path: str,
         language: Language,
-        max_findings: int = 20
+        max_findings: int = 20,
     ) -> LLMAnalysisPrompt:
         """Create analysis prompt for the given code.
-        
+
         Args:
             source_code: Source code to analyze
             file_path: Path to the source file
             language: Programming language
             max_findings: Maximum number of findings to return
-            
+
         Returns:
             LLMAnalysisPrompt object
         """
         system_prompt = self._get_system_prompt()
         user_prompt = self._create_user_prompt(source_code, language, max_findings)
-        
+
         return LLMAnalysisPrompt(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             file_path=file_path,
             language=language,
-            max_findings=max_findings
+            max_findings=max_findings,
         )
-    
-    def parse_analysis_response(self, response_text: str, file_path: str) -> List[LLMSecurityFinding]:
+
+    def parse_analysis_response(
+        self, response_text: str, file_path: str
+    ) -> List[LLMSecurityFinding]:
         """Parse the LLM response into security findings.
-        
+
         Args:
             response_text: Raw response from LLM
             file_path: Path to the analyzed file
-            
+
         Returns:
             List of LLMSecurityFinding objects
         """
         try:
             # Try to parse as JSON first
             data = json.loads(response_text)
-            
+
             findings = []
             for finding_data in data.get("findings", []):
                 try:
@@ -210,12 +213,12 @@ class LLMScanner:
                     line_number = int(finding_data.get("line_number", 1))
                     if line_number < 1:
                         line_number = 1
-                    
+
                     # Validate confidence
                     confidence = float(finding_data.get("confidence", 0.5))
                     if not (0.0 <= confidence <= 1.0):
                         confidence = 0.5
-                    
+
                     finding = LLMSecurityFinding(
                         finding_type=finding_data.get("type", "unknown"),
                         severity=finding_data.get("severity", "medium"),
@@ -232,19 +235,19 @@ class LLMScanner:
                 except Exception as e:
                     logger.warning(f"Failed to parse finding: {e}")
                     continue
-            
+
             return findings
-            
+
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse LLM response as JSON: {e}")
             raise LLMAnalysisError(f"Invalid JSON response from LLM: {e}")
         except Exception as e:
             logger.error(f"Error parsing LLM response: {e}")
             raise LLMAnalysisError(f"Error parsing LLM response: {e}")
-    
+
     def _get_system_prompt(self) -> str:
         """Get the system prompt for security analysis.
-        
+
         Returns:
             System prompt string
         """
@@ -280,23 +283,27 @@ Vulnerability types to look for:
 - Memory safety issues (buffer overflows, etc.)
 - Race conditions
 - Denial of service vulnerabilities"""
-    
-    def _create_user_prompt(self, source_code: str, language: Language, max_findings: int) -> str:
+
+    def _create_user_prompt(
+        self, source_code: str, language: Language, max_findings: int
+    ) -> str:
         """Create user prompt for the given code.
-        
+
         Args:
             source_code: Source code to analyze
             language: Programming language
             max_findings: Maximum number of findings
-            
+
         Returns:
             Formatted prompt string
         """
         # Truncate very long code to fit in token limits
         max_code_length = 8000  # Leave room for prompt and response
         if len(source_code) > max_code_length:
-            source_code = source_code[:max_code_length] + "\n... [truncated for analysis]"
-        
+            source_code = (
+                source_code[:max_code_length] + "\n... [truncated for analysis]"
+            )
+
         prompt = f"""Analyze the following {language.value} code for security vulnerabilities:
 
 ```{language.value}
@@ -332,45 +339,45 @@ Response format:
     }}
   ]
 }}"""
-        
+
         return prompt
-    
+
     def analyze_code(
         self,
         source_code: str,
         file_path: str,
         language: Language,
-        max_findings: int = 20
+        max_findings: int = 20,
     ) -> List[LLMSecurityFinding]:
         """Analyze code for security vulnerabilities.
-        
+
         For client-based LLM integration, this method returns empty list
         since actual analysis is done by the client's LLM.
-        
+
         Args:
             source_code: Source code to analyze
             file_path: Path to the source file
             language: Programming language
             max_findings: Maximum number of findings to return
-            
+
         Returns:
             Empty list (client-based LLM doesn't do analysis here)
         """
         # In client-based approach, we don't perform actual analysis
         # The client gets prompts via create_analysis_prompt() and processes them
         return []
-    
+
     def batch_analyze_code(
         self,
         code_samples: List[Tuple[str, str, Language]],
-        max_findings_per_sample: int = 20
+        max_findings_per_sample: int = 20,
     ) -> List[List[LLMSecurityFinding]]:
         """Analyze multiple code samples.
-        
+
         Args:
             code_samples: List of (code, file_path, language) tuples
             max_findings_per_sample: Maximum findings per sample
-            
+
         Returns:
             List of findings lists (one per sample)
         """
@@ -379,10 +386,10 @@ Response format:
             # For client-based approach, return empty results
             results.append([])
         return results
-    
+
     def get_analysis_stats(self) -> Dict[str, Any]:
         """Get analysis statistics.
-        
+
         Returns:
             Dictionary with analysis stats
         """
@@ -392,5 +399,5 @@ Response format:
             "failed_analyses": 0,
             "average_findings_per_analysis": 0.0,
             "supported_languages": ["python", "javascript", "typescript"],
-            "client_based": True
-        } 
+            "client_based": True,
+        }

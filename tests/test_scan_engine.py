@@ -12,9 +12,15 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from adversary_mcp_server.credential_manager import CredentialManager, SecurityConfig
-from adversary_mcp_server.scan_engine import EnhancedScanResult, ScanEngine
 from adversary_mcp_server.llm_scanner import LLMSecurityFinding
-from adversary_mcp_server.threat_engine import Category, Language, Severity, ThreatEngine, ThreatMatch
+from adversary_mcp_server.scan_engine import EnhancedScanResult, ScanEngine
+from adversary_mcp_server.threat_engine import (
+    Category,
+    Language,
+    Severity,
+    ThreatEngine,
+    ThreatMatch,
+)
 
 
 class TestEnhancedScanResult:
@@ -294,7 +300,9 @@ class TestScanEngine:
         mock_credential_manager = Mock()
 
         with patch("adversary_mcp_server.scan_engine.ASTScanner") as mock_ast_scanner:
-            with patch("adversary_mcp_server.scan_engine.LLMScanner") as mock_llm_analyzer:
+            with patch(
+                "adversary_mcp_server.scan_engine.LLMScanner"
+            ) as mock_llm_analyzer:
                 mock_llm_instance = Mock()
                 mock_llm_instance.is_available.return_value = True
                 mock_llm_analyzer.return_value = mock_llm_instance
@@ -332,7 +340,9 @@ class TestScanEngine:
         mock_credential_manager = Mock()
 
         with patch("adversary_mcp_server.scan_engine.ASTScanner"):
-            with patch("adversary_mcp_server.scan_engine.LLMScanner") as mock_llm_analyzer:
+            with patch(
+                "adversary_mcp_server.scan_engine.LLMScanner"
+            ) as mock_llm_analyzer:
                 mock_llm_instance = Mock()
                 mock_llm_instance.is_available.return_value = False
                 mock_llm_analyzer.return_value = mock_llm_instance
@@ -387,7 +397,9 @@ class TestScanEngine:
         assert result.scan_metadata["rules_scan_success"] is True
         assert result.scan_metadata["llm_scan_success"] is False
 
-        mock_ast_instance.scan_code.assert_called_once_with("test code", "test.py", Language.PYTHON)
+        mock_ast_instance.scan_code.assert_called_once_with(
+            "test code", "test.py", Language.PYTHON
+        )
 
     @patch("adversary_mcp_server.scan_engine.ASTScanner")
     @patch("adversary_mcp_server.scan_engine.LLMScanner")
@@ -418,15 +430,18 @@ class TestScanEngine:
 
         # Mock prompt creation (client-based approach)
         from adversary_mcp_server.llm_scanner import LLMAnalysisPrompt
+
         mock_prompt = LLMAnalysisPrompt(
             system_prompt="System prompt",
             user_prompt="User prompt",
             file_path="test.py",
             language=Language.PYTHON,
-            max_findings=20
+            max_findings=20,
         )
         mock_llm_instance.create_analysis_prompt.return_value = mock_prompt
-        mock_llm_instance.analyze_code.return_value = []  # Client-based approach returns empty list
+        mock_llm_instance.analyze_code.return_value = (
+            []
+        )  # Client-based approach returns empty list
 
         scanner = ScanEngine(
             threat_engine=mock_threat_engine,
@@ -443,14 +458,18 @@ class TestScanEngine:
 
         assert isinstance(result, EnhancedScanResult)
         assert len(result.rules_threats) == 1
-        assert len(result.llm_threats) == 0  # Client-based approach doesn't populate this
+        assert (
+            len(result.llm_threats) == 0
+        )  # Client-based approach doesn't populate this
         assert len(result.all_threats) == 1  # Only rules threats
         assert result.scan_metadata["rules_scan_success"] is True
         assert result.scan_metadata["llm_scan_success"] is True
         assert "llm_analysis_prompt" in result.scan_metadata
 
         mock_ast_instance.scan_code.assert_called_once()
-        mock_llm_instance.create_analysis_prompt.assert_called_once_with("test code", "test.py", Language.PYTHON)
+        mock_llm_instance.create_analysis_prompt.assert_called_once_with(
+            "test code", "test.py", Language.PYTHON
+        )
 
     @patch("adversary_mcp_server.scan_engine.ASTScanner")
     @patch("adversary_mcp_server.scan_engine.LLMScanner")
@@ -498,7 +517,9 @@ class TestScanEngine:
         mock_llm_instance = Mock()
         mock_llm_instance.is_available.return_value = True
         mock_llm_analyzer.return_value = mock_llm_instance
-        mock_llm_instance.create_analysis_prompt.side_effect = Exception("LLM prompt creation failed")
+        mock_llm_instance.create_analysis_prompt.side_effect = Exception(
+            "LLM prompt creation failed"
+        )
 
         scanner = ScanEngine(
             threat_engine=mock_threat_engine,
@@ -536,7 +557,7 @@ class TestScanEngine:
         )
 
         # Create a temporary file
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write("print('test')")
             temp_file = Path(f.name)
 
@@ -594,7 +615,7 @@ class TestScanEngine:
         # Create a temporary directory with Python files
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
-            
+
             # Create test files
             (temp_path / "test1.py").write_text("print('test1')")
             (temp_path / "test2.js").write_text("console.log('test2');")
@@ -779,4 +800,4 @@ class TestScanEngine:
         mock_threat_engine.reload_rules.assert_called_once()
 
         # Should reinitialize LLM analyzer
-        assert mock_llm_analyzer.call_count >= 2  # Initial + reload 
+        assert mock_llm_analyzer.call_count >= 2  # Initial + reload

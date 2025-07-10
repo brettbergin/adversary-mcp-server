@@ -4,10 +4,13 @@ This file contains intentional security vulnerabilities for educational purposes
 DO NOT use these patterns in production code.
 """
 
+import hashlib
 import os
-import sqlite3
 import pickle
+import random
+import sqlite3
 import subprocess
+
 from flask import Flask, request
 
 app = Flask(__name__)
@@ -77,9 +80,6 @@ def hardcoded_secrets():
 
 def weak_crypto():
     """Weak cryptographic practices."""
-    import hashlib
-    import random
-    
     # VULNERABILITY: Weak hashing algorithm
     password = "user_password"
     weak_hash = hashlib.md5(password.encode()).hexdigest()

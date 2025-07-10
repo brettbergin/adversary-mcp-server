@@ -22,7 +22,9 @@ class SecurityConfig:
     """Security configuration for the adversary MCP server."""
 
     # LLM Configuration (now client-based)
-    enable_llm_analysis: bool = False  # Enable LLM-based security analysis (uses client LLM)
+    enable_llm_analysis: bool = (
+        False  # Enable LLM-based security analysis (uses client LLM)
+    )
 
     # Scanner Configuration
     enable_ast_scanning: bool = True
@@ -49,25 +51,25 @@ class SecurityConfig:
 
     def validate_llm_configuration(self) -> tuple[bool, str]:
         """Validate LLM configuration.
-        
+
         Returns:
             Tuple of (is_valid, error_message)
         """
         # LLM analysis now uses client-side LLM, so always valid
         return True, ""
-    
+
     def is_llm_analysis_available(self) -> bool:
         """Check if LLM analysis is available and properly configured.
-        
+
         Returns:
             True if LLM analysis can be used (always true now since we use client LLM)
         """
         # LLM analysis now uses client-side LLM, so always available
         return True
-    
+
     def get_configuration_summary(self) -> dict[str, Any]:
         """Get a summary of the current configuration.
-        
+
         Returns:
             Dictionary with configuration summary
         """
@@ -395,5 +397,5 @@ class CredentialManager:
         # Check if file config can be loaded
         if self._load_file_config() is not None:
             return True
-            
+
         return False
