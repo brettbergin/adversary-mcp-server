@@ -675,8 +675,10 @@ class AdversaryMCPServer:
                         )
                         if file_path in diff_changes:
                             chunks = diff_changes[file_path]
+                            # For LLM analysis, include minimal context for better understanding
                             changed_code = "\n".join(
-                                chunk.get_changed_code() for chunk in chunks
+                                chunk.get_added_lines_with_minimal_context()
+                                for chunk in chunks
                             )
 
                             # Detect language

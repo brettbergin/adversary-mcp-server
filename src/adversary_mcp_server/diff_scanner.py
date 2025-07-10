@@ -61,6 +61,25 @@ class DiffChunk:
 
         return "\n".join(lines)
 
+    def get_added_lines_with_minimal_context(self) -> str:
+        """Get added lines with minimal context for better analysis.
+
+        This includes only 1-2 context lines around changes, not all context,
+        which is useful for LLM analysis while keeping the scope focused.
+        """
+        lines = []
+
+        # Add minimal context (max 2 lines before changes)
+        context_to_include = self.context_lines[:2] if self.context_lines else []
+        for _, content in context_to_include:
+            lines.append(f"// CONTEXT: {content}")
+
+        # Add all added lines (these are what we're actually analyzing)
+        for _, content in self.added_lines:
+            lines.append(content)
+
+        return "\n".join(lines)
+
     def get_added_lines_only(self) -> str:
         """Get only the added lines as a single string."""
         return "\n".join(content for _, content in self.added_lines)
@@ -303,31 +322,34 @@ class GitDiffScanner:
                 logger.debug(f"Skipping {file_path}: unsupported file type")
                 continue
 
-            # Combine all changed code from all chunks
-            all_changed_code = []
+            # Combine only the newly added lines from all chunks
+            all_added_code = []
             line_mapping = {}  # Map from combined code lines to original diff lines
 
             combined_line_num = 1
             for chunk in chunks:
-                changed_code = chunk.get_changed_code()
-                if changed_code.strip():
-                    all_changed_code.append(changed_code)
+                # Only scan newly added lines, not context
+                added_code = chunk.get_added_lines_only()
+                if added_code.strip():
+                    all_added_code.append(added_code)
 
-                    # Map line numbers for accurate reporting
-                    for i, line in enumerate(changed_code.split("\n")):
-                        if line.strip():  # Skip empty lines
-                            line_mapping[combined_line_num] = chunk.new_start + i
-                        combined_line_num += 1
+                    # Map line numbers for accurate reporting (only for added lines)
+                    for i, (original_line_num, line_content) in enumerate(
+                        chunk.added_lines
+                    ):
+                        if line_content.strip():  # Skip empty lines
+                            line_mapping[combined_line_num] = original_line_num
+                            combined_line_num += 1
 
-            if not all_changed_code:
+            if not all_added_code:
                 continue
 
-            # Scan the combined changed code
-            full_changed_code = "\n".join(all_changed_code)
+            # Scan the combined added code (only new lines)
+            full_added_code = "\n".join(all_added_code)
 
             try:
                 scan_result = self.scan_engine.scan_code(
-                    source_code=full_changed_code,
+                    source_code=full_added_code,
                     file_path=file_path,
                     language=language,
                     use_llm=use_llm,

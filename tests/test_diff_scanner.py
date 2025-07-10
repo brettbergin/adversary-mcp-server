@@ -307,7 +307,8 @@ index 1234567..abcdefg 100644
     def test_scan_diff_with_unsupported_files(self, mock_get_diff):
         """Test scanning diff with unsupported file types."""
         mock_chunk = Mock()
-        mock_chunk.get_changed_code.return_value = "some content"
+        mock_chunk.get_added_lines_only.return_value = "some content"
+        mock_chunk.added_lines = [(1, "some content")]
         mock_get_diff.return_value = {
             "README.md": [mock_chunk],
             "config.yml": [mock_chunk],
@@ -322,8 +323,10 @@ index 1234567..abcdefg 100644
     def test_scan_diff_with_supported_files(self, mock_get_diff):
         """Test scanning diff with supported file types."""
         mock_chunk = Mock()
-        mock_chunk.get_changed_code.return_value = "print('hello')\neval(user_input)"
-        mock_chunk.new_start = 1
+        mock_chunk.get_added_lines_only.return_value = (
+            "print('hello')\neval(user_input)"
+        )
+        mock_chunk.added_lines = [(1, "print('hello')"), (2, "eval(user_input)")]
 
         mock_get_diff.return_value = {"test.py": [mock_chunk]}
 
@@ -450,8 +453,8 @@ index 1234567..abcdefg 100644
 
         with patch.object(scanner, "get_diff_changes") as mock_get_diff:
             mock_chunk = Mock()
-            mock_chunk.get_changed_code.return_value = "print('hello')"
-            mock_chunk.new_start = 1
+            mock_chunk.get_added_lines_only.return_value = "print('hello')"
+            mock_chunk.added_lines = [(1, "print('hello')")]
             mock_get_diff.return_value = {"test.py": [mock_chunk]}
 
             results = scanner.scan_diff(
@@ -474,8 +477,8 @@ index 1234567..abcdefg 100644
 
         with patch.object(scanner, "get_diff_changes") as mock_get_diff:
             mock_chunk = Mock()
-            mock_chunk.get_changed_code.return_value = "print('hello')"
-            mock_chunk.new_start = 1
+            mock_chunk.get_added_lines_only.return_value = "print('hello')"
+            mock_chunk.added_lines = [(1, "print('hello')")]
             mock_get_diff.return_value = {"test.py": [mock_chunk]}
 
             results = scanner.scan_diff("feature", "main", use_llm=True)
@@ -495,7 +498,8 @@ class TestGitDiffScannerEdgeCases:
 
         with patch.object(scanner, "get_diff_changes") as mock_get_diff:
             mock_chunk = Mock()
-            mock_chunk.get_changed_code.return_value = ""  # Empty
+            mock_chunk.get_added_lines_only.return_value = ""  # Empty
+            mock_chunk.added_lines = []  # Empty list
             mock_get_diff.return_value = {"test.py": [mock_chunk]}
 
             results = scanner.scan_diff("feature", "main")
@@ -511,8 +515,8 @@ class TestGitDiffScannerEdgeCases:
 
         with patch.object(scanner, "get_diff_changes") as mock_get_diff:
             mock_chunk = Mock()
-            mock_chunk.get_changed_code.return_value = "print('hello')"
-            mock_chunk.new_start = 1
+            mock_chunk.get_added_lines_only.return_value = "print('hello')"
+            mock_chunk.added_lines = [(1, "print('hello')")]
             mock_get_diff.return_value = {"test.py": [mock_chunk]}
 
             # Should not raise, but should log error and continue
@@ -534,8 +538,12 @@ class TestGitDiffScannerEdgeCases:
 
         with patch.object(scanner, "get_diff_changes") as mock_get_diff:
             mock_chunk = Mock()
-            mock_chunk.get_changed_code.return_value = "line1\nline2\nline3"
-            mock_chunk.new_start = 10  # Starts at line 10 in original file
+            mock_chunk.get_added_lines_only.return_value = "line1\nline2\nline3"
+            mock_chunk.added_lines = [
+                (10, "line1"),
+                (11, "line2"),
+                (12, "line3"),
+            ]  # Original line numbers
             mock_get_diff.return_value = {"test.py": [mock_chunk]}
 
             results = scanner.scan_diff("feature", "main")

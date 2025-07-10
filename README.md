@@ -155,7 +155,7 @@ adversary-mcp-cli status
 | `adv_scan_code` | **🆕 Hybrid scan** of source code | ✅ LLM prompts, confidence scoring |
 | `adv_scan_file` | **🆕 Enhanced** file scanning | ✅ AI-powered prompts, detailed explanations |
 | `adv_scan_directory` | **🆕 Intelligent** directory scanning | ✅ Batch LLM prompts, statistical insights |
-| `adv_diff_scan` | **🆕 Git diff-aware scanning** | ✅ Smart change detection, branch comparison |
+| `adv_diff_scan` | **🆕 Git diff-aware scanning** - scans only newly added lines | ✅ Smart change detection, branch comparison, requires `working_directory` |
 | `adv_generate_exploit` | **🆕 AI-enhanced** exploit generation | ✅ Context-aware prompts, safety mode |
 | `adv_list_rules` | List all 95+ threat detection rules | Enhanced with AI rule categories |
 | `adv_get_rule_details` | Get detailed rule information | Improved formatting and examples |
@@ -199,16 +199,24 @@ The new `adv_diff_scan` tool enables intelligent scanning of only changed files 
 #### **Key Features:**
 - **Smart Change Detection**: Analyzes only modified code, not entire repository
 - **Branch Comparison**: Compares any two branches (main vs. feature, staging vs. production)
-- **Line-Level Precision**: Scans only added/modified lines, ignoring unchanged code
+- **Line-Level Precision**: Scans **only newly added lines** (lines with `+` in git diff), ignoring context lines and removed code
 - **Statistics Generation**: Provides comprehensive diff statistics and threat metrics
 - **Full Integration**: Works with all existing scan options (LLM, exploits, severity filtering)
+
+#### **🎯 Scanning Scope (Updated)**
+- ✅ **Newly added lines** (lines starting with `+` in git diff)
+- ❌ **Context lines** (unchanged code shown for reference)
+- ❌ **Removed lines** (deleted code)
+- ❌ **Existing code** in the repository
+
+This prevents false positives from flagging existing code as new vulnerabilities.
 
 #### **MCP Tool Parameters:**
 ```json
 {
   "source_branch": "main",        // Branch to compare from
   "target_branch": "feature/new", // Branch to compare to
-  "working_directory": ".",       // Working directory for git operations (defaults to current directory)
+  "working_directory": "/absolute/path/to/repo",  // ⚠️ REQUIRED: Working directory for git operations
   "severity_threshold": "medium", // Filter results by severity
   "include_exploits": true,       // Include exploit examples
   "use_llm": true                // Enable AI analysis
@@ -218,14 +226,20 @@ The new `adv_diff_scan` tool enables intelligent scanning of only changed files 
 #### **Example Usage:**
 ```
 # Scan changes in current branch vs main
-Use adv_diff_scan with source_branch="main" and target_branch="HEAD"
+Use adv_diff_scan with source_branch="main", target_branch="HEAD", and working_directory="/path/to/your/repo"
 
-# Scan changes between specific branches in a specific directory
-Use adv_diff_scan with source_branch="staging", target_branch="production", and working_directory="/path/to/repo"
+# Scan changes between specific branches
+Use adv_diff_scan with source_branch="staging", target_branch="production", and working_directory="/path/to/your/repo"
 
 # Scan with high severity filter
-Use adv_diff_scan with severity_threshold="high"
+Use adv_diff_scan with severity_threshold="high" and working_directory="/path/to/your/repo"
 ```
+
+#### **⚠️ Important Requirements:**
+1. **Must specify `working_directory`**: The absolute path to your git repository
+2. **Valid git repository**: The directory must contain a `.git` folder
+3. **Valid branches**: Both source and target branches must exist
+4. **Git available**: `git` command must be available in PATH
 
 ---
 
@@ -386,7 +400,7 @@ vim ~/.local/share/adversary-mcp-server/rules/custom/my-rule.yaml
 | `adversary-mcp-cli configure` | Initial setup and configuration |
 | `adversary-mcp-cli status` | Show server status and configuration |
 | `adversary-mcp-cli scan <target>` | Scan files/directories for vulnerabilities |
-| `adversary-mcp-cli scan --diff` | **🆕 Git diff-aware scanning** - scan only changed files |
+| `adversary-mcp-cli scan --diff` | **🆕 Git diff-aware scanning** - scan only newly added lines (no context) |
 | `adversary-mcp-cli server` | Start MCP server (used by Cursor) |
 
 ### Rule Management Commands
@@ -425,20 +439,23 @@ The `scan` command now supports git diff-aware scanning with the following optio
 
 #### **Diff Scanning Examples:**
 ```bash
-# Basic diff scan (main vs current branch)
+# Basic diff scan (main vs current branch) - scans only newly added lines
 adversary-mcp-cli scan --diff
 
-# Compare specific branches
+# Compare specific branches - scans only new code between branches
 adversary-mcp-cli scan --diff --source-branch=develop --target-branch=feature/auth
 
-# High severity threats only
+# High severity threats only - filters results to high/critical severity
 adversary-mcp-cli scan --diff --severity=high
 
-# Save diff scan results
+# Save diff scan results to JSON file
 adversary-mcp-cli scan --diff --output=security-diff.json
 
-# Comprehensive diff analysis with AI
+# Comprehensive diff analysis with AI - includes LLM prompts for enhanced analysis
 adversary-mcp-cli scan --diff --use-llm=true --include-exploits=true
+
+# Specify custom directory for git operations
+adversary-mcp-cli scan /path/to/repo --diff --source-branch=main --target-branch=HEAD
 ```
 
 ### Utility Commands
@@ -589,14 +606,17 @@ adversary-mcp-cli scan myproject/ --use-llm=true --confidence-threshold=0.8
 
 #### **🆕 Git Diff-Aware Scanning**
 ```bash
-# Scan only changed files between branches
+# Scan only newly added lines between branches (no context lines)
 adversary-mcp-cli scan --diff --source-branch=main --target-branch=HEAD
 
-# Scan changes with specific severity threshold
+# Scan changes with specific severity threshold - only new code
 adversary-mcp-cli scan --diff --source-branch=staging --target-branch=production --severity=high
 
-# Scan current branch changes with AI analysis
+# Scan current branch changes with AI analysis - includes LLM prompts for new code
 adversary-mcp-cli scan --diff --use-llm=true --include-exploits=true
+
+# Specify repository directory for git operations
+adversary-mcp-cli scan /path/to/repo --diff --source-branch=main --target-branch=feature/new
 ```
 
 ### **🆕 Advanced Configuration**
@@ -664,7 +684,7 @@ print(f"High confidence: {len(result.get_high_confidence_threats())}")
 
 #### **🆕 Git Diff-Aware CI/CD Scanning**
 
-For efficient CI/CD pipelines, scan only changed files in pull requests:
+For efficient CI/CD pipelines, scan only newly added lines in pull requests:
 
 ```yaml
 # .github/workflows/security.yml
@@ -686,14 +706,16 @@ jobs:
       - name: Install Adversary MCP
         run: pip install adversary-mcp-server
       
-      - name: Diff Security Scan (PR)
+      - name: Diff Security Scan (PR) - Scans only newly added lines
         if: github.event_name == 'pull_request'
         run: |
-          adversary-mcp-cli scan --diff \
+          adversary-mcp-cli scan . --diff \
             --source-branch=origin/main \
             --target-branch=HEAD \
             --severity=medium \
             --output=security-diff.json
+        env:
+          GITHUB_WORKSPACE: ${{ github.workspace }}
       
       - name: Full Security Scan (Push to main)
         if: github.ref == 'refs/heads/main'
@@ -829,6 +851,19 @@ The project uses centralized version management - you only need to update the ve
 **Built with ❤️ for secure development**
 
 </div>
+
+## Important Notes
+
+### Diff Scanning Scope
+
+The `adv_diff_scan` tool **only scans newly added lines** (lines starting with `+` in git diff), not context lines or existing code. This prevents false positives from flagging existing code as new vulnerabilities.
+
+**What gets scanned:**
+- ✅ Newly added lines (actual changes)
+- ❌ Context lines (unchanged code shown for reference)
+- ❌ Removed lines (deleted code)
+
+This means you'll only see security issues for code you've actually added or modified, not for existing code in the repository.
 
 ## Troubleshooting
 

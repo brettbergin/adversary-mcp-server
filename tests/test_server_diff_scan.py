@@ -162,7 +162,9 @@ class TestServerDiffScanIntegration:
 
         # Mock diff changes for LLM prompts
         mock_chunk = Mock()
-        mock_chunk.get_changed_code.return_value = "eval(user_input)"
+        mock_chunk.get_added_lines_with_minimal_context.return_value = (
+            "eval(user_input)"
+        )
         mock_diff_changes = {"test.py": [mock_chunk]}
 
         server.diff_scanner.get_diff_summary = Mock(return_value=mock_diff_summary)
