@@ -49,14 +49,15 @@ class TestCLICommandsCoverage:
         with patch("adversary_mcp_server.cli.CredentialManager") as mock_manager:
             mock_instance = mock_manager.return_value
             mock_config = SecurityConfig(
-                enable_llm_analysis=True,
-                severity_threshold="high"
+                enable_llm_analysis=True, severity_threshold="high"
             )
             mock_instance.load_config.return_value = mock_config
-            
+
             runner = CliRunner()
-            result = runner.invoke(cli, ["configure", "--severity-threshold", "critical"])
-            
+            result = runner.invoke(
+                cli, ["configure", "--severity-threshold", "critical"]
+            )
+
             assert result.exit_code == 0
             mock_instance.store_config.assert_called_once()
 
@@ -90,9 +91,7 @@ class TestCLICommandsCoverage:
         mock_manager.store_config.side_effect = Exception("Store failed")
         mock_cred_manager.return_value = mock_manager
 
-        result = self.runner.invoke(
-            cli, ["configure", "--severity-threshold", "high"]
-        )
+        result = self.runner.invoke(cli, ["configure", "--severity-threshold", "high"])
 
         assert result.exit_code == 1
 
@@ -102,12 +101,11 @@ class TestCLICommandsCoverage:
         with patch("adversary_mcp_server.cli.CredentialManager") as mock_manager:
             mock_instance = mock_manager.return_value
             mock_config = SecurityConfig(
-                enable_llm_analysis=True,
-                severity_threshold="high"
+                enable_llm_analysis=True, severity_threshold="high"
             )
             mock_instance.load_config.return_value = mock_config
             mock_instance.has_config.return_value = True
-            
+
             # Mock ThreatEngine to return some sample rules
             mock_engine = Mock()
             mock_engine.list_rules.return_value = [
@@ -120,10 +118,10 @@ class TestCLICommandsCoverage:
                 }
             ]
             mock_threat_engine.return_value = mock_engine
-            
+
             runner = CliRunner()
             result = runner.invoke(cli, ["status"])
-            
+
             assert result.exit_code == 0
             # Check for key content that should be in the output
             assert "Server Status" in result.output or "Configuration" in result.output

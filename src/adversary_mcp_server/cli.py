@@ -1,5 +1,6 @@
 """Command-line interface for the Adversary MCP server."""
 
+import datetime
 import getpass
 import json
 import sys
@@ -14,9 +15,12 @@ from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
+from . import get_version
 from .ast_scanner import ASTScanner
 from .credential_manager import CredentialManager, SecurityConfig
+from .diff_scanner import GitDiffScanner
 from .exploit_generator import ExploitGenerator
+from .scan_engine import ScanEngine
 from .threat_engine import Language, Severity, ThreatEngine, get_user_rules_directory
 
 # Conditional import for hot_reload to avoid dependency issues in tests
@@ -31,8 +35,13 @@ except ImportError:
 console = Console()
 
 
+def get_cli_version():
+    """Get version for CLI."""
+    return get_version()
+
+
 @click.group()
-@click.version_option()
+@click.version_option(version=get_cli_version(), prog_name="adversary-mcp-cli")
 def cli():
     """Adversary MCP Server - Security-focused vulnerability scanner."""
     pass
@@ -73,7 +82,7 @@ def configure(
         # Update configuration
         config.severity_threshold = severity_threshold
         config.exploit_safety_mode = enable_safety_mode
-        
+
         # Override LLM settings if explicitly specified
         if enable_llm is not None:
             config.enable_llm_analysis = enable_llm
@@ -175,7 +184,7 @@ def status():
 
 
 @cli.command()
-@click.argument("target", type=click.Path(exists=True))
+@click.argument("target", type=click.Path(exists=True), required=False)
 @click.option(
     "--language",
     type=click.Choice(["python", "javascript", "typescript"]),
@@ -207,17 +216,40 @@ def status():
     default=True,
     help="Use LLM for enhanced analysis",
 )
+@click.option(
+    "--diff/--no-diff",
+    default=False,
+    help="Enable git diff-aware scanning (scans only changed files)",
+)
+@click.option(
+    "--source-branch",
+    default="main",
+    help="Source branch for git diff comparison (default: main)",
+)
+@click.option(
+    "--target-branch",
+    default="HEAD",
+    help="Target branch for git diff comparison (default: HEAD)",
+)
 def scan(
-    target: str,
+    target: Optional[str],
     language: Optional[str],
     severity: str,
     output: Optional[str],
     recursive: bool,
     include_exploits: bool,
     use_llm: bool,
+    diff: bool,
+    source_branch: str,
+    target_branch: str,
 ):
-    """Scan a file or directory for security vulnerabilities."""
+    """Scan a file or directory for security vulnerabilities.
+
+    Can perform traditional file/directory scanning or git diff-aware scanning.
+    When --diff is enabled, only changes between branches are scanned.
+    """
     try:
+        # Initialize scanner components
         threat_engine = ThreatEngine()
         ast_scanner = ASTScanner(threat_engine)
 
@@ -229,96 +261,181 @@ def scan(
             config = SecurityConfig()
             console.print("⚠️  Using default configuration", style="yellow")
 
-        target_path = Path(target)
-
-        if target_path.is_file():
-            # Single file scan
-            console.print(f"🔍 Scanning file: {target}")
-
-            # Auto-detect language if not specified
-            if not language:
-                if target_path.suffix == ".py":
-                    language = "python"
-                elif target_path.suffix in [".js", ".jsx"]:
-                    language = "javascript"
-                elif target_path.suffix in [".ts", ".tsx"]:
-                    language = "typescript"
-                else:
-                    console.print(
-                        f"❌ Cannot auto-detect language for {target}", style="red"
-                    )
-                    sys.exit(1)
-
-            # Read and scan file
-            with open(target_path, "r", encoding="utf-8") as f:
-                content = f.read()
-
-            threats = ast_scanner.scan_code(
-                content, str(target_path), Language(language)
+        # Handle git diff-aware scanning
+        if diff:
+            console.print(
+                f"🔍 Git diff-aware scanning between {source_branch} and {target_branch}"
             )
 
-        elif target_path.is_dir():
-            # Directory scan
-            console.print(f"🔍 Scanning directory: {target}")
+            # Use current directory if no target specified for diff scanning
+            if not target:
+                target = "."
 
-            threats = []
-            file_count = 0
+            # Initialize git diff scanner
+            scan_engine = ScanEngine(threat_engine, ast_scanner)
+            git_diff_scanner = GitDiffScanner(
+                scan_engine=scan_engine, working_dir=Path(target)
+            )
 
-            # Get all files to scan
-            patterns = []
-            if not language or language == "python":
-                patterns.extend(["*.py"])
-            if not language or language == "javascript":
-                patterns.extend(["*.js", "*.jsx"])
-            if not language or language == "typescript":
-                patterns.extend(["*.ts", "*.tsx"])
+            # Perform diff scan
+            severity_enum = Severity(severity) if severity else None
 
-            for pattern in patterns:
-                if recursive:
-                    files = list(target_path.rglob(pattern))
-                else:
-                    files = list(target_path.glob(pattern))
+            scan_results = git_diff_scanner.scan_diff(
+                source_branch=source_branch,
+                target_branch=target_branch,
+                use_llm=use_llm,
+                severity_threshold=severity_enum,
+            )
 
-                for file_path in files:
+            # Get diff summary for display
+            diff_summary = git_diff_scanner.get_diff_summary(
+                source_branch, target_branch
+            )
+
+            # Collect all threats from scan results
+            all_threats = []
+            for file_path, file_scan_results in scan_results.items():
+                for scan_result in file_scan_results:
+                    all_threats.extend(scan_result.all_threats)
+
+            # Generate exploits if requested
+            if include_exploits:
+                for threat in all_threats[:10]:  # Limit to first 10 threats
                     try:
-                        # Determine file language
-                        if file_path.suffix == ".py":
-                            file_lang = Language.PYTHON
-                        elif file_path.suffix in [".js", ".jsx"]:
-                            file_lang = Language.JAVASCRIPT
-                        elif file_path.suffix in [".ts", ".tsx"]:
-                            file_lang = Language.TYPESCRIPT
-                        else:
-                            continue
-
-                        # Skip if language filter doesn't match
-                        if language and file_lang.value != language:
-                            continue
-
-                        # Read and scan file
-                        with open(file_path, "r", encoding="utf-8") as f:
-                            content = f.read()
-
-                        file_threats = ast_scanner.scan_code(
-                            content, str(file_path), file_lang
+                        exploit_generator = ExploitGenerator()
+                        exploits = exploit_generator.generate_exploits(
+                            threat, "", False  # Don't use LLM directly
                         )
-
-                        threats.extend(file_threats)
-                        file_count += 1
-
+                        threat.exploit_examples = exploits
                     except Exception as e:
                         console.print(
-                            f"⚠️  Error scanning {file_path}: {e}", style="yellow"
+                            f"⚠️  Failed to generate exploits for {threat.rule_id}: {e}",
+                            style="yellow",
                         )
                         continue
 
-            console.print(f"📊 Scanned {file_count} files")
-        else:
-            console.print(f"❌ Invalid target: {target}", style="red")
-            sys.exit(1)
+            # Create results structure for display
+            results = {
+                "threats": all_threats,
+                "stats": {
+                    "files_changed": diff_summary.get("files_changed", 0),
+                    "lines_added": diff_summary.get("lines_added", 0),
+                    "lines_removed": diff_summary.get("lines_removed", 0),
+                    "threat_counts": {},
+                },
+            }
 
-        # Display results
-        _display_scan_results(threats, target)
+            # Calculate threat counts by severity
+            for threat in all_threats:
+                severity_str = threat.severity.value
+                results["stats"]["threat_counts"][severity_str] = (
+                    results["stats"]["threat_counts"].get(severity_str, 0) + 1
+                )
+
+            # Display git diff results
+            _display_git_diff_results(results)
+
+            # Extract threats for further processing
+            threats = results.get("threats", [])
+
+        else:
+            # Traditional file/directory scanning
+            if not target:
+                console.print(
+                    "❌ Target path is required for non-diff scanning", style="red"
+                )
+                sys.exit(1)
+
+            target_path = Path(target)
+
+            if target_path.is_file():
+                # Single file scan
+                console.print(f"🔍 Scanning file: {target}")
+
+                # Auto-detect language if not specified
+                if not language:
+                    if target_path.suffix == ".py":
+                        language = "python"
+                    elif target_path.suffix in [".js", ".jsx"]:
+                        language = "javascript"
+                    elif target_path.suffix in [".ts", ".tsx"]:
+                        language = "typescript"
+                    else:
+                        console.print(
+                            f"❌ Cannot auto-detect language for {target}", style="red"
+                        )
+                        sys.exit(1)
+
+                # Read and scan file
+                with open(target_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+
+                threats = ast_scanner.scan_code(
+                    content, str(target_path), Language(language)
+                )
+
+            elif target_path.is_dir():
+                # Directory scan
+                console.print(f"🔍 Scanning directory: {target}")
+
+                threats = []
+                file_count = 0
+
+                # Get all files to scan
+                patterns = []
+                if not language or language == "python":
+                    patterns.extend(["*.py"])
+                if not language or language == "javascript":
+                    patterns.extend(["*.js", "*.jsx"])
+                if not language or language == "typescript":
+                    patterns.extend(["*.ts", "*.tsx"])
+
+                for pattern in patterns:
+                    if recursive:
+                        files = list(target_path.rglob(pattern))
+                    else:
+                        files = list(target_path.glob(pattern))
+
+                    for file_path in files:
+                        try:
+                            # Determine file language
+                            if file_path.suffix == ".py":
+                                file_lang = Language.PYTHON
+                            elif file_path.suffix in [".js", ".jsx"]:
+                                file_lang = Language.JAVASCRIPT
+                            elif file_path.suffix in [".ts", ".tsx"]:
+                                file_lang = Language.TYPESCRIPT
+                            else:
+                                continue
+
+                            # Skip if language filter doesn't match
+                            if language and file_lang.value != language:
+                                continue
+
+                            # Read and scan file
+                            with open(file_path, "r", encoding="utf-8") as f:
+                                content = f.read()
+
+                            file_threats = ast_scanner.scan_code(
+                                content, str(file_path), file_lang
+                            )
+
+                            threats.extend(file_threats)
+                            file_count += 1
+
+                        except Exception as e:
+                            console.print(
+                                f"⚠️  Error scanning {file_path}: {e}", style="yellow"
+                            )
+                            continue
+
+                console.print(f"📊 Scanned {file_count} files")
+            else:
+                console.print(f"❌ Invalid target: {target}", style="red")
+                sys.exit(1)
+
+            # Display results for traditional scanning
+            _display_scan_results(threats, target)
 
         # Save to file if requested
         if output:
@@ -906,6 +1023,43 @@ def _save_results_to_file(threats, output_file):
         console.print(f"❌ Failed to save results: {e}", style="red")
 
 
+def _display_git_diff_results(results):
+    """Display git diff scan results in a formatted table."""
+    threats = results.get("threats", [])
+    stats = results.get("stats", {})
+
+    # Display diff summary
+    console.print("\n📊 [bold]Git Diff Summary[/bold]")
+
+    summary_table = Table(title="Diff Statistics")
+    summary_table.add_column("Metric", style="cyan")
+    summary_table.add_column("Value", style="magenta")
+
+    summary_table.add_row("Files Changed", str(stats.get("files_changed", 0)))
+    summary_table.add_row("Lines Added", str(stats.get("lines_added", 0)))
+    summary_table.add_row("Lines Removed", str(stats.get("lines_removed", 0)))
+    summary_table.add_row("Threats Found", str(len(threats)))
+
+    # Show threat breakdown by severity
+    threat_counts = stats.get("threat_counts", {})
+    for severity, count in threat_counts.items():
+        if count > 0:
+            summary_table.add_row(f"  {severity.capitalize()}", str(count))
+
+    console.print(summary_table)
+
+    # Display threats if any found
+    if threats:
+        console.print(
+            f"\n🚨 [bold red]Found {len(threats)} security threats in changed files[/bold red]"
+        )
+        _display_scan_results(threats, "git diff")
+    else:
+        console.print(
+            "\n✅ No security threats detected in changed files!", style="green"
+        )
+
+
 @cli.group()
 def watch():
     """Manage hot-reload service for rule files."""
@@ -1006,8 +1160,6 @@ def status(directory: tuple):
         status_text += f"**Debounce Time:** {status_info['debounce_seconds']} seconds\n"
 
         if status_info["last_reload_time"]:
-            import datetime
-
             last_reload = datetime.datetime.fromtimestamp(
                 status_info["last_reload_time"]
             )
