@@ -118,6 +118,11 @@ class AdversaryMCPServer:
                                 "description": "Whether to include Semgrep analysis",
                                 "default": True,
                             },
+                            "use_rules": {
+                                "type": "boolean",
+                                "description": "Whether to include rules-based threat detection",
+                                "default": True,
+                            },
                             "output_format": {
                                 "type": "string",
                                 "description": "Output format for results",
@@ -157,6 +162,11 @@ class AdversaryMCPServer:
                             "use_semgrep": {
                                 "type": "boolean",
                                 "description": "Whether to include Semgrep analysis",
+                                "default": True,
+                            },
+                            "use_rules": {
+                                "type": "boolean",
+                                "description": "Whether to include rules-based threat detection",
                                 "default": True,
                             },
                             "output_format": {
@@ -203,6 +213,11 @@ class AdversaryMCPServer:
                             "use_semgrep": {
                                 "type": "boolean",
                                 "description": "Whether to include Semgrep analysis",
+                                "default": True,
+                            },
+                            "use_rules": {
+                                "type": "boolean",
+                                "description": "Whether to include rules-based threat detection",
                                 "default": True,
                             },
                             "output_format": {
@@ -253,6 +268,11 @@ class AdversaryMCPServer:
                             "use_semgrep": {
                                 "type": "boolean",
                                 "description": "Whether to include Semgrep analysis",
+                                "default": True,
+                            },
+                            "use_rules": {
+                                "type": "boolean",
+                                "description": "Whether to include rules-based threat detection",
                                 "default": True,
                             },
                             "output_format": {
@@ -472,6 +492,7 @@ class AdversaryMCPServer:
             include_exploits = arguments.get("include_exploits", True)
             use_llm = arguments.get("use_llm", False)
             use_semgrep = arguments.get("use_semgrep", True)
+            use_rules = arguments.get("use_rules", True)
             output_format = arguments.get("output_format", "text")
 
             # Convert language string to enum
@@ -485,6 +506,7 @@ class AdversaryMCPServer:
                 language=language,
                 use_llm=False,  # Always False for rules scan
                 use_semgrep=use_semgrep,
+                use_rules=use_rules,
                 severity_threshold=severity_enum,
             )
 
@@ -537,6 +559,7 @@ class AdversaryMCPServer:
             include_exploits = arguments.get("include_exploits", True)
             use_llm = arguments.get("use_llm", False)
             use_semgrep = arguments.get("use_semgrep", True)
+            use_rules = arguments.get("use_rules", True)
             output_format = arguments.get("output_format", "text")
 
             if not file_path.exists():
@@ -550,6 +573,7 @@ class AdversaryMCPServer:
                 file_path=file_path,
                 use_llm=False,  # Always False for rules scan
                 use_semgrep=use_semgrep,
+                use_rules=use_rules,
                 severity_threshold=severity_enum,
             )
 
@@ -627,6 +651,7 @@ class AdversaryMCPServer:
             include_exploits = arguments.get("include_exploits", True)
             use_llm = arguments.get("use_llm", False)
             use_semgrep = arguments.get("use_semgrep", True)
+            use_rules = arguments.get("use_rules", True)
             output_format = arguments.get("output_format", "text")
 
             if not directory_path.exists():
@@ -641,6 +666,7 @@ class AdversaryMCPServer:
                 recursive=recursive,
                 use_llm=False,  # Always False for rules scan
                 use_semgrep=use_semgrep,
+                use_rules=use_rules,
                 severity_threshold=severity_enum,
                 max_files=50,  # Limit files for performance
             )
@@ -727,6 +753,7 @@ class AdversaryMCPServer:
             include_exploits = arguments.get("include_exploits", True)
             use_llm = arguments.get("use_llm", False)
             use_semgrep = arguments.get("use_semgrep", True)
+            use_rules = arguments.get("use_rules", True)
             output_format = arguments.get("output_format", "text")
 
             # Convert severity threshold to enum
@@ -753,6 +780,7 @@ class AdversaryMCPServer:
                 working_dir=working_dir_path,
                 use_llm=False,  # Always False for rules scan
                 use_semgrep=use_semgrep,
+                use_rules=use_rules,
                 severity_threshold=severity_enum,
             )
 
@@ -1590,8 +1618,10 @@ class AdversaryMCPServer:
                     "file_path": scan_result.file_path,
                     "language": scan_result.language.value,
                     "threat_count": len(scan_result.all_threats),
-                    "scan_success": scan_result.scan_metadata.get(
-                        "rules_scan_success", False
+                    "scan_success": (
+                        scan_result.scan_metadata.get("rules_scan_success", False)
+                        or scan_result.scan_metadata.get("semgrep_scan_success", False)
+                        or scan_result.scan_metadata.get("llm_scan_success", False)
                     ),
                 }
             )
@@ -1694,7 +1724,9 @@ class AdversaryMCPServer:
                         "remediation": getattr(threat, "remediation", ""),
                         "references": getattr(threat, "references", []),
                         "exploit_examples": getattr(threat, "exploit_examples", []),
-                        "is_false_positive": getattr(threat, "is_false_positive", False),
+                        "is_false_positive": getattr(
+                            threat, "is_false_positive", False
+                        ),
                     }
                     all_threats.append(threat_data)
 
@@ -1753,7 +1785,7 @@ class AdversaryMCPServer:
         try:
             from pathlib import Path
 
-            output_path = Path(working_dir) / ".adversary-scan-results.json"
+            output_path = Path(working_dir) / ".adversary.json"
             with open(output_path, "w", encoding="utf-8") as f:
                 f.write(json_data)
 
@@ -1843,18 +1875,18 @@ class AdversaryMCPServer:
         try:
             finding_uuid = arguments.get("finding_uuid")
             reason = arguments.get("reason", "Marked as false positive via MCP")
-            
+
             if not finding_uuid:
                 raise AdversaryToolError("finding_uuid is required")
-                
+
             self.false_positive_manager.mark_false_positive(finding_uuid, reason)
-            
-            result = f"✅ **Finding marked as false positive**\n\n"
+
+            result = "✅ **Finding marked as false positive**\n\n"
             result += f"**UUID:** {finding_uuid}\n"
             result += f"**Reason:** {reason}\n"
-            
+
             return [types.TextContent(type="text", text=result)]
-            
+
         except Exception as e:
             logger.error(f"Error marking false positive: {e}")
             raise AdversaryToolError(f"Failed to mark false positive: {str(e)}")
@@ -1865,21 +1897,21 @@ class AdversaryMCPServer:
         """Handle unmark false positive request."""
         try:
             finding_uuid = arguments.get("finding_uuid")
-            
+
             if not finding_uuid:
                 raise AdversaryToolError("finding_uuid is required")
-                
+
             success = self.false_positive_manager.unmark_false_positive(finding_uuid)
-            
+
             if success:
-                result = f"✅ **Finding unmarked as false positive**\n\n"
+                result = "✅ **Finding unmarked as false positive**\n\n"
                 result += f"**UUID:** {finding_uuid}\n"
             else:
-                result = f"⚠️ **Finding not found in false positives**\n\n"
+                result = "⚠️ **Finding not found in false positives**\n\n"
                 result += f"**UUID:** {finding_uuid}\n"
-            
+
             return [types.TextContent(type="text", text=result)]
-            
+
         except Exception as e:
             logger.error(f"Error unmarking false positive: {e}")
             raise AdversaryToolError(f"Failed to unmark false positive: {str(e)}")
@@ -1890,23 +1922,23 @@ class AdversaryMCPServer:
         """Handle list false positives request."""
         try:
             false_positives = self.false_positive_manager.get_false_positives()
-            
+
             result = f"# False Positives ({len(false_positives)} found)\n\n"
-            
+
             if not false_positives:
                 result += "No false positives found.\n"
                 return [types.TextContent(type="text", text=result)]
-            
+
             for fp in false_positives:
                 result += f"## {fp['uuid']}\n\n"
                 result += f"**Reason:** {fp.get('reason', 'No reason provided')}\n"
                 result += f"**Marked:** {fp.get('marked_date', 'Unknown')}\n"
-                if fp.get('last_updated') != fp.get('marked_date'):
+                if fp.get("last_updated") != fp.get("marked_date"):
                     result += f"**Updated:** {fp.get('last_updated', 'Unknown')}\n"
                 result += "\n---\n\n"
-            
+
             return [types.TextContent(type="text", text=result)]
-            
+
         except Exception as e:
             logger.error(f"Error listing false positives: {e}")
             raise AdversaryToolError(f"Failed to list false positives: {str(e)}")

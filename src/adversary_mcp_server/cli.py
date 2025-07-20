@@ -286,6 +286,11 @@ def status():
     help="Use Semgrep for static analysis",
 )
 @click.option(
+    "--use-rules/--no-rules",
+    default=True,
+    help="Use rules-based scanner for threat detection",
+)
+@click.option(
     "--diff/--no-diff",
     default=False,
     help="Enable git diff-aware scanning (scans only changed files)",
@@ -309,6 +314,7 @@ def scan(
     include_exploits: bool,
     use_llm: bool,
     use_semgrep: bool,
+    use_rules: bool,
     diff: bool,
     source_branch: str,
     target_branch: str,
@@ -333,7 +339,9 @@ def scan(
         # Use global severity threshold if not specified
         if severity is None:
             severity = config.severity_threshold
-            console.print(f"🔧 Using global severity threshold: {severity}", style="blue")
+            console.print(
+                f"🔧 Using global severity threshold: {severity}", style="blue"
+            )
 
         # Handle git diff-aware scanning
         if diff:
@@ -359,6 +367,7 @@ def scan(
                 target_branch=target_branch,
                 use_llm=use_llm,
                 use_semgrep=use_semgrep,
+                use_rules=use_rules,
                 severity_threshold=severity_enum,
             )
 
@@ -451,6 +460,7 @@ def scan(
                     language=Language(language),
                     use_llm=use_llm,
                     use_semgrep=use_semgrep,
+                    use_rules=use_rules,
                     severity_threshold=severity_enum,
                 )
 
@@ -470,6 +480,7 @@ def scan(
                     recursive=recursive,
                     use_llm=use_llm,
                     use_semgrep=use_semgrep,
+                    use_rules=use_rules,
                     severity_threshold=severity_enum,
                     max_files=50,  # Limit for performance
                 )
@@ -979,16 +990,22 @@ def mark_false_positive(finding_uuid: str, reason: str | None, confirm: bool):
     """Mark a finding as a false positive by UUID."""
     try:
         from .false_positive_manager import FalsePositiveManager
-        
+
         fp_manager = FalsePositiveManager()
-        
-        if confirm and not Confirm.ask(f"Mark finding {finding_uuid} as false positive?"):
+
+        if confirm and not Confirm.ask(
+            f"Mark finding {finding_uuid} as false positive?"
+        ):
             console.print("Operation cancelled", style="yellow")
             return
-            
-        fp_manager.mark_false_positive(finding_uuid, reason or "User marked as false positive")
-        console.print(f"✅ Finding {finding_uuid} marked as false positive", style="green")
-        
+
+        fp_manager.mark_false_positive(
+            finding_uuid, reason or "User marked as false positive"
+        )
+        console.print(
+            f"✅ Finding {finding_uuid} marked as false positive", style="green"
+        )
+
     except Exception as e:
         console.print(f"❌ Failed to mark as false positive: {e}", style="red")
         sys.exit(1)
@@ -1000,11 +1017,13 @@ def unmark_false_positive(finding_uuid: str):
     """Remove false positive marking from a finding by UUID."""
     try:
         from .false_positive_manager import FalsePositiveManager
-        
+
         fp_manager = FalsePositiveManager()
         fp_manager.unmark_false_positive(finding_uuid)
-        console.print(f"✅ Finding {finding_uuid} unmarked as false positive", style="green")
-        
+        console.print(
+            f"✅ Finding {finding_uuid} unmarked as false positive", style="green"
+        )
+
     except Exception as e:
         console.print(f"❌ Failed to unmark false positive: {e}", style="red")
         sys.exit(1)
@@ -1015,28 +1034,28 @@ def list_false_positives():
     """List all findings marked as false positives."""
     try:
         from .false_positive_manager import FalsePositiveManager
-        
+
         fp_manager = FalsePositiveManager()
         false_positives = fp_manager.get_false_positives()
-        
+
         if not false_positives:
             console.print("No false positives found", style="green")
             return
-            
+
         table = Table(title=f"False Positives ({len(false_positives)} found)")
         table.add_column("UUID", style="cyan")
         table.add_column("Reason", style="magenta")
         table.add_column("Marked Date", style="yellow")
-        
+
         for fp in false_positives:
             table.add_row(
                 fp["uuid"],
                 fp.get("reason", "No reason provided"),
-                fp.get("marked_date", "Unknown")
+                fp.get("marked_date", "Unknown"),
             )
-            
+
         console.print(table)
-        
+
     except Exception as e:
         console.print(f"❌ Failed to list false positives: {e}", style="red")
         sys.exit(1)

@@ -162,10 +162,10 @@ class SemgrepScanner:
         message = finding.get("message", "Security issue detected by Semgrep")
         # Extract severity from multiple possible locations in semgrep output
         severity_str = (
-            finding.get("metadata", {}).get("severity") or
-            finding.get("extra", {}).get("severity") or
-            finding.get("severity") or
-            "info"  # Default fallback
+            finding.get("metadata", {}).get("severity")
+            or finding.get("extra", {}).get("severity")
+            or finding.get("severity")
+            or "info"  # Default fallback
         )
         severity = self._map_semgrep_severity(severity_str)
         category = self._map_semgrep_category(rule_id, message)
@@ -478,7 +478,9 @@ class SemgrepScanner:
                         try:
                             # Extract file path from Semgrep finding
                             finding_file_path = finding.get("path", "unknown")
-                            threat = self._convert_semgrep_finding_to_threat(finding, finding_file_path)
+                            threat = self._convert_semgrep_finding_to_threat(
+                                finding, finding_file_path
+                            )
                             threats.append(threat)
                         except Exception as e:
                             logger.warning(

@@ -215,6 +215,7 @@ class ScanEngine:
         language: Language,
         use_llm: bool = True,
         use_semgrep: bool = True,
+        use_rules: bool = True,
         severity_threshold: Severity | None = None,
     ) -> EnhancedScanResult:
         """Scan source code using rules, Semgrep, and LLM analysis.
@@ -225,6 +226,7 @@ class ScanEngine:
             language: Programming language
             use_llm: Whether to use LLM analysis
             use_semgrep: Whether to use Semgrep analysis
+            use_rules: Whether to use rules-based scanner
             severity_threshold: Minimum severity threshold for filtering
 
         Returns:
@@ -235,19 +237,28 @@ class ScanEngine:
             "language": language.value,
             "use_llm": use_llm and self.enable_llm_analysis,
             "use_semgrep": use_semgrep and self.enable_semgrep_analysis,
+            "use_rules": use_rules,
             "source_lines": len(source_code.split("\n")),
             "source_size": len(source_code),
         }
 
-        # Perform AST-based rules scanning
+        # Perform AST-based rules scanning if enabled
         rules_threats = []
-        try:
-            rules_threats = self.ast_scanner.scan_code(source_code, file_path, language)
-            scan_metadata["rules_scan_success"] = True
-        except Exception as e:
-            logger.error(f"Rules-based scan failed for {file_path}: {e}")
+        if use_rules:
+            try:
+                rules_threats = self.ast_scanner.scan_code(
+                    source_code, file_path, language
+                )
+                scan_metadata["rules_scan_success"] = True
+                scan_metadata["rules_scan_reason"] = "analysis_completed"
+            except Exception as e:
+                logger.error(f"Rules-based scan failed for {file_path}: {e}")
+                scan_metadata["rules_scan_success"] = False
+                scan_metadata["rules_scan_error"] = str(e)
+                scan_metadata["rules_scan_reason"] = "scan_failed"
+        else:
             scan_metadata["rules_scan_success"] = False
-            scan_metadata["rules_scan_error"] = str(e)
+            scan_metadata["rules_scan_reason"] = "disabled"
 
         # Perform Semgrep scanning if enabled
         semgrep_threats = []
@@ -320,9 +331,13 @@ class ScanEngine:
             )
 
         # Apply false positive filtering
-        rules_threats = self.false_positive_manager.filter_false_positives(rules_threats)
+        rules_threats = self.false_positive_manager.filter_false_positives(
+            rules_threats
+        )
         llm_threats = self.false_positive_manager.filter_false_positives(llm_threats)
-        semgrep_threats = self.false_positive_manager.filter_false_positives(semgrep_threats)
+        semgrep_threats = self.false_positive_manager.filter_false_positives(
+            semgrep_threats
+        )
 
         return EnhancedScanResult(
             file_path=file_path,
@@ -339,6 +354,7 @@ class ScanEngine:
         language: Language | None = None,
         use_llm: bool = True,
         use_semgrep: bool = True,
+        use_rules: bool = True,
         severity_threshold: Severity | None = None,
     ) -> EnhancedScanResult:
         """Scan a single file using enhanced scanning.
@@ -348,6 +364,7 @@ class ScanEngine:
             language: Programming language (auto-detected if not provided)
             use_llm: Whether to use LLM analysis
             use_semgrep: Whether to use Semgrep analysis
+            use_rules: Whether to use rules-based scanner
             severity_threshold: Minimum severity threshold for filtering
 
         Returns:
@@ -387,6 +404,7 @@ class ScanEngine:
             language=language,
             use_llm=use_llm,
             use_semgrep=use_semgrep,
+            use_rules=use_rules,
             severity_threshold=severity_threshold,
         )
 
@@ -396,6 +414,7 @@ class ScanEngine:
         recursive: bool = True,
         use_llm: bool = True,
         use_semgrep: bool = True,
+        use_rules: bool = True,
         severity_threshold: Severity | None = None,
         max_files: int | None = None,
     ) -> list[EnhancedScanResult]:
@@ -406,6 +425,7 @@ class ScanEngine:
             recursive: Whether to scan subdirectories
             use_llm: Whether to use LLM analysis
             use_semgrep: Whether to use Semgrep analysis
+            use_rules: Whether to use rules-based scanner
             severity_threshold: Minimum severity threshold for filtering
             max_files: Maximum number of files to scan
 
@@ -486,6 +506,7 @@ class ScanEngine:
                     language=language,
                     use_llm=use_llm,
                     use_semgrep=False,  # Skip individual Semgrep calls
+                    use_rules=use_rules,
                     severity_threshold=severity_threshold,
                 )
 
