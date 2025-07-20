@@ -1,12 +1,11 @@
 """Threat Pattern Engine for security vulnerability detection."""
 
-import os
 import re
 import shutil
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any
 
 import yaml
 from pydantic import BaseModel, field_validator
@@ -66,7 +65,7 @@ class MatchCondition(BaseModel):
     """A condition that must be met for a rule to match."""
 
     type: str  # "ast_node", "pattern", "function_call", "import", "variable"
-    value: Union[str, List[str], Dict[str, Any]]
+    value: str | list[str] | dict[str, Any]
     case_sensitive: bool = True
     multiline: bool = False
 
@@ -91,7 +90,7 @@ class ExploitTemplate(BaseModel):
 
     type: str  # "curl", "python", "javascript", "shell"
     template: str
-    parameters: Dict[str, Any] = field(default_factory=dict)
+    parameters: dict[str, Any] = field(default_factory=dict)
     description: str = ""
 
     @field_validator("type")
@@ -111,22 +110,22 @@ class ThreatRule(BaseModel):
     description: str
     category: Category
     severity: Severity
-    languages: List[Language]
+    languages: list[Language]
 
     # Matching conditions
-    conditions: List[MatchCondition]
+    conditions: list[MatchCondition]
 
     # Exploit information
-    exploit_templates: List[ExploitTemplate] = field(default_factory=list)
+    exploit_templates: list[ExploitTemplate] = field(default_factory=list)
 
     # Remediation
     remediation: str = ""
-    references: List[str] = field(default_factory=list)
+    references: list[str] = field(default_factory=list)
 
     # Metadata
-    cwe_id: Optional[str] = None
-    owasp_category: Optional[str] = None
-    tags: List[str] = field(default_factory=list)
+    cwe_id: str | None = None
+    owasp_category: str | None = None
+    tags: list[str] = field(default_factory=list)
 
     @field_validator("id")
     @classmethod
@@ -155,18 +154,18 @@ class ThreatMatch:
 
     # Code context
     code_snippet: str = ""
-    function_name: Optional[str] = None
+    function_name: str | None = None
 
     # Exploit information
-    exploit_examples: List[str] = field(default_factory=list)
+    exploit_examples: list[str] = field(default_factory=list)
 
     # Remediation
     remediation: str = ""
-    references: List[str] = field(default_factory=list)
+    references: list[str] = field(default_factory=list)
 
     # Metadata
-    cwe_id: Optional[str] = None
-    owasp_category: Optional[str] = None
+    cwe_id: str | None = None
+    owasp_category: str | None = None
     confidence: float = 1.0  # 0.0 to 1.0
 
 
@@ -285,8 +284,8 @@ class ThreatEngine:
 
     def __init__(
         self,
-        rules_dir: Optional[Path] = None,
-        custom_rules_dirs: Optional[List[Path]] = None,
+        rules_dir: Path | None = None,
+        custom_rules_dirs: list[Path] | None = None,
     ):
         """Initialize the threat engine.
 
@@ -294,15 +293,15 @@ class ThreatEngine:
             rules_dir: Primary directory containing YAML rule files (defaults to user config)
             custom_rules_dirs: Additional directories for custom rules
         """
-        self.rules: Dict[str, ThreatRule] = {}
-        self.rules_by_language: Dict[Language, List[ThreatRule]] = {
+        self.rules: dict[str, ThreatRule] = {}
+        self.rules_by_language: dict[Language, list[ThreatRule]] = {
             Language.PYTHON: [],
             Language.JAVASCRIPT: [],
             Language.TYPESCRIPT: [],
         }
-        self.loaded_rule_files: Set[Path] = set()
+        self.loaded_rule_files: set[Path] = set()
         # Track which file each rule was loaded from
-        self.rule_source_files: Dict[str, Path] = {}
+        self.rule_source_files: dict[str, Path] = {}
 
         # Initialize user rules directory if it doesn't exist
         initialize_user_rules_directory()
@@ -359,7 +358,7 @@ class ThreatEngine:
             rule_file: Path to YAML file containing rules
         """
         try:
-            with open(rule_file, "r") as f:
+            with open(rule_file) as f:
                 data = yaml.safe_load(f)
 
             if "rules" not in data:
@@ -377,7 +376,7 @@ class ThreatEngine:
         except Exception as e:
             raise ValueError(f"Failed to load rules from {rule_file}: {e}")
 
-    def add_rule(self, rule: ThreatRule, source_file: Optional[Path] = None) -> None:
+    def add_rule(self, rule: ThreatRule, source_file: Path | None = None) -> None:
         """Add a threat rule to the engine.
 
         Args:
@@ -396,7 +395,7 @@ class ThreatEngine:
                 self.rules_by_language[language] = []
             self.rules_by_language[language].append(rule)
 
-    def get_rules_for_language(self, language: Language) -> List[ThreatRule]:
+    def get_rules_for_language(self, language: Language) -> list[ThreatRule]:
         """Get all rules that apply to a specific language.
 
         Args:
@@ -407,7 +406,7 @@ class ThreatEngine:
         """
         return self.rules_by_language.get(language, [])
 
-    def get_rule_by_id(self, rule_id: str) -> Optional[ThreatRule]:
+    def get_rule_by_id(self, rule_id: str) -> ThreatRule | None:
         """Get a rule by its ID.
 
         Args:
@@ -418,7 +417,7 @@ class ThreatEngine:
         """
         return self.rules.get(rule_id)
 
-    def get_rule_details(self, rule_id: str) -> Optional[Dict[str, Any]]:
+    def get_rule_details(self, rule_id: str) -> dict[str, Any] | None:
         """Get detailed information about a rule.
 
         Args:
@@ -455,7 +454,7 @@ class ThreatEngine:
             "tags": rule.tags,
         }
 
-    def get_rules_by_category(self, category: Category) -> List[ThreatRule]:
+    def get_rules_by_category(self, category: Category) -> list[ThreatRule]:
         """Get all rules in a specific category.
 
         Args:
@@ -466,7 +465,7 @@ class ThreatEngine:
         """
         return [rule for rule in self.rules.values() if rule.category == category]
 
-    def get_rules_by_severity(self, min_severity: Severity) -> List[ThreatRule]:
+    def get_rules_by_severity(self, min_severity: Severity) -> list[ThreatRule]:
         """Get all rules with severity >= min_severity.
 
         Args:
@@ -664,7 +663,7 @@ class ThreatEngine:
             # Use a special path to indicate these are hardcoded rules
             self.add_rule(rule, source_file=Path("<built-in>"))
 
-    def validate_rule(self, rule: ThreatRule) -> List[str]:
+    def validate_rule(self, rule: ThreatRule) -> list[str]:
         """Validate a threat rule for correctness.
 
         Args:
@@ -708,7 +707,7 @@ class ThreatEngine:
         with open(output_file, "w") as f:
             yaml.dump(rules_data, f, default_flow_style=False, sort_keys=False)
 
-    def list_rules(self) -> List[Dict[str, Any]]:
+    def list_rules(self) -> list[dict[str, Any]]:
         """List all loaded rules with basic information.
 
         Returns:
@@ -755,7 +754,7 @@ class ThreatEngine:
                     print(f"Warning: Failed to reload {rule_file}: {e}")
 
     def import_rules_from_file(
-        self, import_file: Path, target_dir: Optional[Path] = None
+        self, import_file: Path, target_dir: Path | None = None
     ) -> None:
         """Import rules from an external file.
 
@@ -814,7 +813,7 @@ class ThreatEngine:
 
         return True
 
-    def get_rule_statistics(self) -> Dict[str, Any]:
+    def get_rule_statistics(self) -> dict[str, Any]:
         """Get statistics about loaded rules.
 
         Returns:
@@ -848,7 +847,7 @@ class ThreatEngine:
             "rule_files": [str(f) for f in self.loaded_rule_files],
         }
 
-    def validate_all_rules(self) -> Dict[str, List[str]]:
+    def validate_all_rules(self) -> dict[str, list[str]]:
         """Validate all loaded rules.
 
         Returns:
@@ -863,7 +862,7 @@ class ThreatEngine:
 
         return validation_results
 
-    def find_rules_by_pattern(self, pattern: str) -> List[ThreatRule]:
+    def find_rules_by_pattern(self, pattern: str) -> list[ThreatRule]:
         """Find rules that match a search pattern.
 
         Args:

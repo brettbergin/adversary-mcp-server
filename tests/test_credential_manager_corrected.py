@@ -1,11 +1,10 @@
 """Corrected tests for credential manager module with actual interfaces."""
 
-import json
 import os
 import sys
 import tempfile
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -300,7 +299,7 @@ class TestCredentialManagerCorrected:
             assert manager.config_file.exists()
 
             # Check file content structure
-            with open(manager.config_file, "r") as f:
+            with open(manager.config_file) as f:
                 content = f.read()
                 assert "openai_api_key" in content or "encrypted_data" in content
 

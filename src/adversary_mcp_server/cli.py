@@ -1,18 +1,15 @@
 """Command-line interface for the Adversary MCP server."""
 
 import datetime
-import getpass
 import json
 import sys
-import tempfile
 from pathlib import Path
-from typing import Dict, List, Optional, Set
 
 import click
 import yaml
 from rich.console import Console
 from rich.panel import Panel
-from rich.prompt import Confirm, Prompt
+from rich.prompt import Confirm
 from rich.table import Table
 
 from . import get_version
@@ -20,7 +17,6 @@ from .credential_manager import CredentialManager, SecurityConfig
 from .diff_scanner import GitDiffScanner
 from .exploit_generator import ExploitGenerator
 from .scan_engine import ScanEngine
-from .semgrep_scanner import SemgrepScanner
 from .threat_engine import Language, Severity, ThreatEngine, get_user_rules_directory
 
 # Conditional import for hot_reload to avoid dependency issues in tests
@@ -67,7 +63,7 @@ def cli():
 def configure(
     severity_threshold: str,
     enable_safety_mode: bool,
-    enable_llm: Optional[bool],
+    enable_llm: bool | None,
 ):
     """Configure the Adversary MCP server settings."""
     try:
@@ -129,7 +125,7 @@ def status():
         # Status panel
         status_text = "🟢 **Server Status:** Running\n"
         status_text += f"🔧 **Configuration:** {'✓ Configured' if credential_manager.has_config() else '✗ Not configured'}\n"
-        status_text += f"🤖 **LLM Integration:** Client-based (no API key required)\n"
+        status_text += "🤖 **LLM Integration:** Client-based (no API key required)\n"
 
         console.print(
             Panel(
@@ -241,10 +237,10 @@ def status():
     help="Target branch for git diff comparison (default: HEAD)",
 )
 def scan(
-    target: Optional[str],
-    language: Optional[str],
+    target: str | None,
+    language: str | None,
     severity: str,
-    output: Optional[str],
+    output: str | None,
     recursive: bool,
     include_exploits: bool,
     use_llm: bool,
@@ -459,10 +455,10 @@ def scan(
     help="Show full absolute paths for source files",
 )
 def list_rules(
-    category: Optional[str],
-    severity: Optional[str],
-    language: Optional[str],
-    output: Optional[str],
+    category: str | None,
+    severity: str | None,
+    language: str | None,
+    output: str | None,
     verbose: bool,
 ):
     """List available threat detection rules."""
@@ -680,7 +676,7 @@ def export(output_file: str, format: str):
     default=True,
     help="Validate rules before importing",
 )
-def import_rules(import_file: str, target_dir: Optional[str], validate: bool):
+def import_rules(import_file: str, target_dir: str | None, validate: bool):
     """Import rules from an external file."""
     try:
         threat_engine = ThreatEngine()
@@ -771,7 +767,7 @@ def stats():
         stats = threat_engine.get_rule_statistics()
 
         # Main statistics
-        console.print(f"📊 [bold]Rule Statistics[/bold]")
+        console.print("📊 [bold]Rule Statistics[/bold]")
         console.print(f"Total Rules: {stats['total_rules']}")
         console.print(f"Loaded Files: {stats['loaded_files']}")
 
@@ -1094,7 +1090,7 @@ def start(directory: tuple, debounce: float):
 
         # Show initial status
         console.print("🔄 [bold]Starting Hot-Reload Service[/bold]")
-        console.print(f"📁 Watching directories:")
+        console.print("📁 Watching directories:")
         for watch_dir in service.watch_directories:
             console.print(f"  • {watch_dir}")
 
@@ -1214,7 +1210,7 @@ def test(directory: tuple):
 
         # Show initial state
         console.print("🧪 [bold]Testing Hot-Reload Functionality[/bold]")
-        console.print(f"📁 Watching directories:")
+        console.print("📁 Watching directories:")
         for watch_dir in service.watch_directories:
             console.print(f"  • {watch_dir}")
 
@@ -1250,14 +1246,14 @@ def show_user_rules_directory():
     user_rules_dir = get_user_rules_directory()
 
     console.print(f"📁 [bold]User Rules Directory:[/bold] {user_rules_dir}")
-    console.print(f"📂 Structure:")
-    console.print(f"  • built-in/     - Core security rules")
-    console.print(f"  • custom/       - User-defined rules")
-    console.print(f"  • organization/ - Company/team rules")
-    console.print(f"  • templates/    - Rule templates")
+    console.print("📂 Structure:")
+    console.print("  • built-in/     - Core security rules")
+    console.print("  • custom/       - User-defined rules")
+    console.print("  • organization/ - Company/team rules")
+    console.print("  • templates/    - Rule templates")
 
     if user_rules_dir.exists():
-        console.print(f"\n📊 Directory contents:")
+        console.print("\n📊 Directory contents:")
         for subdir in ["built-in", "custom", "organization", "templates"]:
             subdir_path = user_rules_dir / subdir
             if subdir_path.exists():
@@ -1269,7 +1265,7 @@ def show_user_rules_directory():
                     console.print(f"    - {rule_file.name}")
     else:
         console.print(
-            f"\n⚠️  Directory does not exist yet. It will be created on first use."
+            "\n⚠️  Directory does not exist yet. It will be created on first use."
         )
 
 

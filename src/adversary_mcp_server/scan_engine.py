@@ -2,11 +2,11 @@
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from .ast_scanner import ASTScanner
 from .credential_manager import CredentialManager
-from .llm_scanner import LLMAnalysisError, LLMScanner
+from .llm_scanner import LLMScanner
 from .semgrep_scanner import SemgrepScanner
 from .threat_engine import Language, Severity, ThreatEngine, ThreatMatch
 
@@ -20,10 +20,10 @@ class EnhancedScanResult:
         self,
         file_path: str,
         language: Language,
-        rules_threats: List[ThreatMatch],
-        llm_threats: List[ThreatMatch],
-        semgrep_threats: List[ThreatMatch],
-        scan_metadata: Dict[str, Any],
+        rules_threats: list[ThreatMatch],
+        llm_threats: list[ThreatMatch],
+        semgrep_threats: list[ThreatMatch],
+        scan_metadata: dict[str, Any],
     ):
         """Initialize enhanced scan result.
 
@@ -48,7 +48,7 @@ class EnhancedScanResult:
         # Calculate statistics
         self.stats = self._calculate_stats()
 
-    def _combine_threats(self) -> List[ThreatMatch]:
+    def _combine_threats(self) -> list[ThreatMatch]:
         """Combine and deduplicate threats from all sources.
 
         Returns:
@@ -99,7 +99,7 @@ class EnhancedScanResult:
 
         return combined
 
-    def _calculate_stats(self) -> Dict[str, Any]:
+    def _calculate_stats(self) -> dict[str, Any]:
         """Calculate scan statistics.
 
         Returns:
@@ -120,14 +120,14 @@ class EnhancedScanResult:
             },
         }
 
-    def _count_by_severity(self) -> Dict[str, int]:
+    def _count_by_severity(self) -> dict[str, int]:
         """Count threats by severity level."""
         counts = {"low": 0, "medium": 0, "high": 0, "critical": 0}
         for threat in self.all_threats:
             counts[threat.severity.value] += 1
         return counts
 
-    def _count_by_category(self) -> Dict[str, int]:
+    def _count_by_category(self) -> dict[str, int]:
         """Count threats by category."""
         counts = {}
         for threat in self.all_threats:
@@ -137,7 +137,7 @@ class EnhancedScanResult:
 
     def get_high_confidence_threats(
         self, min_confidence: float = 0.8
-    ) -> List[ThreatMatch]:
+    ) -> list[ThreatMatch]:
         """Get threats with high confidence scores.
 
         Args:
@@ -148,7 +148,7 @@ class EnhancedScanResult:
         """
         return [t for t in self.all_threats if t.confidence >= min_confidence]
 
-    def get_critical_threats(self) -> List[ThreatMatch]:
+    def get_critical_threats(self) -> list[ThreatMatch]:
         """Get critical severity threats.
 
         Returns:
@@ -162,8 +162,8 @@ class ScanEngine:
 
     def __init__(
         self,
-        threat_engine: Optional[ThreatEngine] = None,
-        credential_manager: Optional[CredentialManager] = None,
+        threat_engine: ThreatEngine | None = None,
+        credential_manager: CredentialManager | None = None,
         enable_llm_analysis: bool = False,
     ):
         """Initialize enhanced scanner.
@@ -213,7 +213,7 @@ class ScanEngine:
         language: Language,
         use_llm: bool = True,
         use_semgrep: bool = True,
-        severity_threshold: Optional[Severity] = None,
+        severity_threshold: Severity | None = None,
     ) -> EnhancedScanResult:
         """Scan source code using rules, Semgrep, and LLM analysis.
 
@@ -328,10 +328,10 @@ class ScanEngine:
     def scan_file(
         self,
         file_path: Path,
-        language: Optional[Language] = None,
+        language: Language | None = None,
         use_llm: bool = True,
         use_semgrep: bool = True,
-        severity_threshold: Optional[Severity] = None,
+        severity_threshold: Severity | None = None,
     ) -> EnhancedScanResult:
         """Scan a single file using enhanced scanning.
 
@@ -350,7 +350,7 @@ class ScanEngine:
 
         # Read file content
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
+            with open(file_path, encoding="utf-8") as f:
                 source_code = f.read()
         except UnicodeDecodeError:
             # Skip binary files
@@ -388,9 +388,9 @@ class ScanEngine:
         recursive: bool = True,
         use_llm: bool = True,
         use_semgrep: bool = True,
-        severity_threshold: Optional[Severity] = None,
-        max_files: Optional[int] = None,
-    ) -> List[EnhancedScanResult]:
+        severity_threshold: Severity | None = None,
+        max_files: int | None = None,
+    ) -> list[EnhancedScanResult]:
         """Scan a directory using enhanced scanning.
 
         Args:
@@ -485,9 +485,9 @@ class ScanEngine:
 
     def _filter_by_severity(
         self,
-        threats: List[ThreatMatch],
+        threats: list[ThreatMatch],
         min_severity: Severity,
-    ) -> List[ThreatMatch]:
+    ) -> list[ThreatMatch]:
         """Filter threats by minimum severity level.
 
         Args:
@@ -511,7 +511,7 @@ class ScanEngine:
             if severity_order.index(threat.severity) >= min_index
         ]
 
-    def get_scanner_stats(self) -> Dict[str, Any]:
+    def get_scanner_stats(self) -> dict[str, Any]:
         """Get statistics about the enhanced scanner.
 
         Returns:

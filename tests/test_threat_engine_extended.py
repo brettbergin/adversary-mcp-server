@@ -1,17 +1,12 @@
 """Extended tests for ThreatEngine rule management functionality."""
 
-import json
-import shutil
-import tempfile
-from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import pytest
 import yaml
 
 from adversary_mcp_server.threat_engine import (
     Category,
-    ExploitTemplate,
     Language,
     MatchCondition,
     Severity,
@@ -361,7 +356,7 @@ class TestThreatEngineManagement:
         assert output_file.exists()
 
         # Verify content
-        with open(output_file, "r") as f:
+        with open(output_file) as f:
             exported_data = yaml.safe_load(f)
 
         assert "rules" in exported_data

@@ -5,7 +5,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock, patch
 
 import pytest
 from click.testing import CliRunner
@@ -128,7 +128,7 @@ class TestCLIUtilities:
 
             # Verify file was created and contains expected data
             assert Path(output_file).exists()
-            with open(output_file, "r") as f:
+            with open(output_file) as f:
                 data = json.load(f)
 
             assert len(data) == 1
@@ -160,7 +160,7 @@ class TestCLIUtilities:
 
             # Verify file was created and contains expected data
             assert Path(output_file).exists()
-            with open(output_file, "r") as f:
+            with open(output_file) as f:
                 content = f.read()
 
             assert "Test Rule" in content
@@ -481,7 +481,7 @@ class TestCLIFileOperations:
                 json.dump(test_data, f)
 
             # Verify file was written
-            with open(output_file, "r") as f:
+            with open(output_file) as f:
                 loaded_data = json.load(f)
 
             assert loaded_data == test_data
@@ -548,7 +548,7 @@ class TestRulesExportCommand:
         assert output_file.exists()
 
         # Verify YAML content
-        with open(output_file, "r") as f:
+        with open(output_file) as f:
             data = yaml.safe_load(f)
 
         assert "rules" in data
@@ -568,7 +568,7 @@ class TestRulesExportCommand:
         assert output_file.exists()
 
         # Verify JSON content
-        with open(output_file, "r") as f:
+        with open(output_file) as f:
             data = json.load(f)
 
         assert "rules" in data
@@ -1279,7 +1279,7 @@ class TestCLIWithSampleData:
         assert output_file.exists()
 
         # Verify content structure
-        with open(output_file, "r") as f:
+        with open(output_file) as f:
             data = yaml.safe_load(f)
 
         assert "rules" in data

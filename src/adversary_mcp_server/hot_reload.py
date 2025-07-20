@@ -2,12 +2,8 @@
 
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Set
 
 from watchdog.events import (
-    FileCreatedEvent,
-    FileDeletedEvent,
-    FileModifiedEvent,
     FileSystemEventHandler,
 )
 from watchdog.observers import Observer
@@ -56,7 +52,7 @@ class HotReloadService:
     def __init__(
         self,
         threat_engine: ThreatEngine,
-        watch_directories: Optional[List[Path]] = None,
+        watch_directories: list[Path] | None = None,
     ):
         """Initialize the hot-reload service.
 
@@ -71,13 +67,13 @@ class HotReloadService:
         self.is_running = False
 
         # Queue for pending reloads (to avoid rapid successive reloads)
-        self.pending_reloads: Set[Path] = set()
+        self.pending_reloads: set[Path] = set()
         self.last_reload_time = 0
         self.reload_debounce_seconds = 1.0  # Wait 1 second between reloads
 
         # Statistics
         self.reload_count = 0
-        self.last_reload_files: List[Path] = []
+        self.last_reload_files: list[Path] = []
 
         # Auto-detect user rules directory if no custom directories provided
         if not self.watch_directories:
@@ -202,7 +198,7 @@ class HotReloadService:
         except Exception as e:
             print(f"❌ Failed to force reload rules: {e}")
 
-    def get_status(self) -> Dict[str, any]:
+    def get_status(self) -> dict[str, any]:
         """Get the current status of the hot-reload service.
 
         Returns:
@@ -261,7 +257,7 @@ class HotReloadService:
 
 
 def create_hot_reload_service(
-    threat_engine: ThreatEngine, custom_dirs: Optional[List[Path]] = None
+    threat_engine: ThreatEngine, custom_dirs: list[Path] | None = None
 ) -> HotReloadService:
     """Create and configure a hot-reload service.
 

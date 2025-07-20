@@ -2,12 +2,12 @@
 
 import tempfile
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import pytest
 
 from adversary_mcp_server.ast_scanner import ASTScanner, CodeContext
-from adversary_mcp_server.threat_engine import Language, ThreatEngine
+from adversary_mcp_server.threat_engine import Language
 
 
 class TestASTScannerErrorHandling:

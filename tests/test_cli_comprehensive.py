@@ -4,9 +4,8 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock, patch
 
-import pytest
 from click.testing import CliRunner
 
 from adversary_mcp_server.cli import _display_scan_results, _save_results_to_file, cli
@@ -244,7 +243,7 @@ class TestCLICommandsCoverage:
 
             # Verify file was created
             assert Path(output_file).exists()
-            with open(output_file, "r") as f:
+            with open(output_file) as f:
                 data = json.load(f)
             assert len(data) == 1
             assert data[0]["id"] == "test_rule"
@@ -618,7 +617,7 @@ class TestCLIUtilityFunctions:
 
             # Verify file was created
             assert Path(output_file).exists()
-            with open(output_file, "r") as f:
+            with open(output_file) as f:
                 data = json.load(f)
             assert len(data) == 1
             assert data[0]["rule_id"] == "test_rule"
@@ -648,7 +647,7 @@ class TestCLIUtilityFunctions:
 
             # Verify file was created
             assert Path(output_file).exists()
-            with open(output_file, "r") as f:
+            with open(output_file) as f:
                 content = f.read()
             assert "test_rule" in content
             assert "Test Rule" in content

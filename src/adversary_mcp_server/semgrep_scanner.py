@@ -5,7 +5,7 @@ import logging
 import os
 import subprocess
 import tempfile
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .threat_engine import Category, Language, Severity, ThreatEngine, ThreatMatch
 
@@ -56,7 +56,7 @@ class SemgrepScanner:
         """
         return self._semgrep_available
 
-    def _get_semgrep_env(self) -> Dict[str, str]:
+    def _get_semgrep_env(self) -> dict[str, str]:
         """Get environment variables for Semgrep execution.
 
         Returns:
@@ -147,7 +147,7 @@ class SemgrepScanner:
             return Category.VALIDATION
 
     def _convert_semgrep_finding_to_threat(
-        self, finding: Dict[str, Any], file_path: str
+        self, finding: dict[str, Any], file_path: str
     ) -> ThreatMatch:
         """Convert a Semgrep finding to ThreatMatch format.
 
@@ -204,10 +204,10 @@ class SemgrepScanner:
         source_code: str,
         file_path: str,
         language: Language,
-        config: Optional[str] = None,
-        rules: Optional[str] = None,
+        config: str | None = None,
+        rules: str | None = None,
         timeout: int = 60,
-    ) -> List[ThreatMatch]:
+    ) -> list[ThreatMatch]:
         """Scan source code using Semgrep.
 
         Args:
@@ -308,10 +308,10 @@ class SemgrepScanner:
         self,
         file_path: str,
         language: Language,
-        config: Optional[str] = None,
-        rules: Optional[str] = None,
+        config: str | None = None,
+        rules: str | None = None,
         timeout: int = 60,
-    ) -> List[ThreatMatch]:
+    ) -> list[ThreatMatch]:
         """Scan a file using Semgrep.
 
         Args:
@@ -333,7 +333,7 @@ class SemgrepScanner:
 
         try:
             # Read file content
-            with open(file_path, "r", encoding="utf-8") as f:
+            with open(file_path, encoding="utf-8") as f:
                 source_code = f.read()
 
             return self.scan_code(

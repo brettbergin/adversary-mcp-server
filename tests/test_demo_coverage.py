@@ -2,7 +2,6 @@
 
 from unittest.mock import Mock, patch
 
-import pytest
 from click.testing import CliRunner
 
 from adversary_mcp_server.cli import cli

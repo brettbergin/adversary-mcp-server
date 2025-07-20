@@ -3,11 +3,10 @@
 import asyncio
 import json
 import logging
-import os
 import sys
 import traceback
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from mcp import types
 from mcp.server import Server
@@ -18,7 +17,7 @@ from pydantic import BaseModel
 
 from . import get_version
 from .ast_scanner import ASTScanner
-from .credential_manager import CredentialManager, SecurityConfig
+from .credential_manager import CredentialManager
 from .diff_scanner import GitDiffScanner
 from .exploit_generator import ExploitGenerator
 from .scan_engine import EnhancedScanResult, ScanEngine
@@ -40,10 +39,10 @@ class AdversaryToolError(Exception):
 class ScanRequest(BaseModel):
     """Request for scanning code or files."""
 
-    content: Optional[str] = None
-    file_path: Optional[str] = None
-    language: Optional[str] = None
-    severity_threshold: Optional[str] = "medium"
+    content: str | None = None
+    file_path: str | None = None
+    language: str | None = None
+    severity_threshold: str | None = "medium"
     include_exploits: bool = True
     use_llm: bool = False
 
@@ -51,9 +50,9 @@ class ScanRequest(BaseModel):
 class ScanResult(BaseModel):
     """Result of a security scan."""
 
-    threats: List[Dict[str, Any]]
-    summary: Dict[str, Any]
-    metadata: Dict[str, Any]
+    threats: list[dict[str, Any]]
+    summary: dict[str, Any]
+    metadata: dict[str, Any]
 
 
 class AdversaryMCPServer:
@@ -78,7 +77,7 @@ class AdversaryMCPServer:
         """Set up server request handlers."""
 
         @self.server.list_tools()
-        async def list_tools() -> List[Tool]:
+        async def list_tools() -> list[Tool]:
             """List available adversary analysis tools."""
             return [
                 Tool(
@@ -383,8 +382,8 @@ class AdversaryMCPServer:
 
         @self.server.call_tool()
         async def call_tool(
-            name: str, arguments: Dict[str, Any]
-        ) -> List[types.TextContent]:
+            name: str, arguments: dict[str, Any]
+        ) -> list[types.TextContent]:
             """Call the specified tool with the given arguments."""
             try:
                 if name == "adv_scan_code":
@@ -414,8 +413,8 @@ class AdversaryMCPServer:
                 raise AdversaryToolError(f"Tool {name} failed: {str(e)}")
 
     async def _handle_scan_code(
-        self, arguments: Dict[str, Any]
-    ) -> List[types.TextContent]:
+        self, arguments: dict[str, Any]
+    ) -> list[types.TextContent]:
         """Handle code scanning request."""
         try:
             content = arguments["content"]
@@ -480,8 +479,8 @@ class AdversaryMCPServer:
             raise AdversaryToolError(f"Code scanning failed: {e}")
 
     async def _handle_scan_file(
-        self, arguments: Dict[str, Any]
-    ) -> List[types.TextContent]:
+        self, arguments: dict[str, Any]
+    ) -> list[types.TextContent]:
         """Handle file scanning request."""
         try:
             file_path = Path(arguments["file_path"])
@@ -509,7 +508,7 @@ class AdversaryMCPServer:
             if include_exploits:
                 file_content = ""
                 try:
-                    with open(file_path, "r", encoding="utf-8") as f:
+                    with open(file_path, encoding="utf-8") as f:
                         file_content = f.read()
                 except Exception:
                     pass
@@ -538,7 +537,7 @@ class AdversaryMCPServer:
                 if use_llm:
                     # Read file content for LLM analysis
                     try:
-                        with open(file_path, "r", encoding="utf-8") as f:
+                        with open(file_path, encoding="utf-8") as f:
                             file_content = f.read()
 
                         # Detect language from file extension
@@ -569,8 +568,8 @@ class AdversaryMCPServer:
             raise AdversaryToolError(f"File scanning failed: {e}")
 
     async def _handle_scan_directory(
-        self, arguments: Dict[str, Any]
-    ) -> List[types.TextContent]:
+        self, arguments: dict[str, Any]
+    ) -> list[types.TextContent]:
         """Handle directory scanning request."""
         try:
             directory_path = Path(arguments["directory_path"])
@@ -640,7 +639,7 @@ class AdversaryMCPServer:
                     for i, scan_result in enumerate(files_with_issues, 1):
                         try:
                             with open(
-                                scan_result.file_path, "r", encoding="utf-8"
+                                scan_result.file_path, encoding="utf-8"
                             ) as f:
                                 file_content = f.read()
 
@@ -670,8 +669,8 @@ class AdversaryMCPServer:
             raise AdversaryToolError(f"Directory scanning failed: {e}")
 
     async def _handle_diff_scan(
-        self, arguments: Dict[str, Any]
-    ) -> List[types.TextContent]:
+        self, arguments: dict[str, Any]
+    ) -> list[types.TextContent]:
         """Handle git diff scanning request."""
         try:
             source_branch = arguments["source_branch"]
@@ -797,8 +796,8 @@ class AdversaryMCPServer:
             raise AdversaryToolError(f"Diff scanning failed: {e}")
 
     async def _handle_generate_exploit(
-        self, arguments: Dict[str, Any]
-    ) -> List[types.TextContent]:
+        self, arguments: dict[str, Any]
+    ) -> list[types.TextContent]:
         """Handle exploit generation request."""
         try:
             vulnerability_type = arguments["vulnerability_type"]
@@ -838,7 +837,7 @@ class AdversaryMCPServer:
             result = f"# {vulnerability_type.replace('_', ' ').title()} Exploit\n\n"
             result += f"**Target Language:** {target_language}\n"
             result += f"**Vulnerability Type:** {vulnerability_type}\n"
-            result += f"**Severity:** HIGH\n\n"
+            result += "**Severity:** HIGH\n\n"
             result += "**Code Context:**\n"
             result += f"```{target_language}\n{code_context}\n```\n\n"
             result += "**Generated Exploits:**\n\n"
@@ -871,8 +870,8 @@ class AdversaryMCPServer:
             raise AdversaryToolError(f"Exploit generation failed: {e}")
 
     async def _handle_list_rules(
-        self, arguments: Dict[str, Any]
-    ) -> List[types.TextContent]:
+        self, arguments: dict[str, Any]
+    ) -> list[types.TextContent]:
         """Handle list rules request."""
         try:
             category = arguments.get("category")
@@ -887,7 +886,7 @@ class AdversaryMCPServer:
             )
 
             # Format results
-            result = f"# Threat Detection Rules\n\n"
+            result = "# Threat Detection Rules\n\n"
             result += f"**Total Rules:** {len(rules)}\n"
 
             if category:
@@ -922,8 +921,8 @@ class AdversaryMCPServer:
             raise AdversaryToolError(f"Failed to list rules: {e}")
 
     async def _handle_get_rule_details(
-        self, arguments: Dict[str, Any]
-    ) -> List[types.TextContent]:
+        self, arguments: dict[str, Any]
+    ) -> list[types.TextContent]:
         """Handle get rule details request."""
         try:
             rule_id = arguments["rule_id"]
@@ -951,7 +950,7 @@ class AdversaryMCPServer:
                 result += f"**OWASP Category:** {rule['owasp_category']}\n"
 
             if rule.get("references"):
-                result += f"**References:**\n"
+                result += "**References:**\n"
                 for ref in rule["references"]:
                     result += f"- {ref}\n"
 
@@ -961,8 +960,8 @@ class AdversaryMCPServer:
             raise AdversaryToolError(f"Failed to get rule details: {e}")
 
     async def _handle_configure_settings(
-        self, arguments: Dict[str, Any]
-    ) -> List[types.TextContent]:
+        self, arguments: dict[str, Any]
+    ) -> list[types.TextContent]:
         """Handle configuration settings request."""
         try:
             config = self.credential_manager.load_config()
@@ -1001,7 +1000,7 @@ class AdversaryMCPServer:
         except Exception as e:
             raise AdversaryToolError(f"Failed to configure settings: {e}")
 
-    async def _handle_get_status(self) -> List[types.TextContent]:
+    async def _handle_get_status(self) -> list[types.TextContent]:
         """Handle get status request."""
         try:
             config = self.credential_manager.load_config()
@@ -1027,24 +1026,24 @@ class AdversaryMCPServer:
                 result += f"- **{lang.capitalize()} Rules:** {count}\n"
 
             result += "\n## Components\n"
-            result += f"- **AST Scanner:** ✓ Active\n"
-            result += f"- **Exploit Generator:** ✓ Active\n"
-            result += f"- **LLM Integration:** ✓ Client-based (no API key required)\n"
-            result += f"- **Scan Engine:** ✓ Active\n"
+            result += "- **AST Scanner:** ✓ Active\n"
+            result += "- **Exploit Generator:** ✓ Active\n"
+            result += "- **LLM Integration:** ✓ Client-based (no API key required)\n"
+            result += "- **Scan Engine:** ✓ Active\n"
 
             return [types.TextContent(type="text", text=result)]
 
         except Exception as e:
             raise AdversaryToolError(f"Failed to get status: {e}")
 
-    async def _handle_get_version(self) -> List[types.TextContent]:
+    async def _handle_get_version(self) -> list[types.TextContent]:
         """Handle get version request."""
         try:
             version = self._get_version()
-            result = f"# Adversary MCP Server\n\n"
+            result = "# Adversary MCP Server\n\n"
             result += f"**Version:** {version}\n"
-            result += f"**LLM Integration:** Client-based (no API key required)\n"
-            result += f"**Supported Languages:** Python, JavaScript, TypeScript\n"
+            result += "**LLM Integration:** Client-based (no API key required)\n"
+            result += "**Supported Languages:** Python, JavaScript, TypeScript\n"
             result += f"**Security Rules:** {len(self.threat_engine.list_rules())}\n"
 
             return [types.TextContent(type="text", text=result)]
@@ -1057,8 +1056,8 @@ class AdversaryMCPServer:
         return get_version()
 
     def _filter_threats_by_severity(
-        self, threats: List[ThreatMatch], min_severity: Severity
-    ) -> List[ThreatMatch]:
+        self, threats: list[ThreatMatch], min_severity: Severity
+    ) -> list[ThreatMatch]:
         """Filter threats by minimum severity level."""
         severity_order = [
             Severity.LOW,
@@ -1074,7 +1073,7 @@ class AdversaryMCPServer:
             if severity_order.index(threat.severity) >= min_index
         ]
 
-    def _format_scan_results(self, threats: List[ThreatMatch], scan_target: str) -> str:
+    def _format_scan_results(self, threats: list[ThreatMatch], scan_target: str) -> str:
         """Format scan results for display."""
         result = f"# Security Scan Results for {scan_target}\n\n"
 
@@ -1316,7 +1315,7 @@ class AdversaryMCPServer:
     def _format_diff_scan_results(
         self,
         scan_results,
-        diff_summary: Dict[str, any],
+        diff_summary: dict[str, any],
         source_branch: str,
         target_branch: str,
     ) -> str:
@@ -1332,7 +1331,7 @@ class AdversaryMCPServer:
             Formatted scan results string
         """
         if not scan_results:
-            result = f"# Git Diff Scan Results\n\n"
+            result = "# Git Diff Scan Results\n\n"
             result += f"**Source Branch:** {source_branch}\n"
             result += f"**Target Branch:** {target_branch}\n\n"
 
@@ -1374,7 +1373,7 @@ class AdversaryMCPServer:
                     severity_counts[severity] += count
 
         # Build result string
-        result = f"# Git Diff Scan Results\n\n"
+        result = "# Git Diff Scan Results\n\n"
         result += f"**Source Branch:** {source_branch}\n"
         result += f"**Target Branch:** {target_branch}\n\n"
 
@@ -1451,7 +1450,6 @@ class AdversaryMCPServer:
         Returns:
             JSON formatted scan results
         """
-        import json
         from datetime import datetime
 
         # Convert threats to dictionaries
@@ -1520,7 +1518,7 @@ class AdversaryMCPServer:
         return json.dumps(result_data, indent=2)
 
     def _format_json_directory_results(
-        self, scan_results: List[EnhancedScanResult], scan_target: str
+        self, scan_results: list[EnhancedScanResult], scan_target: str
     ) -> str:
         """Format directory scan results as JSON.
 
@@ -1531,7 +1529,6 @@ class AdversaryMCPServer:
         Returns:
             JSON formatted directory scan results
         """
-        import json
         from datetime import datetime
 
         # Combine all threats
@@ -1601,8 +1598,8 @@ class AdversaryMCPServer:
 
     def _format_json_diff_results(
         self,
-        scan_results: Dict[str, List[EnhancedScanResult]],
-        diff_summary: Dict[str, any],
+        scan_results: dict[str, list[EnhancedScanResult]],
+        diff_summary: dict[str, any],
         scan_target: str,
     ) -> str:
         """Format git diff scan results as JSON.
@@ -1615,7 +1612,6 @@ class AdversaryMCPServer:
         Returns:
             JSON formatted diff scan results
         """
-        import json
         from datetime import datetime
 
         # Collect all threats from all files
@@ -1691,7 +1687,7 @@ class AdversaryMCPServer:
 
     def _save_scan_results_json(
         self, json_data: str, working_dir: str = "."
-    ) -> Optional[str]:
+    ) -> str | None:
         """Save scan results to .adversary-scan-results.json in project root.
 
         Args:
@@ -1758,7 +1754,7 @@ class AdversaryMCPServer:
         except Exception as e:
             return f"\n\n⚠️ **LLM Analysis:** Failed to create prompts: {e}\n"
 
-    def _add_llm_exploit_prompts(self, threats: List[ThreatMatch], content: str) -> str:
+    def _add_llm_exploit_prompts(self, threats: list[ThreatMatch], content: str) -> str:
         """Add LLM exploit prompts for discovered threats."""
         if not threats:
             return ""

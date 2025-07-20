@@ -1,6 +1,5 @@
 """Tests for the threat engine component."""
 
-from pathlib import Path
 
 import pytest
 

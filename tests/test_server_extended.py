@@ -5,11 +5,11 @@ import os
 import re
 import sys
 import tempfile
-import tomllib
 from pathlib import Path
-from unittest.mock import AsyncMock, Mock, mock_open, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+import tomllib
 
 # Add the src directory to the path to import modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
@@ -42,7 +42,7 @@ def _read_version_from_pyproject() -> str:
                     return pyproject_data.get("project", {}).get("version", "unknown")
             else:
                 # Simple regex parsing for older Python versions
-                with open(pyproject_path, "r") as f:
+                with open(pyproject_path) as f:
                     content = f.read()
                     match = re.search(
                         r'^version\s*=\s*["\']([^"\']+)["\']', content, re.MULTILINE
