@@ -391,7 +391,7 @@ class ScanEngine:
         severity_threshold: Severity | None = None,
         max_files: int | None = None,
     ) -> list[EnhancedScanResult]:
-        """Scan a directory using enhanced scanning.
+        """Scan a directory using enhanced scanning with optimized Semgrep.
 
         Args:
             directory_path: Path to the directory to scan
@@ -428,18 +428,79 @@ class ScanEngine:
                 if max_files and len(files_to_scan) >= max_files:
                     break
 
-        # Scan files
+        # Run Semgrep ONCE for entire directory (if enabled)
+        semgrep_threats = []
+        semgrep_metadata = {"semgrep_scan_success": False}
+
+        if use_semgrep and self.enable_semgrep_analysis:
+            try:
+                config = self.credential_manager.load_config()
+                semgrep_threats = self.semgrep_scanner.scan_directory(
+                    directory_path=str(directory_path),
+                    config=config.semgrep_config,
+                    rules=config.semgrep_rules,
+                    timeout=config.semgrep_timeout
+                    * 2,  # Double timeout for directories
+                    recursive=recursive,
+                )
+                semgrep_metadata = {
+                    "semgrep_scan_success": True,
+                    "semgrep_threats_found": len(semgrep_threats),
+                    "semgrep_scan_reason": "directory_scan_completed",
+                }
+                logger.info(
+                    f"Semgrep directory scan completed: {len(semgrep_threats)} threats found"
+                )
+            except Exception as e:
+                logger.error(f"Semgrep directory scan failed: {e}")
+                semgrep_metadata = {
+                    "semgrep_scan_success": False,
+                    "semgrep_scan_error": str(e),
+                    "semgrep_scan_reason": "directory_scan_failed",
+                }
+
+        # Create a lookup for Semgrep threats by file path
+        semgrep_by_file = {}
+        for threat in semgrep_threats:
+            file_path = threat.file_path
+            if file_path not in semgrep_by_file:
+                semgrep_by_file[file_path] = []
+            semgrep_by_file[file_path].append(threat)
+
+        # Scan files with rules engine and LLM (but skip individual Semgrep calls)
         results = []
         for file_path, language in files_to_scan:
             try:
+                # Scan with rules and LLM only (skip Semgrep since we already did it)
                 result = self.scan_file(
                     file_path=file_path,
                     language=language,
                     use_llm=use_llm,
-                    use_semgrep=use_semgrep,
+                    use_semgrep=False,  # Skip individual Semgrep calls
                     severity_threshold=severity_threshold,
                 )
-                results.append(result)
+
+                # Add Semgrep threats for this file
+                file_path_str = str(file_path)
+                file_semgrep_threats = semgrep_by_file.get(file_path_str, [])
+
+                # Create enhanced result with Semgrep threats added
+                enhanced_result = EnhancedScanResult(
+                    file_path=result.file_path,
+                    language=result.language,
+                    rules_threats=result.rules_threats,
+                    llm_threats=result.llm_threats,
+                    semgrep_threats=file_semgrep_threats,
+                    scan_metadata={
+                        **result.scan_metadata,
+                        **semgrep_metadata,
+                        "directory_scan": True,
+                        "file_semgrep_threats": len(file_semgrep_threats),
+                    },
+                )
+
+                results.append(enhanced_result)
+
             except Exception as e:
                 logger.error(f"Failed to scan {file_path}: {e}")
                 # Create error result
@@ -455,7 +516,7 @@ class ScanEngine:
                             "error": str(e),
                             "rules_scan_success": False,
                             "llm_scan_success": False,
-                            "semgrep_scan_success": False,
+                            **semgrep_metadata,
                         },
                     )
                 )

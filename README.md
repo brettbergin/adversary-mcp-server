@@ -107,7 +107,7 @@ adversary-mcp-cli scan --diff
 adversary-mcp-cli scan --diff --source-branch=develop --target-branch=feature/auth
 
 # Scan with high severity filter
-adversary-mcp-cli scan --diff --severity=high --use-llm=true
+adversary-mcp-cli scan --diff --severity=high --use-llm
 ```
 
 ---
@@ -284,7 +284,7 @@ The integration automatically detects your Semgrep configuration:
 export SEMGREP_APP_TOKEN="your_semgrep_token_here"
 
 # Now all scans automatically use Pro features
-adversary-mcp-cli scan myproject/ --use-semgrep=true
+adversary-mcp-cli scan myproject/ --use-semgrep
 ```
 
 ### **Usage in MCP Tools**
@@ -305,16 +305,16 @@ All MCP scanning tools support the `use_semgrep` parameter:
 
 ```bash
 # Enable Semgrep in CLI scans
-adversary-mcp-cli scan myproject/ --use-semgrep=true
+adversary-mcp-cli scan myproject/ --use-semgrep
 
 # Combine all three engines (Rules + AI + Semgrep)
-adversary-mcp-cli scan myproject/ --use-llm=true --use-semgrep=true
+adversary-mcp-cli scan myproject/ --use-llm --use-semgrep
 
 # Semgrep-only scanning (disable other engines)
-adversary-mcp-cli scan myproject/ --use-llm=false --use-semgrep=true
+adversary-mcp-cli scan myproject/ --no-llm --use-semgrep
 
 # Semgrep with git diff scanning
-adversary-mcp-cli scan --diff --use-semgrep=true --source-branch=main
+adversary-mcp-cli scan --diff --use-semgrep --source-branch=main
 ```
 
 ### **Configuration Options**
@@ -343,7 +343,7 @@ The integration intelligently combines results from all three engines:
 
 ```bash
 # Example output showing merged results
-adversary-mcp-cli scan app.py --use-llm=true --use-semgrep=true
+adversary-mcp-cli scan app.py --use-llm --use-semgrep
 
 # Results will show:
 # Rules Engine: 2 threats found
@@ -358,7 +358,7 @@ Get structured output including Semgrep findings:
 
 ```bash
 # JSON output with all engines
-adversary-mcp-cli scan app.py --use-semgrep=true --output=results.json
+adversary-mcp-cli scan app.py --use-semgrep --output=results.json
 
 # The JSON will include:
 # - rules_threats: Findings from built-in rules
@@ -601,7 +601,7 @@ adversary-mcp-cli scan --diff --severity=high
 adversary-mcp-cli scan --diff --output=security-diff.json
 
 # Comprehensive diff analysis with AI - includes LLM prompts for enhanced analysis
-adversary-mcp-cli scan --diff --use-llm=true --include-exploits=true
+adversary-mcp-cli scan --diff --use-llm --include-exploits=true
 
 # Specify custom directory for git operations
 adversary-mcp-cli scan /path/to/repo --diff --source-branch=main --target-branch=HEAD
@@ -769,13 +769,13 @@ graph TB
 #### **Traditional Rules-Only Analysis**
 ```bash
 # Fast, deterministic scanning
-adversary-mcp-cli scan myproject/ --use-llm=false --severity=medium
+adversary-mcp-cli scan myproject/ --no-llm --severity=medium
 ```
 
 #### **🆕 AI-Enhanced Analysis**
 ```bash
 # Comprehensive hybrid analysis with LLM prompts
-adversary-mcp-cli scan myproject/ --use-llm=true --confidence-threshold=0.8
+adversary-mcp-cli scan myproject/ --use-llm --confidence-threshold=0.8
 ```
 
 #### **🆕 Git Diff-Aware Scanning**
@@ -787,7 +787,7 @@ adversary-mcp-cli scan --diff --source-branch=main --target-branch=HEAD
 adversary-mcp-cli scan --diff --source-branch=staging --target-branch=production --severity=high
 
 # Scan current branch changes with AI analysis - includes LLM prompts for new code
-adversary-mcp-cli scan --diff --use-llm=true --include-exploits=true
+adversary-mcp-cli scan --diff --use-llm --include-exploits=true
 
 # Specify repository directory for git operations
 adversary-mcp-cli scan /path/to/repo --diff --source-branch=main --target-branch=feature/new
@@ -805,7 +805,7 @@ adversary-mcp-cli configure --exploit-safety-mode=true
 #### **🆕 Confidence and Filtering**
 ```bash
 # Filter by AI confidence levels
-adversary-mcp-cli scan . --confidence-threshold 0.9 --use-llm=true
+adversary-mcp-cli scan . --confidence-threshold 0.9 --use-llm
 
 # Combine rules and AI with custom thresholds
 adversary-mcp-cli scan . --severity=high --confidence-threshold=0.7
@@ -835,10 +835,10 @@ All MCP tools now support JSON output format for programmatic integration:
 adversary-mcp-cli scan myproject/ --output=scan-results.json
 
 # All engines with JSON output
-adversary-mcp-cli scan myproject/ --use-llm=true --use-semgrep=true --output=results.json
+adversary-mcp-cli scan myproject/ --use-llm --use-semgrep --output=results.json
 
 # Git diff scanning with JSON output
-adversary-mcp-cli scan --diff --use-semgrep=true --output=diff-scan.json
+adversary-mcp-cli scan --diff --use-semgrep --output=diff-scan.json
 ```
 
 #### **Automatic JSON Generation**
@@ -880,7 +880,7 @@ adversary-mcp-cli scan . --format=detailed --include-ai-analysis --output=report
 #### **🆕 Statistical Analysis**
 ```bash
 # Get detailed statistics about threats found
-adversary-mcp-cli scan . --stats --use-llm=true
+adversary-mcp-cli scan . --stats --use-llm
 ```
 
 ### **🆕 Integration Capabilities**

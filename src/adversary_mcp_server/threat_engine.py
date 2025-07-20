@@ -167,6 +167,7 @@ class ThreatMatch:
     cwe_id: str | None = None
     owasp_category: str | None = None
     confidence: float = 1.0  # 0.0 to 1.0
+    source: str = "rules"  # Scanner source: "rules", "semgrep", "llm"
 
 
 def get_user_rules_directory() -> Path:

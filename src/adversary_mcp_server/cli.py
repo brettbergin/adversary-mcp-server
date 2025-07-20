@@ -9,7 +9,7 @@ import click
 import yaml
 from rich.console import Console
 from rich.panel import Panel
-from rich.prompt import Confirm
+from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
 from . import get_version
@@ -47,23 +47,28 @@ def cli():
 @click.option(
     "--severity-threshold",
     type=click.Choice(["low", "medium", "high", "critical"]),
-    default="medium",
     help="Default severity threshold for scanning",
 )
 @click.option(
     "--enable-safety-mode/--disable-safety-mode",
-    default=True,
+    default=None,
     help="Enable safety mode for exploit generation",
 )
 @click.option(
     "--enable-llm/--disable-llm",
     default=None,
-    help="Enable LLM-based analysis and exploit generation (uses client's LLM)",
+    help="Enable LLM analysis and exploit generation (uses client's LLM)",
+)
+@click.option(
+    "--interactive/--no-interactive",
+    default=True,
+    help="Use interactive prompts when options are not provided",
 )
 def configure(
-    severity_threshold: str,
-    enable_safety_mode: bool,
+    severity_threshold: str | None,
+    enable_safety_mode: bool | None,
     enable_llm: bool | None,
+    interactive: bool,
 ):
     """Configure the Adversary MCP server settings."""
     try:
@@ -72,12 +77,71 @@ def configure(
         # Load existing config or create new one
         try:
             config = credential_manager.load_config()
+            console.print("📋 Current configuration loaded", style="blue")
         except Exception:
             config = SecurityConfig()
+            console.print("🆕 Creating new configuration", style="blue")
 
-        # Update configuration
-        config.severity_threshold = severity_threshold
-        config.exploit_safety_mode = enable_safety_mode
+        # Determine if we should use interactive mode
+        # Only prompt if interactive is enabled AND no CLI options were provided
+        use_interactive = interactive and (
+            severity_threshold is None
+            and enable_safety_mode is None
+            and enable_llm is None
+        )
+
+        # Show current config first (only in truly interactive mode)
+        if use_interactive:
+            console.print("\n📊 [bold]Current Configuration:[/bold]")
+            current_table = Table()
+            current_table.add_column("Setting", style="cyan")
+            current_table.add_column("Current Value", style="magenta")
+
+            current_table.add_row("Severity Threshold", config.severity_threshold)
+            current_table.add_row(
+                "Safety Mode",
+                "✓ Enabled" if config.exploit_safety_mode else "✗ Disabled",
+            )
+            current_table.add_row(
+                "LLM Analysis",
+                "✓ Enabled" if config.enable_llm_analysis else "✗ Disabled",
+            )
+            current_table.add_row(
+                "Exploit Generation",
+                "✓ Enabled" if config.enable_exploit_generation else "✗ Disabled",
+            )
+            current_table.add_row(
+                "Semgrep Scanning",
+                "✓ Enabled" if config.enable_semgrep_scanning else "✗ Disabled",
+            )
+            console.print(current_table)
+            console.print()
+
+        # Interactive prompts for missing options (only if truly interactive)
+        if use_interactive:
+            severity_threshold = Prompt.ask(
+                "Choose severity threshold",
+                choices=["low", "medium", "high", "critical"],
+                default=config.severity_threshold,
+                show_choices=True,
+            )
+
+            enable_safety_mode = Confirm.ask(
+                "Enable safety mode for exploit generation?",
+                default=config.exploit_safety_mode,
+            )
+
+            enable_llm = Confirm.ask(
+                "Enable LLM analysis and exploit generation?",
+                default=config.enable_llm_analysis,
+            )
+
+        # Update configuration only if values were provided
+        if severity_threshold is not None:
+            config.severity_threshold = severity_threshold
+
+        if enable_safety_mode is not None:
+            config.exploit_safety_mode = enable_safety_mode
 
         # Override LLM settings if explicitly specified
         if enable_llm is not None:
@@ -87,7 +151,7 @@ def configure(
         # Save configuration
         credential_manager.store_config(config)
 
-        console.print("✅ Configuration saved successfully!", style="green")
+        console.print("\n✅ Configuration saved successfully!", style="green")
 
         # Show current configuration
         table = Table(title="Current Configuration")
@@ -103,7 +167,7 @@ def configure(
             "✓ Enabled" if config.enable_llm_analysis else "✗ Disabled",
         )
         table.add_row(
-            "LLM Generation",
+            "Exploit Generation",
             "✓ Enabled" if config.enable_exploit_generation else "✗ Disabled",
         )
 
@@ -147,7 +211,7 @@ def status():
             "✓ Enabled" if config.enable_llm_analysis else "✗ Disabled",
         )
         config_table.add_row(
-            "LLM Generation",
+            "Exploit Generation",
             "✓ Enabled" if config.enable_exploit_generation else "✗ Disabled",
         )
         config_table.add_row(
@@ -944,6 +1008,8 @@ def _display_scan_results(threats, target):
     table.add_column("Line", style="magenta")
     table.add_column("Rule", style="green")
     table.add_column("Severity", style="red")
+    table.add_column("Scanner", style="yellow")
+    table.add_column("CWE", style="dim cyan")
     table.add_column("Description", style="blue")
 
     for threat in threats:
@@ -955,14 +1021,25 @@ def _display_scan_results(threats, target):
             "critical": "bold red",
         }.get(threat.severity.value, "white")
 
+        # Format scanner source with appropriate styling
+        scanner_text = threat.source.upper() if hasattr(threat, "source") else "RULES"
+        scanner_color = {"RULES": "green", "SEMGREP": "blue", "LLM": "magenta"}.get(
+            scanner_text, "white"
+        )
+
+        # Format CWE ID
+        cwe_text = threat.cwe_id if hasattr(threat, "cwe_id") and threat.cwe_id else "-"
+
         table.add_row(
             threat.file_path,
             str(threat.line_number),
             threat.rule_name,
             f"[{severity_color}]{threat.severity.value}[/{severity_color}]",
+            f"[{scanner_color}]{scanner_text}[/{scanner_color}]",
+            cwe_text,
             (
-                threat.description[:50] + "..."
-                if len(threat.description) > 50
+                threat.description[:40] + "..."
+                if len(threat.description) > 40
                 else threat.description
             ),
         )
@@ -996,6 +1073,7 @@ def _save_results_to_file(threats, output_file):
                     "cwe_id": threat.cwe_id,
                     "owasp_category": threat.owasp_category,
                     "confidence": threat.confidence,
+                    "source": getattr(threat, "source", "rules"),
                 }
             )
 

@@ -197,6 +197,7 @@ class SemgrepScanner:
             references=references,
             cwe_id=cwe_id,
             owasp_category=finding.get("metadata", {}).get("owasp", ""),
+            source="semgrep",  # Semgrep scanner
         )
 
     def scan_code(
@@ -363,3 +364,96 @@ class SemgrepScanner:
             Language.TYPESCRIPT: ".ts",
         }
         return extension_map.get(language, ".txt")
+
+    def scan_directory(
+        self,
+        directory_path: str,
+        config: str | None = None,
+        rules: str | None = None,
+        timeout: int = 120,
+        recursive: bool = True,
+    ) -> list[ThreatMatch]:
+        """Scan entire directory using Semgrep efficiently.
+
+        Args:
+            directory_path: Path to directory to scan
+            config: Semgrep config to use (default: auto)
+            rules: Specific rules to use
+            timeout: Timeout in seconds (default: 120 for directories)
+            recursive: Whether to scan subdirectories
+
+        Returns:
+            List of ThreatMatch instances for all files in directory
+
+        Raises:
+            SemgrepError: If directory scanning fails
+        """
+        if not self._semgrep_available:
+            logger.warning("Semgrep not available, skipping Semgrep directory scan")
+            return []
+
+        try:
+            # Build Semgrep command for directory scanning
+            cmd = ["semgrep", "--json", "--quiet"]
+
+            # Add configuration
+            if config:
+                cmd.extend(["--config", config])
+            elif rules:
+                cmd.extend(["--config", rules])
+            else:
+                # Use auto config for comprehensive scanning
+                cmd.extend(["--config", "auto"])
+
+            # Add directory path
+            cmd.append(directory_path)
+
+            logger.info(f"Running Semgrep directory scan: {' '.join(cmd)}")
+
+            # Run Semgrep on entire directory
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,  # Don't raise on non-zero exit
+            )
+
+            # Parse results
+            if result.stdout:
+                try:
+                    semgrep_output = json.loads(result.stdout)
+                    findings = semgrep_output.get("results", [])
+
+                    logger.info(
+                        f"Semgrep found {len(findings)} security issues in directory"
+                    )
+
+                    threats = []
+                    for finding in findings:
+                        try:
+                            # Extract file path from Semgrep finding
+                            finding_file_path = finding.get("path", "unknown")
+                            threat = self._convert_semgrep_finding_to_threat(finding, finding_file_path)
+                            threats.append(threat)
+                        except Exception as e:
+                            logger.warning(
+                                f"Failed to convert Semgrep finding to threat: {e}"
+                            )
+                            continue
+
+                    return threats
+
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse Semgrep JSON output: {e}")
+                    return []
+            else:
+                logger.info("Semgrep found 0 security issues in directory")
+                return []
+
+        except subprocess.TimeoutExpired:
+            raise SemgrepError(
+                f"Semgrep directory scan timed out after {timeout} seconds"
+            )
+        except Exception as e:
+            raise SemgrepError(f"Semgrep directory scan failed: {e}")

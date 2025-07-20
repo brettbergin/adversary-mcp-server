@@ -991,7 +991,7 @@ class AdversaryMCPServer:
             result += f"- Severity Threshold: {config.severity_threshold}\n"
             result += f"- Exploit Safety Mode: {'✓ Enabled' if config.exploit_safety_mode else '✗ Disabled'}\n"
             result += f"- LLM Security Analysis: {'✓ Enabled' if config.enable_llm_analysis else '✗ Disabled'}\n"
-            result += f"- LLM Exploit Generation: {'✓ Enabled' if config.enable_exploit_generation else '✗ Disabled'}\n"
+            result += f"- Exploit Generation: {'✓ Enabled' if config.enable_exploit_generation else '✗ Disabled'}\n"
 
             return [types.TextContent(type="text", text=result)]
 
@@ -1008,7 +1008,7 @@ class AdversaryMCPServer:
             result += f"- **Severity Threshold:** {config.severity_threshold}\n"
             result += f"- **Exploit Safety Mode:** {'✓ Enabled' if config.exploit_safety_mode else '✗ Disabled'}\n"
             result += f"- **LLM Analysis:** {'✓ Enabled' if config.enable_llm_analysis else '✗ Disabled'}\n"
-            result += f"- **LLM Generation:** {'✓ Enabled' if config.enable_exploit_generation else '✗ Disabled'}\n\n"
+            result += f"- **Exploit Generation:** {'✓ Enabled' if config.enable_exploit_generation else '✗ Disabled'}\n\n"
 
             result += "## Threat Engine\n"
             rules = self.threat_engine.list_rules()

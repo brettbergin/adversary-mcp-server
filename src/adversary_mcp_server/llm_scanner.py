@@ -117,6 +117,7 @@ class LLMSecurityFinding:
             confidence=self.confidence,
             cwe_id=self.cwe_id,
             owasp_category=self.owasp_category,
+            source="llm",  # LLM scanner
         )
 
 
