@@ -9,7 +9,6 @@ from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-import tomllib
 
 # Add the src directory to the path to import modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
@@ -36,6 +35,7 @@ def _read_version_from_pyproject() -> str:
         if pyproject_path.exists():
             # Use tomllib for Python 3.11+ or simple parsing for older versions
             if sys.version_info >= (3, 11):
+                import tomllib
 
                 with open(pyproject_path, "rb") as f:
                     pyproject_data = tomllib.load(f)

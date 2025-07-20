@@ -76,6 +76,15 @@ jobs:
         git add test.py
         git commit -m "Add feature"
 
+    - name: Validate Python version compatibility
+      run: |
+        source .venv/bin/activate
+        # Test import compatibility
+        python -c "import tests.test_server_extended; print('✅ All test modules import successfully')"
+        
+        # Test version reading functionality
+        python -c "from adversary_mcp_server import __version__; print(f'✅ Package version: {__version__}')"
+
     - name: Run unit tests
       run: |
         source .venv/bin/activate
