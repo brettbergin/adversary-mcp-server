@@ -638,9 +638,7 @@ class AdversaryMCPServer:
                     ]
                     for i, scan_result in enumerate(files_with_issues, 1):
                         try:
-                            with open(
-                                scan_result.file_path, encoding="utf-8"
-                            ) as f:
+                            with open(scan_result.file_path, encoding="utf-8") as f:
                                 file_content = f.read()
 
                             # Detect language

@@ -171,9 +171,7 @@ class GitDiffScanner:
         self.working_dir = working_dir or Path.cwd()
         self.parser = GitDiffParser()
 
-    def _run_git_command(
-        self, args: list[str], working_dir: Path | None = None
-    ) -> str:
+    def _run_git_command(self, args: list[str], working_dir: Path | None = None) -> str:
         """Run a git command and return its output.
 
         Args:

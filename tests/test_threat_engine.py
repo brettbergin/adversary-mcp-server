@@ -1,6 +1,5 @@
 """Tests for the threat engine component."""
 
-
 import pytest
 
 from adversary_mcp_server.threat_engine import (
