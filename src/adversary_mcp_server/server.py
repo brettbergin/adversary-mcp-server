@@ -1618,7 +1618,7 @@ class AdversaryMCPServer:
                     "file_path": scan_result.file_path,
                     "language": scan_result.language.value,
                     "threat_count": len(scan_result.all_threats),
-                    "scan_success": (
+                    "issues_identified": (
                         scan_result.scan_metadata.get("rules_scan_success", False)
                         or scan_result.scan_metadata.get("semgrep_scan_success", False)
                         or scan_result.scan_metadata.get("llm_scan_success", False)
