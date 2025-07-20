@@ -11,14 +11,11 @@ import pytest
 # Add the src directory to the path to import modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from adversary_mcp_server.credential_manager import CredentialManager, SecurityConfig
-from adversary_mcp_server.llm_scanner import LLMSecurityFinding
 from adversary_mcp_server.scan_engine import EnhancedScanResult, ScanEngine
 from adversary_mcp_server.threat_engine import (
     Category,
     Language,
     Severity,
-    ThreatEngine,
     ThreatMatch,
 )
 
@@ -63,6 +60,7 @@ class TestEnhancedScanResult:
             language=Language.PYTHON,
             rules_threats=rules_threats,
             llm_threats=llm_threats,
+            semgrep_threats=[],
             scan_metadata=scan_metadata,
         )
 
@@ -104,6 +102,7 @@ class TestEnhancedScanResult:
             language=Language.PYTHON,
             rules_threats=rules_threats,
             llm_threats=llm_threats,
+            semgrep_threats=[],
             scan_metadata={},
         )
 
@@ -152,6 +151,7 @@ class TestEnhancedScanResult:
             language=Language.PYTHON,
             rules_threats=rules_threats,
             llm_threats=llm_threats,
+            semgrep_threats=[],
             scan_metadata={},
         )
 
@@ -200,6 +200,7 @@ class TestEnhancedScanResult:
             language=Language.PYTHON,
             rules_threats=rules_threats,
             llm_threats=llm_threats,
+            semgrep_threats=[],
             scan_metadata={},
         )
 
@@ -248,6 +249,7 @@ class TestEnhancedScanResult:
             language=Language.PYTHON,
             rules_threats=threats,
             llm_threats=[],
+            semgrep_threats=[],
             scan_metadata={},
         )
 
@@ -283,6 +285,7 @@ class TestEnhancedScanResult:
             language=Language.PYTHON,
             rules_threats=threats,
             llm_threats=[],
+            semgrep_threats=[],
             scan_metadata={},
         )
 

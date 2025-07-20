@@ -2,11 +2,12 @@
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from .ast_scanner import ASTScanner
 from .credential_manager import CredentialManager
-from .llm_scanner import LLMAnalysisError, LLMScanner
+from .llm_scanner import LLMScanner
+from .semgrep_scanner import SemgrepScanner
 from .threat_engine import Language, Severity, ThreatEngine, ThreatMatch
 
 logger = logging.getLogger(__name__)
@@ -19,9 +20,10 @@ class EnhancedScanResult:
         self,
         file_path: str,
         language: Language,
-        rules_threats: List[ThreatMatch],
-        llm_threats: List[ThreatMatch],
-        scan_metadata: Dict[str, Any],
+        rules_threats: list[ThreatMatch],
+        llm_threats: list[ThreatMatch],
+        semgrep_threats: list[ThreatMatch],
+        scan_metadata: dict[str, Any],
     ):
         """Initialize enhanced scan result.
 
@@ -30,12 +32,14 @@ class EnhancedScanResult:
             language: Programming language
             rules_threats: Threats found by rules engine
             llm_threats: Threats found by LLM analysis
+            semgrep_threats: Threats found by Semgrep analysis
             scan_metadata: Metadata about the scan
         """
         self.file_path = file_path
         self.language = language
         self.rules_threats = rules_threats
         self.llm_threats = llm_threats
+        self.semgrep_threats = semgrep_threats
         self.scan_metadata = scan_metadata
 
         # Combine and deduplicate threats
@@ -44,8 +48,8 @@ class EnhancedScanResult:
         # Calculate statistics
         self.stats = self._calculate_stats()
 
-    def _combine_threats(self) -> List[ThreatMatch]:
-        """Combine and deduplicate threats from both sources.
+    def _combine_threats(self) -> list[ThreatMatch]:
+        """Combine and deduplicate threats from all sources.
 
         Returns:
             Combined list of unique threats
@@ -60,7 +64,22 @@ class EnhancedScanResult:
                 combined.append(threat)
                 seen_threats.add(threat_key)
 
-        # Add LLM threats that don't duplicate rules-based findings
+        # Add Semgrep threats next (they're also quite precise)
+        for threat in self.semgrep_threats:
+            # Check for similar threats (same line, similar category)
+            is_duplicate = False
+            for existing in combined:
+                if (
+                    abs(threat.line_number - existing.line_number) <= 2
+                    and threat.category == existing.category
+                ):
+                    is_duplicate = True
+                    break
+
+            if not is_duplicate:
+                combined.append(threat)
+
+        # Add LLM threats that don't duplicate other findings
         for threat in self.llm_threats:
             # Check for similar threats (same line, similar category)
             is_duplicate = False
@@ -80,7 +99,7 @@ class EnhancedScanResult:
 
         return combined
 
-    def _calculate_stats(self) -> Dict[str, Any]:
+    def _calculate_stats(self) -> dict[str, Any]:
         """Calculate scan statistics.
 
         Returns:
@@ -90,23 +109,25 @@ class EnhancedScanResult:
             "total_threats": len(self.all_threats),
             "rules_threats": len(self.rules_threats),
             "llm_threats": len(self.llm_threats),
+            "semgrep_threats": len(self.semgrep_threats),
             "unique_threats": len(self.all_threats),
             "severity_counts": self._count_by_severity(),
             "category_counts": self._count_by_category(),
             "sources": {
                 "rules_engine": len(self.rules_threats) > 0,
                 "llm_analysis": len(self.llm_threats) > 0,
+                "semgrep_analysis": len(self.semgrep_threats) > 0,
             },
         }
 
-    def _count_by_severity(self) -> Dict[str, int]:
+    def _count_by_severity(self) -> dict[str, int]:
         """Count threats by severity level."""
         counts = {"low": 0, "medium": 0, "high": 0, "critical": 0}
         for threat in self.all_threats:
             counts[threat.severity.value] += 1
         return counts
 
-    def _count_by_category(self) -> Dict[str, int]:
+    def _count_by_category(self) -> dict[str, int]:
         """Count threats by category."""
         counts = {}
         for threat in self.all_threats:
@@ -116,7 +137,7 @@ class EnhancedScanResult:
 
     def get_high_confidence_threats(
         self, min_confidence: float = 0.8
-    ) -> List[ThreatMatch]:
+    ) -> list[ThreatMatch]:
         """Get threats with high confidence scores.
 
         Args:
@@ -127,7 +148,7 @@ class EnhancedScanResult:
         """
         return [t for t in self.all_threats if t.confidence >= min_confidence]
 
-    def get_critical_threats(self) -> List[ThreatMatch]:
+    def get_critical_threats(self) -> list[ThreatMatch]:
         """Get critical severity threats.
 
         Returns:
@@ -141,8 +162,8 @@ class ScanEngine:
 
     def __init__(
         self,
-        threat_engine: Optional[ThreatEngine] = None,
-        credential_manager: Optional[CredentialManager] = None,
+        threat_engine: ThreatEngine | None = None,
+        credential_manager: CredentialManager | None = None,
         enable_llm_analysis: bool = False,
     ):
         """Initialize enhanced scanner.
@@ -161,6 +182,20 @@ class ScanEngine:
         # Initialize AST scanner
         self.ast_scanner = ASTScanner(self.threat_engine)
 
+        # Initialize Semgrep scanner
+        self.semgrep_scanner = SemgrepScanner(self.threat_engine)
+
+        # Check if Semgrep scanning is enabled in config
+        config = self.credential_manager.load_config()
+        self.enable_semgrep_analysis = (
+            config.enable_semgrep_scanning and self.semgrep_scanner.is_available()
+        )
+
+        if not self.semgrep_scanner.is_available():
+            logger.warning(
+                "Semgrep not available - install semgrep for enhanced analysis"
+            )
+
         # Initialize LLM analyzer if enabled
         self.llm_analyzer = None
         if self.enable_llm_analysis:
@@ -177,15 +212,17 @@ class ScanEngine:
         file_path: str,
         language: Language,
         use_llm: bool = True,
-        severity_threshold: Optional[Severity] = None,
+        use_semgrep: bool = True,
+        severity_threshold: Severity | None = None,
     ) -> EnhancedScanResult:
-        """Scan source code using both rules and LLM analysis.
+        """Scan source code using rules, Semgrep, and LLM analysis.
 
         Args:
             source_code: Source code to scan
             file_path: Path to the source file
             language: Programming language
             use_llm: Whether to use LLM analysis
+            use_semgrep: Whether to use Semgrep analysis
             severity_threshold: Minimum severity threshold for filtering
 
         Returns:
@@ -195,6 +232,7 @@ class ScanEngine:
             "file_path": file_path,
             "language": language.value,
             "use_llm": use_llm and self.enable_llm_analysis,
+            "use_semgrep": use_semgrep and self.enable_semgrep_analysis,
             "source_lines": len(source_code.split("\n")),
             "source_size": len(source_code),
         }
@@ -208,6 +246,32 @@ class ScanEngine:
             logger.error(f"Rules-based scan failed for {file_path}: {e}")
             scan_metadata["rules_scan_success"] = False
             scan_metadata["rules_scan_error"] = str(e)
+
+        # Perform Semgrep scanning if enabled
+        semgrep_threats = []
+        if use_semgrep and self.enable_semgrep_analysis:
+            try:
+                config = self.credential_manager.load_config()
+                semgrep_threats = self.semgrep_scanner.scan_code(
+                    source_code=source_code,
+                    file_path=file_path,
+                    language=language,
+                    config=config.semgrep_config,
+                    rules=config.semgrep_rules,
+                    timeout=config.semgrep_timeout,
+                )
+                scan_metadata["semgrep_scan_success"] = True
+                scan_metadata["semgrep_scan_reason"] = "analysis_completed"
+            except Exception as e:
+                logger.error(f"Semgrep scan failed for {file_path}: {e}")
+                scan_metadata["semgrep_scan_success"] = False
+                scan_metadata["semgrep_scan_error"] = str(e)
+                scan_metadata["semgrep_scan_reason"] = "scan_failed"
+        else:
+            scan_metadata["semgrep_scan_success"] = False
+            scan_metadata["semgrep_scan_reason"] = (
+                "disabled" if not use_semgrep else "not_available"
+            )
 
         # Store LLM analysis prompt if enabled
         llm_threats = []
@@ -248,21 +312,26 @@ class ScanEngine:
         if severity_threshold:
             rules_threats = self._filter_by_severity(rules_threats, severity_threshold)
             llm_threats = self._filter_by_severity(llm_threats, severity_threshold)
+            semgrep_threats = self._filter_by_severity(
+                semgrep_threats, severity_threshold
+            )
 
         return EnhancedScanResult(
             file_path=file_path,
             language=language,
             rules_threats=rules_threats,
             llm_threats=llm_threats,
+            semgrep_threats=semgrep_threats,
             scan_metadata=scan_metadata,
         )
 
     def scan_file(
         self,
         file_path: Path,
-        language: Optional[Language] = None,
+        language: Language | None = None,
         use_llm: bool = True,
-        severity_threshold: Optional[Severity] = None,
+        use_semgrep: bool = True,
+        severity_threshold: Severity | None = None,
     ) -> EnhancedScanResult:
         """Scan a single file using enhanced scanning.
 
@@ -270,6 +339,7 @@ class ScanEngine:
             file_path: Path to the file to scan
             language: Programming language (auto-detected if not provided)
             use_llm: Whether to use LLM analysis
+            use_semgrep: Whether to use Semgrep analysis
             severity_threshold: Minimum severity threshold for filtering
 
         Returns:
@@ -280,7 +350,7 @@ class ScanEngine:
 
         # Read file content
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
+            with open(file_path, encoding="utf-8") as f:
                 source_code = f.read()
         except UnicodeDecodeError:
             # Skip binary files
@@ -289,11 +359,13 @@ class ScanEngine:
                 language=language or Language.PYTHON,
                 rules_threats=[],
                 llm_threats=[],
+                semgrep_threats=[],
                 scan_metadata={
                     "file_path": str(file_path),
                     "error": "Binary file or encoding error",
                     "rules_scan_success": False,
                     "llm_scan_success": False,
+                    "semgrep_scan_success": False,
                 },
             )
 
@@ -306,6 +378,7 @@ class ScanEngine:
             file_path=str(file_path),
             language=language,
             use_llm=use_llm,
+            use_semgrep=use_semgrep,
             severity_threshold=severity_threshold,
         )
 
@@ -314,15 +387,17 @@ class ScanEngine:
         directory_path: Path,
         recursive: bool = True,
         use_llm: bool = True,
-        severity_threshold: Optional[Severity] = None,
-        max_files: Optional[int] = None,
-    ) -> List[EnhancedScanResult]:
+        use_semgrep: bool = True,
+        severity_threshold: Severity | None = None,
+        max_files: int | None = None,
+    ) -> list[EnhancedScanResult]:
         """Scan a directory using enhanced scanning.
 
         Args:
             directory_path: Path to the directory to scan
             recursive: Whether to scan subdirectories
             use_llm: Whether to use LLM analysis
+            use_semgrep: Whether to use Semgrep analysis
             severity_threshold: Minimum severity threshold for filtering
             max_files: Maximum number of files to scan
 
@@ -361,6 +436,7 @@ class ScanEngine:
                     file_path=file_path,
                     language=language,
                     use_llm=use_llm,
+                    use_semgrep=use_semgrep,
                     severity_threshold=severity_threshold,
                 )
                 results.append(result)
@@ -373,11 +449,13 @@ class ScanEngine:
                         language=language,
                         rules_threats=[],
                         llm_threats=[],
+                        semgrep_threats=[],
                         scan_metadata={
                             "file_path": str(file_path),
                             "error": str(e),
                             "rules_scan_success": False,
                             "llm_scan_success": False,
+                            "semgrep_scan_success": False,
                         },
                     )
                 )
@@ -407,9 +485,9 @@ class ScanEngine:
 
     def _filter_by_severity(
         self,
-        threats: List[ThreatMatch],
+        threats: list[ThreatMatch],
         min_severity: Severity,
-    ) -> List[ThreatMatch]:
+    ) -> list[ThreatMatch]:
         """Filter threats by minimum severity level.
 
         Args:
@@ -433,7 +511,7 @@ class ScanEngine:
             if severity_order.index(threat.severity) >= min_index
         ]
 
-    def get_scanner_stats(self) -> Dict[str, Any]:
+    def get_scanner_stats(self) -> dict[str, Any]:
         """Get statistics about the enhanced scanner.
 
         Returns:
@@ -443,7 +521,9 @@ class ScanEngine:
             "ast_scanner_available": self.ast_scanner is not None,
             "llm_analyzer_available": self.llm_analyzer is not None
             and self.llm_analyzer.is_available(),
+            "semgrep_scanner_available": self.semgrep_scanner.is_available(),
             "llm_analysis_enabled": self.enable_llm_analysis,
+            "semgrep_analysis_enabled": self.enable_semgrep_analysis,
             "threat_engine_stats": self.threat_engine.get_rule_statistics(),
             "llm_stats": (
                 self.llm_analyzer.get_analysis_stats() if self.llm_analyzer else None

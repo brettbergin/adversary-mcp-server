@@ -4,10 +4,9 @@ import logging
 import re
 import subprocess
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
 
 from .scan_engine import EnhancedScanResult, ScanEngine
-from .threat_engine import Language, Severity, ThreatEngine, ThreatMatch
+from .threat_engine import Language, Severity
 
 logger = logging.getLogger(__name__)
 
@@ -34,9 +33,9 @@ class DiffChunk:
         self.old_count = old_count
         self.new_start = new_start
         self.new_count = new_count
-        self.added_lines: List[Tuple[int, str]] = []  # (line_number, content)
-        self.removed_lines: List[Tuple[int, str]] = []  # (line_number, content)
-        self.context_lines: List[Tuple[int, str]] = []  # (line_number, content)
+        self.added_lines: list[tuple[int, str]] = []  # (line_number, content)
+        self.removed_lines: list[tuple[int, str]] = []  # (line_number, content)
+        self.context_lines: list[tuple[int, str]] = []  # (line_number, content)
 
     def add_line(self, line_type: str, line_number: int, content: str) -> None:
         """Add a line to the diff chunk."""
@@ -95,7 +94,7 @@ class GitDiffParser:
         )
         self.file_header_pattern = re.compile(r"^(\+\+\+|---)\s+(.*)")
 
-    def parse_diff(self, diff_output: str) -> Dict[str, List[DiffChunk]]:
+    def parse_diff(self, diff_output: str) -> dict[str, list[DiffChunk]]:
         """Parse git diff output into structured chunks.
 
         Args:
@@ -104,7 +103,7 @@ class GitDiffParser:
         Returns:
             Dictionary mapping file paths to lists of DiffChunk objects
         """
-        chunks_by_file: Dict[str, List[DiffChunk]] = {}
+        chunks_by_file: dict[str, list[DiffChunk]] = {}
         current_file = None
         current_chunk = None
         old_line_num = 0
@@ -159,8 +158,8 @@ class GitDiffScanner:
 
     def __init__(
         self,
-        scan_engine: Optional[ScanEngine] = None,
-        working_dir: Optional[Path] = None,
+        scan_engine: ScanEngine | None = None,
+        working_dir: Path | None = None,
     ):
         """Initialize the git diff scanner.
 
@@ -172,9 +171,7 @@ class GitDiffScanner:
         self.working_dir = working_dir or Path.cwd()
         self.parser = GitDiffParser()
 
-    def _run_git_command(
-        self, args: List[str], working_dir: Optional[Path] = None
-    ) -> str:
+    def _run_git_command(self, args: list[str], working_dir: Path | None = None) -> str:
         """Run a git command and return its output.
 
         Args:
@@ -205,7 +202,7 @@ class GitDiffScanner:
             )
 
     def _validate_branches(
-        self, source_branch: str, target_branch: str, working_dir: Optional[Path] = None
+        self, source_branch: str, target_branch: str, working_dir: Path | None = None
     ) -> None:
         """Validate that the specified branches exist.
 
@@ -231,7 +228,7 @@ class GitDiffScanner:
         except GitDiffError as e:
             raise GitDiffError(f"Branch validation failed: {e}")
 
-    def _detect_language_from_path(self, file_path: str) -> Optional[Language]:
+    def _detect_language_from_path(self, file_path: str) -> Language | None:
         """Detect programming language from file path.
 
         Args:
@@ -253,8 +250,8 @@ class GitDiffScanner:
         return language_map.get(extension)
 
     def get_diff_changes(
-        self, source_branch: str, target_branch: str, working_dir: Optional[Path] = None
-    ) -> Dict[str, List[DiffChunk]]:
+        self, source_branch: str, target_branch: str, working_dir: Path | None = None
+    ) -> dict[str, list[DiffChunk]]:
         """Get diff changes between two branches.
 
         Args:
@@ -288,10 +285,11 @@ class GitDiffScanner:
         self,
         source_branch: str,
         target_branch: str,
-        working_dir: Optional[Path] = None,
+        working_dir: Path | None = None,
         use_llm: bool = False,
-        severity_threshold: Optional[Severity] = None,
-    ) -> Dict[str, List[EnhancedScanResult]]:
+        use_semgrep: bool = True,
+        severity_threshold: Severity | None = None,
+    ) -> dict[str, list[EnhancedScanResult]]:
         """Scan security vulnerabilities in git diff changes.
 
         Args:
@@ -299,6 +297,7 @@ class GitDiffScanner:
             target_branch: Target branch name
             working_dir: Working directory for git operations (uses self.working_dir if not specified)
             use_llm: Whether to use LLM analysis
+            use_semgrep: Whether to use Semgrep analysis
             severity_threshold: Minimum severity threshold for filtering
 
         Returns:
@@ -313,7 +312,7 @@ class GitDiffScanner:
         if not diff_changes:
             return {}
 
-        scan_results: Dict[str, List[EnhancedScanResult]] = {}
+        scan_results: dict[str, list[EnhancedScanResult]] = {}
 
         for file_path, chunks in diff_changes.items():
             # Skip non-code files
@@ -353,6 +352,7 @@ class GitDiffScanner:
                     file_path=file_path,
                     language=language,
                     use_llm=use_llm,
+                    use_semgrep=use_semgrep,
                     severity_threshold=severity_threshold,
                 )
 
@@ -373,8 +373,8 @@ class GitDiffScanner:
         return scan_results
 
     def get_diff_summary(
-        self, source_branch: str, target_branch: str, working_dir: Optional[Path] = None
-    ) -> Dict[str, any]:
+        self, source_branch: str, target_branch: str, working_dir: Path | None = None
+    ) -> dict[str, any]:
         """Get a summary of the diff between two branches.
 
         Args:

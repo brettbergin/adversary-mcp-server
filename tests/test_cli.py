@@ -2,10 +2,7 @@
 
 import os
 import sys
-from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
-
-import pytest
+from unittest.mock import patch
 
 # Add the src directory to the path to import modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))

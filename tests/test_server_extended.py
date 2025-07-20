@@ -5,9 +5,8 @@ import os
 import re
 import sys
 import tempfile
-import tomllib
 from pathlib import Path
-from unittest.mock import AsyncMock, Mock, mock_open, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -36,13 +35,14 @@ def _read_version_from_pyproject() -> str:
         if pyproject_path.exists():
             # Use tomllib for Python 3.11+ or simple parsing for older versions
             if sys.version_info >= (3, 11):
+                import tomllib
 
                 with open(pyproject_path, "rb") as f:
                     pyproject_data = tomllib.load(f)
                     return pyproject_data.get("project", {}).get("version", "unknown")
             else:
                 # Simple regex parsing for older Python versions
-                with open(pyproject_path, "r") as f:
+                with open(pyproject_path) as f:
                     content = f.read()
                     match = re.search(
                         r'^version\s*=\s*["\']([^"\']+)["\']', content, re.MULTILINE
@@ -126,6 +126,7 @@ class TestAdversaryMCPServerExtended:
                 mock_result = EnhancedScanResult(
                     rules_threats=[threat],
                     llm_threats=[],
+                    semgrep_threats=[],
                     file_path=temp_file,
                     language=Language.PYTHON,
                     scan_metadata={
@@ -183,6 +184,7 @@ class TestAdversaryMCPServerExtended:
                 mock_result = EnhancedScanResult(
                     rules_threats=[threat],
                     llm_threats=[],
+                    semgrep_threats=[],
                     file_path=str(test_file),
                     language=Language.PYTHON,
                     scan_metadata={
@@ -520,6 +522,7 @@ class TestAdversaryMCPServerExtended:
                 mock_result = EnhancedScanResult(
                     rules_threats=[threat],
                     llm_threats=[],
+                    semgrep_threats=[],
                     file_path=threat.file_path,
                     language=Language.PYTHON,
                     scan_metadata={

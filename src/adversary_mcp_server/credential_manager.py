@@ -8,7 +8,7 @@ import stat
 from base64 import b64decode, b64encode
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import keyring
 from cryptography.fernet import Fernet, InvalidToken
@@ -31,6 +31,11 @@ class SecurityConfig:
     enable_semgrep_scanning: bool = True
     enable_bandit_scanning: bool = True
 
+    # Semgrep Configuration
+    semgrep_config: str | None = None  # Path to custom semgrep config
+    semgrep_rules: str | None = None  # Specific rules to use
+    semgrep_timeout: int = 60  # Timeout for semgrep scans in seconds
+
     # Exploit Generation
     enable_exploit_generation: bool = True
     exploit_safety_mode: bool = True  # Limit exploit generation to safe examples
@@ -41,7 +46,7 @@ class SecurityConfig:
     timeout_seconds: int = 300
 
     # Rule Configuration
-    custom_rules_path: Optional[str] = None
+    custom_rules_path: str | None = None
     severity_threshold: str = "medium"  # low, medium, high, critical
 
     # Reporting Configuration
@@ -77,6 +82,8 @@ class SecurityConfig:
             "llm_analysis_enabled": self.enable_llm_analysis,
             "llm_analysis_available": self.is_llm_analysis_available(),
             "llm_mode": "client_based",
+            "semgrep_scanning_enabled": self.enable_semgrep_scanning,
+            "ast_scanning_enabled": self.enable_ast_scanning,
             "exploit_generation_enabled": self.enable_exploit_generation,
             "exploit_safety_mode": self.exploit_safety_mode,
             "severity_threshold": self.severity_threshold,
@@ -110,7 +117,7 @@ class CredentialDecryptionError(CredentialError):
 class CredentialManager:
     """Secure credential manager for Adversary MCP server configuration."""
 
-    def __init__(self, config_dir: Optional[Path] = None) -> None:
+    def __init__(self, config_dir: Path | None = None) -> None:
         """Initialize credential manager.
 
         Args:
@@ -237,7 +244,7 @@ class CredentialManager:
         except KeyringError:
             return False
 
-    def _try_keyring_retrieval(self) -> Optional[SecurityConfig]:
+    def _try_keyring_retrieval(self) -> SecurityConfig | None:
         """Try to retrieve configuration from keyring.
 
         Returns:
@@ -287,7 +294,7 @@ class CredentialManager:
         except (OSError, json.JSONEncodeError) as e:
             raise CredentialStorageError(f"Failed to store configuration: {e}")
 
-    def _load_file_config(self) -> Optional[SecurityConfig]:
+    def _load_file_config(self) -> SecurityConfig | None:
         """Load configuration from encrypted file.
 
         Returns:

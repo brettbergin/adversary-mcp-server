@@ -1,0 +1,134 @@
+name: Update Status Badges
+
+on:
+  workflow_run:
+    workflows: ["CI Pipeline"]
+    types:
+      - completed
+  schedule:
+    # Update badges daily at midnight UTC
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+jobs:
+  update-badges:
+    name: Update Status Badges
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+
+    - name: Install dependencies and run tests
+      run: |
+        uv venv --python 3.11
+        source .venv/bin/activate
+        uv pip install -e ".[dev]"
+        
+        # Run tests and generate coverage
+        python -m pytest tests/ \
+          --cov=adversary_mcp_server \
+          --cov-report=json \
+          --tb=short \
+          -q \
+          --maxfail=5
+
+    - name: Get test and coverage stats
+      id: stats
+      run: |
+        source .venv/bin/activate
+        
+        # Get test count
+        TEST_COUNT=$(python -m pytest --collect-only -q | grep -E "^[0-9]+ tests collected" | sed 's/ tests collected//' || echo "0")
+        echo "test_count=$TEST_COUNT" >> $GITHUB_OUTPUT
+        
+        # Get coverage percentage
+        if [ -f coverage.json ]; then
+          COVERAGE=$(python -c "import json; data=json.load(open('coverage.json')); print(f\"{data['totals']['percent_covered']:.1f}\")")
+          echo "coverage=$COVERAGE" >> $GITHUB_OUTPUT
+        else
+          echo "coverage=0" >> $GITHUB_OUTPUT
+        fi
+        
+        # Get package version
+        VERSION=$(python -c "from adversary_mcp_server import __version__; print(__version__)")
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        
+        # Count rules
+        RULE_COUNT=$(find rules/built-in -name "*.yaml" -exec grep -l "^rules:" {} \; | xargs grep -h "^  - id:" | wc -l | tr -d ' ')
+        echo "rule_count=$RULE_COUNT" >> $GITHUB_OUTPUT
+
+    - name: Generate badge URLs
+      id: badges
+      run: |
+        # Test badge
+        if [ "${{ steps.stats.outputs.test_count }}" -gt 0 ]; then
+          TEST_COLOR="brightgreen"
+          TEST_MESSAGE="${{ steps.stats.outputs.test_count }}%20passed%20%7C%20100%25"
+        else
+          TEST_COLOR="red"
+          TEST_MESSAGE="failing"
+        fi
+        echo "test_badge=https://img.shields.io/badge/tests-$TEST_MESSAGE-$TEST_COLOR.svg" >> $GITHUB_OUTPUT
+        
+        # Coverage badge
+        COVERAGE="${{ steps.stats.outputs.coverage }}"
+        if (( $(echo "$COVERAGE >= 80" | bc -l) )); then
+          COV_COLOR="brightgreen"
+        elif (( $(echo "$COVERAGE >= 60" | bc -l) )); then
+          COV_COLOR="yellow"
+        else
+          COV_COLOR="red"
+        fi
+        echo "coverage_badge=https://img.shields.io/badge/coverage-$COVERAGE%25-$COV_COLOR.svg" >> $GITHUB_OUTPUT
+        
+        # Version badge
+        VERSION="${{ steps.stats.outputs.version }}"
+        echo "version_badge=https://img.shields.io/badge/version-v$VERSION-blue.svg" >> $GITHUB_OUTPUT
+        
+        # Rule count badge
+        RULES="${{ steps.stats.outputs.rule_count }}"
+        echo "rules_badge=https://img.shields.io/badge/security%20rules-$RULES+-purple.svg" >> $GITHUB_OUTPUT
+
+    - name: Update README badges
+      run: |
+        # Update badges in README.md
+        sed -i 's|!\[Tests\].*|[![Tests](${{ steps.badges.outputs.test_badge }})](https://github.com/brettbergin/adversary-mcp-server)|' README.md
+        sed -i 's|!\[Coverage\].*|[![Coverage](${{ steps.badges.outputs.coverage_badge }})](https://github.com/brettbergin/adversary-mcp-server)|' README.md  
+        sed -i 's|!\[Version\].*|[![Version](${{ steps.badges.outputs.version_badge }})](https://pypi.org/project/adversary-mcp-server/)|' README.md
+
+    - name: Check for changes
+      id: changes
+      run: |
+        if git diff --quiet README.md; then
+          echo "changes=false" >> $GITHUB_OUTPUT
+        else
+          echo "changes=true" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Commit badge updates
+      if: steps.changes.outputs.changes == 'true'
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add README.md
+        git commit -m "docs: update status badges [skip ci]"
+        git push
+
+    - name: Output stats
+      run: |
+        echo "📊 Project Statistics:"
+        echo "• Tests: ${{ steps.stats.outputs.test_count }}"
+        echo "• Coverage: ${{ steps.stats.outputs.coverage }}%"
+        echo "• Version: ${{ steps.stats.outputs.version }}"
+        echo "• Security Rules: ${{ steps.stats.outputs.rule_count }}"

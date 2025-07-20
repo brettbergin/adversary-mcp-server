@@ -1,11 +1,7 @@
 """Tests for MCP server module."""
 
-import asyncio
 import os
 import sys
-from unittest.mock import AsyncMock, Mock, patch
-
-import pytest
 
 # Add the src directory to the path to import modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))

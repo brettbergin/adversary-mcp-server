@@ -2,7 +2,6 @@
 
 from unittest.mock import Mock, patch
 
-import pytest
 from click.testing import CliRunner
 
 from adversary_mcp_server.cli import cli
@@ -18,7 +17,7 @@ class TestDemoCommand:
 
     @patch("adversary_mcp_server.cli.CredentialManager")
     @patch("adversary_mcp_server.cli.ThreatEngine")
-    @patch("adversary_mcp_server.cli.ASTScanner")
+    @patch("adversary_mcp_server.cli.ScanEngine")
     @patch("adversary_mcp_server.cli.ExploitGenerator")
     @patch("adversary_mcp_server.cli.console")
     def test_demo_command_success(
@@ -62,9 +61,16 @@ class TestDemoCommand:
         )
 
         # Configure scanner to return different threats for different calls
+        # Create mock EnhancedScanResult objects
+        python_result = Mock()
+        python_result.all_threats = [python_threat]
+
+        js_result = Mock()
+        js_result.all_threats = [js_threat]
+
         mock_scanner_instance.scan_code.side_effect = [
-            [python_threat],  # Python demo
-            [js_threat],  # JavaScript demo
+            python_result,  # Python demo
+            js_result,  # JavaScript demo
         ]
 
         mock_exploit_generator = Mock()
@@ -81,7 +87,7 @@ class TestDemoCommand:
 
     @patch("adversary_mcp_server.cli.CredentialManager")
     @patch("adversary_mcp_server.cli.ThreatEngine")
-    @patch("adversary_mcp_server.cli.ASTScanner")
+    @patch("adversary_mcp_server.cli.ScanEngine")
     @patch("adversary_mcp_server.cli.console")
     def test_demo_command_with_scanner_error(
         self, mock_console, mock_scanner, mock_threat_engine, mock_cred_manager
@@ -105,7 +111,7 @@ class TestDemoCommand:
 
     @patch("adversary_mcp_server.cli.CredentialManager")
     @patch("adversary_mcp_server.cli.ThreatEngine")
-    @patch("adversary_mcp_server.cli.ASTScanner")
+    @patch("adversary_mcp_server.cli.ScanEngine")
     @patch("adversary_mcp_server.cli.ExploitGenerator")
     @patch("adversary_mcp_server.cli.console")
     def test_demo_command_no_threats(
@@ -128,7 +134,9 @@ class TestDemoCommand:
         mock_scanner.return_value = mock_scanner_instance
 
         # Return empty threats
-        mock_scanner_instance.scan_code.return_value = []
+        empty_result = Mock()
+        empty_result.all_threats = []
+        mock_scanner_instance.scan_code.return_value = empty_result
 
         mock_exploit_generator = Mock()
         mock_exploit_gen.return_value = mock_exploit_generator
@@ -140,7 +148,7 @@ class TestDemoCommand:
 
     @patch("adversary_mcp_server.cli.CredentialManager")
     @patch("adversary_mcp_server.cli.ThreatEngine")
-    @patch("adversary_mcp_server.cli.ASTScanner")
+    @patch("adversary_mcp_server.cli.ScanEngine")
     @patch("adversary_mcp_server.cli.ExploitGenerator")
     @patch("adversary_mcp_server.cli.console")
     def test_demo_command_exploit_generation_error(
@@ -171,7 +179,10 @@ class TestDemoCommand:
             file_path="demo.py",
             line_number=1,
         )
-        mock_scanner_instance.scan_code.return_value = [threat]
+        # Create mock EnhancedScanResult
+        threat_result = Mock()
+        threat_result.all_threats = [threat]
+        mock_scanner_instance.scan_code.return_value = threat_result
 
         mock_exploit_generator = Mock()
         mock_exploit_generator.generate_exploits.side_effect = Exception(

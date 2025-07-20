@@ -3,9 +3,9 @@
 import json
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
-from .credential_manager import CredentialManager, SecurityConfig
+from .credential_manager import CredentialManager
 from .threat_engine import Category, Language, Severity, ThreatMatch
 
 logger = logging.getLogger(__name__)
@@ -29,8 +29,8 @@ class LLMSecurityFinding:
     explanation: str
     recommendation: str
     confidence: float
-    cwe_id: Optional[str] = None
-    owasp_category: Optional[str] = None
+    cwe_id: str | None = None
+    owasp_category: str | None = None
 
     def to_threat_match(self, file_path: str) -> ThreatMatch:
         """Convert to ThreatMatch for compatibility with existing code.
@@ -130,7 +130,7 @@ class LLMAnalysisPrompt:
     language: Language
     max_findings: int = 20
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
             "system_prompt": self.system_prompt,
@@ -192,7 +192,7 @@ class LLMScanner:
 
     def parse_analysis_response(
         self, response_text: str, file_path: str
-    ) -> List[LLMSecurityFinding]:
+    ) -> list[LLMSecurityFinding]:
         """Parse the LLM response into security findings.
 
         Args:
@@ -348,7 +348,7 @@ Response format:
         file_path: str,
         language: Language,
         max_findings: int = 20,
-    ) -> List[LLMSecurityFinding]:
+    ) -> list[LLMSecurityFinding]:
         """Analyze code for security vulnerabilities.
 
         For client-based LLM integration, this method returns empty list
@@ -369,9 +369,9 @@ Response format:
 
     def batch_analyze_code(
         self,
-        code_samples: List[Tuple[str, str, Language]],
+        code_samples: list[tuple[str, str, Language]],
         max_findings_per_sample: int = 20,
-    ) -> List[List[LLMSecurityFinding]]:
+    ) -> list[list[LLMSecurityFinding]]:
         """Analyze multiple code samples.
 
         Args:
@@ -387,7 +387,7 @@ Response format:
             results.append([])
         return results
 
-    def get_analysis_stats(self) -> Dict[str, Any]:
+    def get_analysis_stats(self) -> dict[str, Any]:
         """Get analysis statistics.
 
         Returns:

@@ -1,22 +1,18 @@
 """Command-line interface for the Adversary MCP server."""
 
 import datetime
-import getpass
 import json
 import sys
-import tempfile
 from pathlib import Path
-from typing import Dict, List, Optional, Set
 
 import click
 import yaml
 from rich.console import Console
 from rich.panel import Panel
-from rich.prompt import Confirm, Prompt
+from rich.prompt import Confirm
 from rich.table import Table
 
 from . import get_version
-from .ast_scanner import ASTScanner
 from .credential_manager import CredentialManager, SecurityConfig
 from .diff_scanner import GitDiffScanner
 from .exploit_generator import ExploitGenerator
@@ -67,7 +63,7 @@ def cli():
 def configure(
     severity_threshold: str,
     enable_safety_mode: bool,
-    enable_llm: Optional[bool],
+    enable_llm: bool | None,
 ):
     """Configure the Adversary MCP server settings."""
     try:
@@ -129,7 +125,7 @@ def status():
         # Status panel
         status_text = "🟢 **Server Status:** Running\n"
         status_text += f"🔧 **Configuration:** {'✓ Configured' if credential_manager.has_config() else '✗ Not configured'}\n"
-        status_text += f"🤖 **LLM Integration:** Client-based (no API key required)\n"
+        status_text += "🤖 **LLM Integration:** Client-based (no API key required)\n"
 
         console.print(
             Panel(
@@ -153,6 +149,10 @@ def status():
         config_table.add_row(
             "LLM Generation",
             "✓ Enabled" if config.enable_exploit_generation else "✗ Disabled",
+        )
+        config_table.add_row(
+            "Semgrep Scanning",
+            "✓ Enabled" if config.enable_semgrep_scanning else "✗ Disabled",
         )
         config_table.add_row("Max File Size", f"{config.max_file_size_mb} MB")
         config_table.add_row("Scan Depth", str(config.max_scan_depth))
@@ -217,6 +217,11 @@ def status():
     help="Use LLM for enhanced analysis",
 )
 @click.option(
+    "--use-semgrep/--no-semgrep",
+    default=True,
+    help="Use Semgrep for static analysis",
+)
+@click.option(
     "--diff/--no-diff",
     default=False,
     help="Enable git diff-aware scanning (scans only changed files)",
@@ -232,13 +237,14 @@ def status():
     help="Target branch for git diff comparison (default: HEAD)",
 )
 def scan(
-    target: Optional[str],
-    language: Optional[str],
+    target: str | None,
+    language: str | None,
     severity: str,
-    output: Optional[str],
+    output: str | None,
     recursive: bool,
     include_exploits: bool,
     use_llm: bool,
+    use_semgrep: bool,
     diff: bool,
     source_branch: str,
     target_branch: str,
@@ -251,7 +257,6 @@ def scan(
     try:
         # Initialize scanner components
         threat_engine = ThreatEngine()
-        ast_scanner = ASTScanner(threat_engine)
 
         # Load configuration
         try:
@@ -272,7 +277,7 @@ def scan(
                 target = "."
 
             # Initialize git diff scanner
-            scan_engine = ScanEngine(threat_engine, ast_scanner)
+            scan_engine = ScanEngine(threat_engine, credential_manager)
             git_diff_scanner = GitDiffScanner(
                 scan_engine=scan_engine, working_dir=Path(target)
             )
@@ -284,6 +289,7 @@ def scan(
                 source_branch=source_branch,
                 target_branch=target_branch,
                 use_llm=use_llm,
+                use_semgrep=use_semgrep,
                 severity_threshold=severity_enum,
             )
 
@@ -366,68 +372,44 @@ def scan(
                         )
                         sys.exit(1)
 
-                # Read and scan file
-                with open(target_path, "r", encoding="utf-8") as f:
-                    content = f.read()
+                # Initialize scan engine
+                scan_engine = ScanEngine(threat_engine, credential_manager)
 
-                threats = ast_scanner.scan_code(
-                    content, str(target_path), Language(language)
+                # Scan file using enhanced scanner
+                severity_enum = Severity(severity) if severity else None
+                scan_result = scan_engine.scan_file(
+                    file_path=target_path,
+                    language=Language(language),
+                    use_llm=use_llm,
+                    use_semgrep=use_semgrep,
+                    severity_threshold=severity_enum,
                 )
 
+                threats = scan_result.all_threats
+
             elif target_path.is_dir():
-                # Directory scan
+                # Directory scan using enhanced scanner
                 console.print(f"🔍 Scanning directory: {target}")
 
+                # Initialize scan engine
+                scan_engine = ScanEngine(threat_engine, credential_manager)
+
+                # Scan directory using enhanced scanner
+                severity_enum = Severity(severity) if severity else None
+                scan_results = scan_engine.scan_directory(
+                    directory_path=target_path,
+                    recursive=recursive,
+                    use_llm=use_llm,
+                    use_semgrep=use_semgrep,
+                    severity_threshold=severity_enum,
+                    max_files=50,  # Limit for performance
+                )
+
+                # Collect all threats from scan results
                 threats = []
-                file_count = 0
-
-                # Get all files to scan
-                patterns = []
-                if not language or language == "python":
-                    patterns.extend(["*.py"])
-                if not language or language == "javascript":
-                    patterns.extend(["*.js", "*.jsx"])
-                if not language or language == "typescript":
-                    patterns.extend(["*.ts", "*.tsx"])
-
-                for pattern in patterns:
-                    if recursive:
-                        files = list(target_path.rglob(pattern))
-                    else:
-                        files = list(target_path.glob(pattern))
-
-                    for file_path in files:
-                        try:
-                            # Determine file language
-                            if file_path.suffix == ".py":
-                                file_lang = Language.PYTHON
-                            elif file_path.suffix in [".js", ".jsx"]:
-                                file_lang = Language.JAVASCRIPT
-                            elif file_path.suffix in [".ts", ".tsx"]:
-                                file_lang = Language.TYPESCRIPT
-                            else:
-                                continue
-
-                            # Skip if language filter doesn't match
-                            if language and file_lang.value != language:
-                                continue
-
-                            # Read and scan file
-                            with open(file_path, "r", encoding="utf-8") as f:
-                                content = f.read()
-
-                            file_threats = ast_scanner.scan_code(
-                                content, str(file_path), file_lang
-                            )
-
-                            threats.extend(file_threats)
-                            file_count += 1
-
-                        except Exception as e:
-                            console.print(
-                                f"⚠️  Error scanning {file_path}: {e}", style="yellow"
-                            )
-                            continue
+                file_count = len(scan_results)
+                for scan_result in scan_results:
+                    threats.extend(scan_result.all_threats)
 
                 console.print(f"📊 Scanned {file_count} files")
             else:
@@ -473,10 +455,10 @@ def scan(
     help="Show full absolute paths for source files",
 )
 def list_rules(
-    category: Optional[str],
-    severity: Optional[str],
-    language: Optional[str],
-    output: Optional[str],
+    category: str | None,
+    severity: str | None,
+    language: str | None,
+    output: str | None,
     verbose: bool,
 ):
     """List available threat detection rules."""
@@ -694,7 +676,7 @@ def export(output_file: str, format: str):
     default=True,
     help="Validate rules before importing",
 )
-def import_rules(import_file: str, target_dir: Optional[str], validate: bool):
+def import_rules(import_file: str, target_dir: str | None, validate: bool):
     """Import rules from an external file."""
     try:
         threat_engine = ThreatEngine()
@@ -785,7 +767,7 @@ def stats():
         stats = threat_engine.get_rule_statistics()
 
         # Main statistics
-        console.print(f"📊 [bold]Rule Statistics[/bold]")
+        console.print("📊 [bold]Rule Statistics[/bold]")
         console.print(f"Total Rules: {stats['total_rules']}")
         console.print(f"Loaded Files: {stats['loaded_files']}")
 
@@ -889,15 +871,18 @@ function calculate(expression) {
 
     # Initialize scanner
     threat_engine = ThreatEngine()
-    ast_scanner = ASTScanner(threat_engine)
+    credential_manager = CredentialManager()
+    scan_engine = ScanEngine(threat_engine, credential_manager)
 
     # Scan Python code
     console.print("\n🔍 [bold]Scanning Python Code...[/bold]")
-    python_threats = ast_scanner.scan_code(python_code, Language.PYTHON, "demo.py")
+    python_result = scan_engine.scan_code(python_code, "demo.py", Language.PYTHON)
+    python_threats = python_result.all_threats
 
     # Scan JavaScript code
     console.print("\n🔍 [bold]Scanning JavaScript Code...[/bold]")
-    js_threats = ast_scanner.scan_code(js_code, Language.JAVASCRIPT, "demo.js")
+    js_result = scan_engine.scan_code(js_code, "demo.js", Language.JAVASCRIPT)
+    js_threats = js_result.all_threats
 
     # Display results
     all_threats = python_threats + js_threats
@@ -1105,7 +1090,7 @@ def start(directory: tuple, debounce: float):
 
         # Show initial status
         console.print("🔄 [bold]Starting Hot-Reload Service[/bold]")
-        console.print(f"📁 Watching directories:")
+        console.print("📁 Watching directories:")
         for watch_dir in service.watch_directories:
             console.print(f"  • {watch_dir}")
 
@@ -1225,7 +1210,7 @@ def test(directory: tuple):
 
         # Show initial state
         console.print("🧪 [bold]Testing Hot-Reload Functionality[/bold]")
-        console.print(f"📁 Watching directories:")
+        console.print("📁 Watching directories:")
         for watch_dir in service.watch_directories:
             console.print(f"  • {watch_dir}")
 
@@ -1261,14 +1246,14 @@ def show_user_rules_directory():
     user_rules_dir = get_user_rules_directory()
 
     console.print(f"📁 [bold]User Rules Directory:[/bold] {user_rules_dir}")
-    console.print(f"📂 Structure:")
-    console.print(f"  • built-in/     - Core security rules")
-    console.print(f"  • custom/       - User-defined rules")
-    console.print(f"  • organization/ - Company/team rules")
-    console.print(f"  • templates/    - Rule templates")
+    console.print("📂 Structure:")
+    console.print("  • built-in/     - Core security rules")
+    console.print("  • custom/       - User-defined rules")
+    console.print("  • organization/ - Company/team rules")
+    console.print("  • templates/    - Rule templates")
 
     if user_rules_dir.exists():
-        console.print(f"\n📊 Directory contents:")
+        console.print("\n📊 Directory contents:")
         for subdir in ["built-in", "custom", "organization", "templates"]:
             subdir_path = user_rules_dir / subdir
             if subdir_path.exists():
@@ -1280,7 +1265,7 @@ def show_user_rules_directory():
                     console.print(f"    - {rule_file.name}")
     else:
         console.print(
-            f"\n⚠️  Directory does not exist yet. It will be created on first use."
+            "\n⚠️  Directory does not exist yet. It will be created on first use."
         )
 
 

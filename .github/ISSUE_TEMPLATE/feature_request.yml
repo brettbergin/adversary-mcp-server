@@ -1,0 +1,120 @@
+name: ✨ Feature Request
+description: Suggest a new feature or enhancement for the Adversary MCP Server
+title: "[Feature]: "
+labels: ["enhancement", "triage"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a new feature! Please provide as much detail as possible to help us understand your request.
+
+  - type: checkboxes
+    attributes:
+      label: Is there an existing feature request for this?
+      description: Please search to see if a feature request already exists.
+      options:
+      - label: I have searched the existing issues and feature requests
+        required: true
+
+  - type: textarea
+    attributes:
+      label: Problem Statement
+      description: |
+        What problem does this feature solve? What use case does it address?
+        A clear and concise description of what the problem is.
+      placeholder: I'm frustrated when... / It would be helpful if... / Currently there's no way to...
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Proposed Solution
+      description: |
+        Describe the solution you'd like to see implemented.
+        A clear and concise description of what you want to happen.
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Alternative Solutions
+      description: |
+        Describe any alternative solutions or features you've considered.
+        Are there workarounds you're currently using?
+
+  - type: dropdown
+    attributes:
+      label: Feature Category
+      description: Which area of the project does this feature relate to?
+      options:
+        - Security Rules & Detection
+        - Scanning Engines (AST, LLM, Semgrep)
+        - CLI Interface
+        - MCP Server & Tools
+        - Git Diff Analysis
+        - Performance & Optimization
+        - Documentation & Examples
+        - Configuration & Setup
+        - Integration & API
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    attributes:
+      label: Priority
+      description: How important is this feature to you?
+      options:
+        - Nice to have
+        - Would be helpful
+        - Important for my workflow
+        - Critical/blocking
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Use Case Examples
+      description: |
+        Provide specific examples of how you would use this feature.
+        Include code samples, commands, or workflow descriptions if helpful.
+      placeholder: |
+        Example 1: When scanning a repository, I want to...
+        Example 2: As a security engineer, I need to...
+
+  - type: textarea
+    attributes:
+      label: Success Criteria
+      description: |
+        How would you know this feature is working correctly?
+        What would successful implementation look like?
+
+  - type: checkboxes
+    attributes:
+      label: Implementation Considerations
+      description: Are there any specific requirements or constraints?
+      options:
+      - label: Should maintain backward compatibility
+      - label: Should work with existing MCP tools
+      - label: Should integrate with current CLI commands
+      - label: Should support all programming languages
+      - label: Should work in CI/CD environments
+      - label: Should be configurable/optional
+
+  - type: textarea
+    attributes:
+      label: Additional Context
+      description: |
+        Add any other context, mockups, references, or examples about the feature request here.
+        Include links to similar features in other tools if relevant.
+
+  - type: checkboxes
+    attributes:
+      label: Contribution Interest
+      description: Would you be interested in contributing to this feature?
+      options:
+      - label: I'd like to work on this feature myself
+      - label: I can help with testing/feedback
+      - label: I can provide additional requirements/examples
+      - label: I prefer to use it once implemented

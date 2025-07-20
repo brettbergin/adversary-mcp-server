@@ -3,18 +3,13 @@
 import ast
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any
 
 import esprima
-from tree_sitter import Language, Parser
 
-from .threat_engine import (
-    Category,
-)
 from .threat_engine import Language as LangEnum
 from .threat_engine import (
     MatchCondition,
-    Severity,
     ThreatEngine,
     ThreatMatch,
     ThreatRule,
@@ -49,7 +44,7 @@ class CodeContext:
         if self.language == LangEnum.PYTHON:
             try:
                 return ast.parse(self.source_code)
-            except SyntaxError as e:
+            except SyntaxError:
                 # Return None for syntax errors, scanner will handle gracefully
                 return None
 
@@ -102,11 +97,11 @@ class PythonAnalyzer:
 
     def __init__(self):
         """Initialize the Python analyzer."""
-        self.function_calls: Set[str] = set()
-        self.imports: Set[str] = set()
-        self.variables: Set[str] = set()
+        self.function_calls: set[str] = set()
+        self.imports: set[str] = set()
+        self.variables: set[str] = set()
 
-    def analyze(self, context: CodeContext) -> Dict[str, Any]:
+    def analyze(self, context: CodeContext) -> dict[str, Any]:
         """Analyze Python code and extract relevant information.
 
         Args:
@@ -159,7 +154,7 @@ class PythonAnalyzer:
         for child in ast.iter_child_nodes(node):
             self._walk_ast(child)
 
-    def _get_function_name(self, func_node: ast.AST) -> Optional[str]:
+    def _get_function_name(self, func_node: ast.AST) -> str | None:
         """Extract function name from a function call node."""
         if isinstance(func_node, ast.Name):
             return func_node.id
@@ -177,11 +172,11 @@ class JavaScriptAnalyzer:
 
     def __init__(self):
         """Initialize the JavaScript analyzer."""
-        self.function_calls: Set[str] = set()
-        self.variables: Set[str] = set()
-        self.properties: Set[str] = set()
+        self.function_calls: set[str] = set()
+        self.variables: set[str] = set()
+        self.properties: set[str] = set()
 
-    def analyze(self, context: CodeContext) -> Dict[str, Any]:
+    def analyze(self, context: CodeContext) -> dict[str, Any]:
         """Analyze JavaScript/TypeScript code.
 
         Args:
@@ -249,7 +244,7 @@ class JavaScriptAnalyzer:
                         if hasattr(item, "type"):
                             self._walk_ast(item)
 
-    def _get_function_name(self, callee: Any) -> Optional[str]:
+    def _get_function_name(self, callee: Any) -> str | None:
         """Extract function name from a callee node."""
         if not callee:
             return None
@@ -290,8 +285,8 @@ class ASTScanner:
         self.js_analyzer = JavaScriptAnalyzer()
 
     def scan_file(
-        self, file_path: Path, language: Optional[LangEnum] = None
-    ) -> List[ThreatMatch]:
+        self, file_path: Path, language: LangEnum | None = None
+    ) -> list[ThreatMatch]:
         """Scan a single file for security vulnerabilities.
 
         Args:
@@ -306,7 +301,7 @@ class ASTScanner:
 
         # Read file content
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
+            with open(file_path, encoding="utf-8") as f:
                 source_code = f.read()
         except UnicodeDecodeError:
             # Skip binary files
@@ -320,7 +315,7 @@ class ASTScanner:
 
     def scan_code(
         self, source_code: str, file_path: str, language: LangEnum
-    ) -> List[ThreatMatch]:
+    ) -> list[ThreatMatch]:
         """Scan source code for security vulnerabilities.
 
         Args:
@@ -350,7 +345,7 @@ class ASTScanner:
 
     def scan_directory(
         self, directory: Path, recursive: bool = True
-    ) -> List[ThreatMatch]:
+    ) -> list[ThreatMatch]:
         """Scan a directory for security vulnerabilities.
 
         Args:
@@ -409,7 +404,7 @@ class ASTScanner:
         # Default to Python
         return LangEnum.PYTHON
 
-    def _analyze_code(self, context: CodeContext) -> Dict[str, Any]:
+    def _analyze_code(self, context: CodeContext) -> dict[str, Any]:
         """Analyze code based on language.
 
         Args:
@@ -426,8 +421,8 @@ class ASTScanner:
         return {}
 
     def _apply_rule(
-        self, rule: ThreatRule, context: CodeContext, analysis: Dict[str, Any]
-    ) -> List[ThreatMatch]:
+        self, rule: ThreatRule, context: CodeContext, analysis: dict[str, Any]
+    ) -> list[ThreatMatch]:
         """Apply a single rule to the code.
 
         Args:
@@ -473,8 +468,8 @@ class ASTScanner:
         return matches
 
     def _check_condition(
-        self, condition: MatchCondition, context: CodeContext, analysis: Dict[str, Any]
-    ) -> List[tuple]:
+        self, condition: MatchCondition, context: CodeContext, analysis: dict[str, Any]
+    ) -> list[tuple]:
         """Check if a condition matches the code.
 
         Args:

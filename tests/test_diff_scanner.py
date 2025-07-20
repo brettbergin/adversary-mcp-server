@@ -4,7 +4,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -200,8 +200,9 @@ class TestGitDiffScanner:
         assert scanner._detect_language_from_path("test.txt") is None
         assert scanner._detect_language_from_path("README.md") is None
 
+    @patch("adversary_mcp_server.diff_scanner.ScanEngine")
     @patch("subprocess.run")
-    def test_run_git_command_success(self, mock_run):
+    def test_run_git_command_success(self, mock_run, mock_scan_engine):
         """Test successful git command execution."""
         mock_run.return_value = Mock(stdout="success output", stderr="")
 
@@ -217,8 +218,9 @@ class TestGitDiffScanner:
             check=True,
         )
 
+    @patch("adversary_mcp_server.diff_scanner.ScanEngine")
     @patch("subprocess.run")
-    def test_run_git_command_failure(self, mock_run):
+    def test_run_git_command_failure(self, mock_run, mock_scan_engine):
         """Test failed git command execution."""
         mock_run.side_effect = subprocess.CalledProcessError(
             1, "git", stderr="error message"

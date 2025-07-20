@@ -4,9 +4,8 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock, patch
 
-import pytest
 from click.testing import CliRunner
 
 from adversary_mcp_server.cli import _display_scan_results, _save_results_to_file, cli
@@ -244,7 +243,7 @@ class TestCLICommandsCoverage:
 
             # Verify file was created
             assert Path(output_file).exists()
-            with open(output_file, "r") as f:
+            with open(output_file) as f:
                 data = json.load(f)
             assert len(data) == 1
             assert data[0]["id"] == "test_rule"
@@ -362,12 +361,12 @@ class TestCLIScanCommand:
 
     @patch("adversary_mcp_server.cli.CredentialManager")
     @patch("adversary_mcp_server.cli.ThreatEngine")
-    @patch("adversary_mcp_server.cli.ASTScanner")
+    @patch("adversary_mcp_server.cli.ScanEngine")
     @patch("adversary_mcp_server.cli.console")
     def test_scan_file_basic(
         self,
         mock_console,
-        mock_scanner,
+        mock_scan_engine,
         mock_threat_engine,
         mock_cred_manager,
     ):
@@ -379,19 +378,23 @@ class TestCLIScanCommand:
         mock_engine = Mock()
         mock_threat_engine.return_value = mock_engine
 
-        mock_scanner_instance = Mock()
-        mock_scanner.return_value = mock_scanner_instance
+        mock_scan_engine_instance = Mock()
+        mock_scan_engine.return_value = mock_scan_engine_instance
 
-        threat = ThreatMatch(
-            rule_id="test_rule",
-            rule_name="Test Rule",
-            description="Test description",
-            category=Category.INJECTION,
-            severity=Severity.HIGH,
-            file_path="test.py",
-            line_number=1,
-        )
-        mock_scanner_instance.scan_code.return_value = [threat]
+        # Create a mock EnhancedScanResult
+        mock_scan_result = Mock()
+        mock_scan_result.all_threats = [
+            ThreatMatch(
+                rule_id="test_rule",
+                rule_name="Test Rule",
+                description="Test description",
+                category=Category.INJECTION,
+                severity=Severity.HIGH,
+                file_path="test.py",
+                line_number=1,
+            )
+        ]
+        mock_scan_engine_instance.scan_file.return_value = mock_scan_result
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write("print('hello')")
@@ -403,14 +406,14 @@ class TestCLIScanCommand:
             )
 
             assert result.exit_code == 0
-            mock_scanner_instance.scan_code.assert_called_once()
+            mock_scan_engine_instance.scan_file.assert_called_once()
 
         finally:
             os.unlink(test_file)
 
     @patch("adversary_mcp_server.cli.CredentialManager")
     @patch("adversary_mcp_server.cli.ThreatEngine")
-    @patch("adversary_mcp_server.cli.ASTScanner")
+    @patch("adversary_mcp_server.cli.ScanEngine")
     @patch("adversary_mcp_server.cli.console")
     def test_scan_directory_basic(
         self,
@@ -427,9 +430,9 @@ class TestCLIScanCommand:
         mock_engine = Mock()
         mock_threat_engine.return_value = mock_engine
 
-        mock_scanner_instance = Mock()
-        mock_scanner.return_value = mock_scanner_instance
-        mock_scanner_instance.scan_code.return_value = []
+        mock_scan_engine_instance = Mock()
+        mock_scanner.return_value = mock_scan_engine_instance
+        mock_scan_engine_instance.scan_directory.return_value = []
 
         with tempfile.TemporaryDirectory() as temp_dir:
             # Create a test file in the directory
@@ -442,12 +445,12 @@ class TestCLIScanCommand:
             )
 
             assert result.exit_code == 0
-            # CLI calls scan_code for each file, not scan_directory
-            mock_scanner_instance.scan_code.assert_called()
+            # CLI calls scan_directory for directory scanning
+            mock_scan_engine_instance.scan_directory.assert_called_once()
 
     @patch("adversary_mcp_server.cli.CredentialManager")
     @patch("adversary_mcp_server.cli.ThreatEngine")
-    @patch("adversary_mcp_server.cli.ASTScanner")
+    @patch("adversary_mcp_server.cli.ScanEngine")
     @patch("adversary_mcp_server.cli.console")
     def test_scan_with_exploits(
         self,
@@ -464,19 +467,23 @@ class TestCLIScanCommand:
         mock_engine = Mock()
         mock_threat_engine.return_value = mock_engine
 
-        mock_scanner_instance = Mock()
-        mock_scanner.return_value = mock_scanner_instance
+        mock_scan_engine_instance = Mock()
+        mock_scanner.return_value = mock_scan_engine_instance
 
-        threat = ThreatMatch(
-            rule_id="test_rule",
-            rule_name="Test Rule",
-            description="Test description",
-            category=Category.INJECTION,
-            severity=Severity.HIGH,
-            file_path="test.py",
-            line_number=1,
-        )
-        mock_scanner_instance.scan_code.return_value = [threat]
+        # Create a mock EnhancedScanResult
+        mock_scan_result = Mock()
+        mock_scan_result.all_threats = [
+            ThreatMatch(
+                rule_id="test_rule",
+                rule_name="Test Rule",
+                description="Test description",
+                category=Category.INJECTION,
+                severity=Severity.HIGH,
+                file_path="test.py",
+                line_number=1,
+            )
+        ]
+        mock_scan_engine_instance.scan_file.return_value = mock_scan_result
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write("print('hello')")
@@ -496,7 +503,7 @@ class TestCLIScanCommand:
 
     @patch("adversary_mcp_server.cli.CredentialManager")
     @patch("adversary_mcp_server.cli.ThreatEngine")
-    @patch("adversary_mcp_server.cli.ASTScanner")
+    @patch("adversary_mcp_server.cli.ScanEngine")
     @patch("adversary_mcp_server.cli.console")
     @patch("adversary_mcp_server.cli._save_results_to_file")
     def test_scan_with_output_file(
@@ -515,19 +522,23 @@ class TestCLIScanCommand:
         mock_engine = Mock()
         mock_threat_engine.return_value = mock_engine
 
-        mock_scanner_instance = Mock()
-        mock_scanner.return_value = mock_scanner_instance
+        mock_scan_engine_instance = Mock()
+        mock_scanner.return_value = mock_scan_engine_instance
 
-        threat = ThreatMatch(
-            rule_id="test_rule",
-            rule_name="Test Rule",
-            description="Test description",
-            category=Category.INJECTION,
-            severity=Severity.HIGH,
-            file_path="test.py",
-            line_number=1,
-        )
-        mock_scanner_instance.scan_code.return_value = [threat]
+        # Create a mock EnhancedScanResult
+        mock_scan_result = Mock()
+        mock_scan_result.all_threats = [
+            ThreatMatch(
+                rule_id="test_rule",
+                rule_name="Test Rule",
+                description="Test description",
+                category=Category.INJECTION,
+                severity=Severity.HIGH,
+                file_path="test.py",
+                line_number=1,
+            )
+        ]
+        mock_scan_engine_instance.scan_file.return_value = mock_scan_result
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write("print('hello')")
@@ -550,7 +561,7 @@ class TestCLIScanCommand:
 
     @patch("adversary_mcp_server.cli.CredentialManager")
     @patch("adversary_mcp_server.cli.ThreatEngine")
-    @patch("adversary_mcp_server.cli.ASTScanner")
+    @patch("adversary_mcp_server.cli.ScanEngine")
     @patch("adversary_mcp_server.cli.console")
     def test_scan_command_with_mocked_error(
         self, mock_console, mock_scanner, mock_threat_engine, mock_cred_manager
@@ -606,7 +617,7 @@ class TestCLIUtilityFunctions:
 
             # Verify file was created
             assert Path(output_file).exists()
-            with open(output_file, "r") as f:
+            with open(output_file) as f:
                 data = json.load(f)
             assert len(data) == 1
             assert data[0]["rule_id"] == "test_rule"
@@ -636,7 +647,7 @@ class TestCLIUtilityFunctions:
 
             # Verify file was created
             assert Path(output_file).exists()
-            with open(output_file, "r") as f:
+            with open(output_file) as f:
                 content = f.read()
             assert "test_rule" in content
             assert "Test Rule" in content

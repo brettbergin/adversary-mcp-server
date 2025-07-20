@@ -3,14 +3,13 @@
 import os
 import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import Mock
 
 import pytest
 
 # Add the src directory to the path to import modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from adversary_mcp_server.diff_scanner import GitDiffError
 from adversary_mcp_server.server import AdversaryMCPServer, AdversaryToolError
 from adversary_mcp_server.threat_engine import Category, Severity, ThreatMatch
 
@@ -292,6 +291,7 @@ class TestServerDiffScanIntegration:
             target_branch="main",
             working_dir=Path(".").resolve(),
             use_llm=False,
+            use_semgrep=True,
             severity_threshold=Severity.HIGH,
         )
 
@@ -527,6 +527,7 @@ class TestServerDiffScanIntegrationComplete:
             target_branch="main",
             working_dir=Path(".").resolve(),
             use_llm=False,
+            use_semgrep=True,
             severity_threshold=Severity.MEDIUM,
         )
         server.exploit_generator.generate_exploits.assert_called_once()
