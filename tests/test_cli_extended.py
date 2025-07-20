@@ -212,7 +212,7 @@ class TestCLIComponentsWithMocks:
 
         assert has_config is False
 
-    @patch("adversary_mcp_server.cli.ASTScanner")
+    @patch("adversary_mcp_server.cli.ScanEngine")
     @patch("adversary_mcp_server.cli.ThreatEngine")
     @patch("adversary_mcp_server.cli.console")
     def test_scan_functionality_mocked(
@@ -237,16 +237,19 @@ class TestCLIComponentsWithMocks:
             line_number=1,
         )
 
-        mock_scanner_instance.scan_file.return_value = [threat]
+        # Create a mock EnhancedScanResult
+        mock_scan_result = Mock()
+        mock_scan_result.all_threats = [threat]
+        mock_scanner_instance.scan_file.return_value = mock_scan_result
 
         # Simulate the scan logic
         scanner = mock_scanner(mock_engine)
-        results = scanner.scan_file("test_file.py")
+        result = scanner.scan_file("test_file.py")
 
-        assert len(results) == 1
-        assert results[0].rule_name == "Test Vulnerability"
+        assert len(result.all_threats) == 1
+        assert result.all_threats[0].rule_name == "Test Vulnerability"
 
-    @patch("adversary_mcp_server.cli.ASTScanner")
+    @patch("adversary_mcp_server.cli.ScanEngine")
     @patch("adversary_mcp_server.cli.ThreatEngine")
     @patch("adversary_mcp_server.cli.console")
     def test_scan_code_input(self, mock_console, mock_threat_engine, mock_scanner):
@@ -269,14 +272,17 @@ class TestCLIComponentsWithMocks:
             code_snippet="eval(user_input)",
         )
 
-        mock_scanner_instance.scan_code.return_value = [threat]
+        # Create a mock EnhancedScanResult
+        mock_scan_result = Mock()
+        mock_scan_result.all_threats = [threat]
+        mock_scanner_instance.scan_code.return_value = mock_scan_result
 
         # Simulate scanning code
         scanner = mock_scanner(mock_engine)
-        results = scanner.scan_code("eval(user_input)", "input", Language.PYTHON)
+        result = scanner.scan_code("eval(user_input)", "input", Language.PYTHON)
 
-        assert len(results) == 1
-        assert results[0].severity == Severity.CRITICAL
+        assert len(result.all_threats) == 1
+        assert result.all_threats[0].severity == Severity.CRITICAL
 
     @patch("adversary_mcp_server.cli.ThreatEngine")
     @patch("adversary_mcp_server.cli.console")
@@ -355,7 +361,7 @@ class TestCLIComponentsWithMocks:
         assert rule.cwe_id == "CWE-89"
         assert len(rule.languages) == 2
 
-    @patch("adversary_mcp_server.cli.ASTScanner")
+    @patch("adversary_mcp_server.cli.ScanEngine")
     @patch("adversary_mcp_server.cli.ThreatEngine")
     @patch("adversary_mcp_server.cli.console")
     def test_demo_command_functionality(
@@ -389,28 +395,34 @@ class TestCLIComponentsWithMocks:
             line_number=1,
         )
 
+        # Create mock EnhancedScanResults
+        python_result = Mock()
+        python_result.all_threats = [python_threat]
+        js_result = Mock()
+        js_result.all_threats = [js_threat]
+
         # Configure mock to return different threats for different calls
         mock_scanner_instance.scan_code.side_effect = [
-            [python_threat],  # First call (Python)
-            [js_threat],  # Second call (JavaScript)
+            python_result,  # First call (Python)
+            js_result,  # Second call (JavaScript)
         ]
 
         # Test demo functionality
         scanner = mock_scanner(mock_engine)
 
         # Simulate Python demo scan
-        python_results = scanner.scan_code(
+        python_scan_result = scanner.scan_code(
             "dangerous_python_code", "demo.py", Language.PYTHON
         )
-        assert len(python_results) == 1
-        assert python_results[0].rule_id == "python_demo"
+        assert len(python_scan_result.all_threats) == 1
+        assert python_scan_result.all_threats[0].rule_id == "python_demo"
 
         # Simulate JavaScript demo scan
-        js_results = scanner.scan_code(
+        js_scan_result = scanner.scan_code(
             "dangerous_js_code", "demo.js", Language.JAVASCRIPT
         )
-        assert len(js_results) == 1
-        assert js_results[0].rule_id == "js_demo"
+        assert len(js_scan_result.all_threats) == 1
+        assert js_scan_result.all_threats[0].rule_id == "js_demo"
 
     def test_cli_app_structure(self):
         """Test that CLI app has proper structure."""

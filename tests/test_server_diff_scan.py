@@ -292,6 +292,7 @@ class TestServerDiffScanIntegration:
             target_branch="main",
             working_dir=Path(".").resolve(),
             use_llm=False,
+            use_semgrep=True,
             severity_threshold=Severity.HIGH,
         )
 
@@ -527,6 +528,7 @@ class TestServerDiffScanIntegrationComplete:
             target_branch="main",
             working_dir=Path(".").resolve(),
             use_llm=False,
+            use_semgrep=True,
             severity_threshold=Severity.MEDIUM,
         )
         server.exploit_generator.generate_exploits.assert_called_once()

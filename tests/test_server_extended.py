@@ -126,6 +126,7 @@ class TestAdversaryMCPServerExtended:
                 mock_result = EnhancedScanResult(
                     rules_threats=[threat],
                     llm_threats=[],
+                    semgrep_threats=[],
                     file_path=temp_file,
                     language=Language.PYTHON,
                     scan_metadata={
@@ -183,6 +184,7 @@ class TestAdversaryMCPServerExtended:
                 mock_result = EnhancedScanResult(
                     rules_threats=[threat],
                     llm_threats=[],
+                    semgrep_threats=[],
                     file_path=str(test_file),
                     language=Language.PYTHON,
                     scan_metadata={
@@ -520,6 +522,7 @@ class TestAdversaryMCPServerExtended:
                 mock_result = EnhancedScanResult(
                     rules_threats=[threat],
                     llm_threats=[],
+                    semgrep_threats=[],
                     file_path=threat.file_path,
                     language=Language.PYTHON,
                     scan_metadata={

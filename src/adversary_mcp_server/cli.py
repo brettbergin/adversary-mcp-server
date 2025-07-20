@@ -16,7 +16,6 @@ from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
 from . import get_version
-from .ast_scanner import ASTScanner
 from .credential_manager import CredentialManager, SecurityConfig
 from .diff_scanner import GitDiffScanner
 from .exploit_generator import ExploitGenerator
@@ -262,7 +261,6 @@ def scan(
     try:
         # Initialize scanner components
         threat_engine = ThreatEngine()
-        ast_scanner = ASTScanner(threat_engine)
 
         # Load configuration
         try:
@@ -877,15 +875,18 @@ function calculate(expression) {
 
     # Initialize scanner
     threat_engine = ThreatEngine()
-    ast_scanner = ASTScanner(threat_engine)
+    credential_manager = CredentialManager()
+    scan_engine = ScanEngine(threat_engine, credential_manager)
 
     # Scan Python code
     console.print("\n🔍 [bold]Scanning Python Code...[/bold]")
-    python_threats = ast_scanner.scan_code(python_code, Language.PYTHON, "demo.py")
+    python_result = scan_engine.scan_code(python_code, "demo.py", Language.PYTHON)
+    python_threats = python_result.all_threats
 
     # Scan JavaScript code
     console.print("\n🔍 [bold]Scanning JavaScript Code...[/bold]")
-    js_threats = ast_scanner.scan_code(js_code, Language.JAVASCRIPT, "demo.js")
+    js_result = scan_engine.scan_code(js_code, "demo.js", Language.JAVASCRIPT)
+    js_threats = js_result.all_threats
 
     # Display results
     all_threats = python_threats + js_threats

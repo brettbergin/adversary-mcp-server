@@ -682,7 +682,7 @@ graph TB
     
     Q --> R[Semgrep Engine]
     R --> S[Industry Rules Database]
-    R --> T[Pro Rules (Optional)]
+    R --> T[Pro Rules - Optional]
     
     C --> J[Threat Matches]
     D --> K[LLM Findings]
