@@ -2,6 +2,7 @@
 
 import re
 import shutil
+import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -141,33 +142,28 @@ class ThreatRule(BaseModel):
 class ThreatMatch:
     """A detected security threat."""
 
+    # Required fields
     rule_id: str
     rule_name: str
     description: str
     category: Category
     severity: Severity
-
-    # Location information
     file_path: str
     line_number: int
-    column_number: int = 0
 
-    # Code context
+    # Optional fields with defaults
+    uuid: str = field(default_factory=lambda: str(uuid.uuid4()))
+    column_number: int = 0
     code_snippet: str = ""
     function_name: str | None = None
-
-    # Exploit information
     exploit_examples: list[str] = field(default_factory=list)
-
-    # Remediation
     remediation: str = ""
     references: list[str] = field(default_factory=list)
-
-    # Metadata
     cwe_id: str | None = None
     owasp_category: str | None = None
     confidence: float = 1.0  # 0.0 to 1.0
     source: str = "rules"  # Scanner source: "rules", "semgrep", "llm"
+    is_false_positive: bool = False  # False positive tracking
 
 
 def get_user_rules_directory() -> Path:

@@ -257,8 +257,8 @@ def status():
 @click.option(
     "--severity",
     type=click.Choice(["low", "medium", "high", "critical"]),
-    default="medium",
-    help="Minimum severity threshold",
+    default=None,
+    help="Minimum severity threshold (uses global config if not specified)",
 )
 @click.option(
     "--output",
@@ -303,7 +303,7 @@ def status():
 def scan(
     target: str | None,
     language: str | None,
-    severity: str,
+    severity: str | None,
     output: str | None,
     recursive: bool,
     include_exploits: bool,
@@ -329,6 +329,11 @@ def scan(
         except Exception:
             config = SecurityConfig()
             console.print("⚠️  Using default configuration", style="yellow")
+
+        # Use global severity threshold if not specified
+        if severity is None:
+            severity = config.severity_threshold
+            console.print(f"🔧 Using global severity threshold: {severity}", style="blue")
 
         # Handle git diff-aware scanning
         if diff:
@@ -959,6 +964,85 @@ function calculate(expression) {
 
 
 @cli.command()
+@click.argument("finding_uuid")
+@click.option(
+    "--reason",
+    type=str,
+    help="Reason for marking as false positive",
+)
+@click.option(
+    "--confirm/--no-confirm",
+    default=True,
+    help="Require confirmation before marking as false positive",
+)
+def mark_false_positive(finding_uuid: str, reason: str | None, confirm: bool):
+    """Mark a finding as a false positive by UUID."""
+    try:
+        from .false_positive_manager import FalsePositiveManager
+        
+        fp_manager = FalsePositiveManager()
+        
+        if confirm and not Confirm.ask(f"Mark finding {finding_uuid} as false positive?"):
+            console.print("Operation cancelled", style="yellow")
+            return
+            
+        fp_manager.mark_false_positive(finding_uuid, reason or "User marked as false positive")
+        console.print(f"✅ Finding {finding_uuid} marked as false positive", style="green")
+        
+    except Exception as e:
+        console.print(f"❌ Failed to mark as false positive: {e}", style="red")
+        sys.exit(1)
+
+
+@cli.command()
+@click.argument("finding_uuid")
+def unmark_false_positive(finding_uuid: str):
+    """Remove false positive marking from a finding by UUID."""
+    try:
+        from .false_positive_manager import FalsePositiveManager
+        
+        fp_manager = FalsePositiveManager()
+        fp_manager.unmark_false_positive(finding_uuid)
+        console.print(f"✅ Finding {finding_uuid} unmarked as false positive", style="green")
+        
+    except Exception as e:
+        console.print(f"❌ Failed to unmark false positive: {e}", style="red")
+        sys.exit(1)
+
+
+@cli.command()
+def list_false_positives():
+    """List all findings marked as false positives."""
+    try:
+        from .false_positive_manager import FalsePositiveManager
+        
+        fp_manager = FalsePositiveManager()
+        false_positives = fp_manager.get_false_positives()
+        
+        if not false_positives:
+            console.print("No false positives found", style="green")
+            return
+            
+        table = Table(title=f"False Positives ({len(false_positives)} found)")
+        table.add_column("UUID", style="cyan")
+        table.add_column("Reason", style="magenta")
+        table.add_column("Marked Date", style="yellow")
+        
+        for fp in false_positives:
+            table.add_row(
+                fp["uuid"],
+                fp.get("reason", "No reason provided"),
+                fp.get("marked_date", "Unknown")
+            )
+            
+        console.print(table)
+        
+    except Exception as e:
+        console.print(f"❌ Failed to list false positives: {e}", style="red")
+        sys.exit(1)
+
+
+@cli.command()
 def reset():
     """Reset all configuration and credentials."""
     if Confirm.ask("Are you sure you want to reset all configuration?"):
@@ -1057,6 +1141,7 @@ def _save_results_to_file(threats, output_file):
         for threat in threats:
             results.append(
                 {
+                    "uuid": threat.uuid,
                     "rule_id": threat.rule_id,
                     "rule_name": threat.rule_name,
                     "description": threat.description,
@@ -1074,6 +1159,7 @@ def _save_results_to_file(threats, output_file):
                     "owasp_category": threat.owasp_category,
                     "confidence": threat.confidence,
                     "source": getattr(threat, "source", "rules"),
+                    "is_false_positive": threat.is_false_positive,
                 }
             )
 

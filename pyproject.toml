@@ -183,6 +183,14 @@ ignore = [
     "S701",  # jinja2 autoescape disabled
 ]
 
+[tool.bandit]
+exclude_dirs = ["tests", ".venv", "build", "dist"]
+skips = [
+    "B101",  # assert statements in tests
+    "B603",  # subprocess calls with shell=True (needed for some tools)
+    "B607",  # partial executable paths (needed for semgrep/tools)
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]

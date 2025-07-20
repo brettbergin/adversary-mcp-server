@@ -6,6 +6,7 @@ from typing import Any
 
 from .ast_scanner import ASTScanner
 from .credential_manager import CredentialManager
+from .false_positive_manager import FalsePositiveManager
 from .llm_scanner import LLMScanner
 from .semgrep_scanner import SemgrepScanner
 from .threat_engine import Language, Severity, ThreatEngine, ThreatMatch
@@ -175,6 +176,7 @@ class ScanEngine:
         """
         self.threat_engine = threat_engine or ThreatEngine()
         self.credential_manager = credential_manager or CredentialManager()
+        self.false_positive_manager = FalsePositiveManager()
 
         # Set LLM analysis based on parameter
         self.enable_llm_analysis = enable_llm_analysis
@@ -259,6 +261,7 @@ class ScanEngine:
                     config=config.semgrep_config,
                     rules=config.semgrep_rules,
                     timeout=config.semgrep_timeout,
+                    severity_threshold=severity_threshold,
                 )
                 scan_metadata["semgrep_scan_success"] = True
                 scan_metadata["semgrep_scan_reason"] = "analysis_completed"
@@ -315,6 +318,11 @@ class ScanEngine:
             semgrep_threats = self._filter_by_severity(
                 semgrep_threats, severity_threshold
             )
+
+        # Apply false positive filtering
+        rules_threats = self.false_positive_manager.filter_false_positives(rules_threats)
+        llm_threats = self.false_positive_manager.filter_false_positives(llm_threats)
+        semgrep_threats = self.false_positive_manager.filter_false_positives(semgrep_threats)
 
         return EnhancedScanResult(
             file_path=file_path,
@@ -442,6 +450,7 @@ class ScanEngine:
                     timeout=config.semgrep_timeout
                     * 2,  # Double timeout for directories
                     recursive=recursive,
+                    severity_threshold=severity_threshold,
                 )
                 semgrep_metadata = {
                     "semgrep_scan_success": True,

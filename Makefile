@@ -1,4 +1,4 @@
-.PHONY: help install test test-fast test-cov test-html lint format clean check-all build upload
+.PHONY: help install test test-fast test-cov test-html lint format clean check-all build upload install-pre-commit pre-commit pre-commit-update uninstall-pre-commit
 .DEFAULT_GOAL := help
 
 help: ## Show this help message
@@ -84,14 +84,14 @@ build: ## Build package for distribution
 
 check-all: lint test security-scan ## Run all checks (linting, tests, and security scans)
 
-dev-setup: install ## Set up development environment
+dev-setup: install install-pre-commit ## Set up development environment
 	@echo "Development environment setup complete!"
 	@echo "Run 'make test' to run tests"
 	@echo "Run 'make lint' to run linting"
 	@echo "Run 'make security-scan' to run security scans"
 	@echo "Run 'make help' to see all available commands"
 
-dev-setup-uv: install-uv ## Set up development environment using uv (faster)
+dev-setup-uv: install-uv install-pre-commit ## Set up development environment using uv (faster)
 	@echo "Development environment setup complete with uv!"
 	@echo "Run 'make test' to run tests"
 	@echo "Run 'make lint' to run linting"
@@ -126,4 +126,19 @@ demo: ## Run a demo of the adversary MCP server
 	python -m adversary_mcp_server.cli demo
 
 scan-example: ## Run security scan on example files
-	python -m adversary_mcp_server.cli scan examples/ 
+	python -m adversary_mcp_server.cli scan examples/
+
+# Pre-commit hooks
+install-pre-commit: ## Install pre-commit hooks
+	pre-commit install
+	@echo "Pre-commit hooks installed. They will run automatically on commit."
+
+pre-commit: ## Run pre-commit hooks on all files
+	pre-commit run --all-files
+
+pre-commit-update: ## Update pre-commit hook versions
+	pre-commit autoupdate
+
+uninstall-pre-commit: ## Uninstall pre-commit hooks
+	pre-commit uninstall
+	@echo "Pre-commit hooks uninstalled." 

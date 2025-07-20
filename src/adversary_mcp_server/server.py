@@ -20,6 +20,7 @@ from .ast_scanner import ASTScanner
 from .credential_manager import CredentialManager
 from .diff_scanner import GitDiffScanner
 from .exploit_generator import ExploitGenerator
+from .false_positive_manager import FalsePositiveManager
 from .scan_engine import EnhancedScanResult, ScanEngine
 from .threat_engine import Category, Language, Severity, ThreatEngine, ThreatMatch
 
@@ -69,6 +70,7 @@ class AdversaryMCPServer:
         self.scan_engine = ScanEngine(self.threat_engine, self.credential_manager)
         self.exploit_generator = ExploitGenerator(self.credential_manager)
         self.diff_scanner = GitDiffScanner(self.scan_engine)
+        self.false_positive_manager = FalsePositiveManager()
 
         # Set up server handlers
         self._setup_handlers()
@@ -378,6 +380,47 @@ class AdversaryMCPServer:
                         "required": [],
                     },
                 ),
+                Tool(
+                    name="adv_mark_false_positive",
+                    description="Mark a finding as a false positive",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "finding_uuid": {
+                                "type": "string",
+                                "description": "UUID of the finding to mark as false positive",
+                            },
+                            "reason": {
+                                "type": "string",
+                                "description": "Reason for marking as false positive",
+                            },
+                        },
+                        "required": ["finding_uuid"],
+                    },
+                ),
+                Tool(
+                    name="adv_unmark_false_positive",
+                    description="Remove false positive marking from a finding",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "finding_uuid": {
+                                "type": "string",
+                                "description": "UUID of the finding to unmark",
+                            },
+                        },
+                        "required": ["finding_uuid"],
+                    },
+                ),
+                Tool(
+                    name="adv_list_false_positives",
+                    description="List all findings marked as false positives",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {},
+                        "required": [],
+                    },
+                ),
             ]
 
         @self.server.call_tool()
@@ -406,6 +449,12 @@ class AdversaryMCPServer:
                     return await self._handle_get_status()
                 elif name == "adv_get_version":
                     return await self._handle_get_version()
+                elif name == "adv_mark_false_positive":
+                    return await self._handle_mark_false_positive(arguments)
+                elif name == "adv_unmark_false_positive":
+                    return await self._handle_unmark_false_positive(arguments)
+                elif name == "adv_list_false_positives":
+                    return await self._handle_list_false_positives(arguments)
                 else:
                     raise AdversaryToolError(f"Unknown tool: {name}")
             except Exception as e:
@@ -1454,6 +1503,7 @@ class AdversaryMCPServer:
         threats_data = []
         for threat in scan_result.all_threats:
             threat_data = {
+                "uuid": threat.uuid,
                 "rule_id": threat.rule_id,
                 "rule_name": threat.rule_name,
                 "description": threat.description,
@@ -1472,6 +1522,7 @@ class AdversaryMCPServer:
                 "remediation": getattr(threat, "remediation", ""),
                 "references": getattr(threat, "references", []),
                 "exploit_examples": getattr(threat, "exploit_examples", []),
+                "is_false_positive": getattr(threat, "is_false_positive", False),
             }
             threats_data.append(threat_data)
 
@@ -1547,6 +1598,7 @@ class AdversaryMCPServer:
 
             for threat in scan_result.all_threats:
                 threat_data = {
+                    "uuid": threat.uuid,
                     "rule_id": threat.rule_id,
                     "rule_name": threat.rule_name,
                     "description": threat.description,
@@ -1565,6 +1617,7 @@ class AdversaryMCPServer:
                     "remediation": getattr(threat, "remediation", ""),
                     "references": getattr(threat, "references", []),
                     "exploit_examples": getattr(threat, "exploit_examples", []),
+                    "is_false_positive": getattr(threat, "is_false_positive", False),
                 }
                 all_threats.append(threat_data)
 
@@ -1622,6 +1675,7 @@ class AdversaryMCPServer:
                 file_threat_count += len(scan_result.all_threats)
                 for threat in scan_result.all_threats:
                     threat_data = {
+                        "uuid": threat.uuid,
                         "rule_id": threat.rule_id,
                         "rule_name": threat.rule_name,
                         "description": threat.description,
@@ -1640,6 +1694,7 @@ class AdversaryMCPServer:
                         "remediation": getattr(threat, "remediation", ""),
                         "references": getattr(threat, "references", []),
                         "exploit_examples": getattr(threat, "exploit_examples", []),
+                        "is_false_positive": getattr(threat, "is_false_positive", False),
                     }
                     all_threats.append(threat_data)
 
@@ -1780,6 +1835,81 @@ class AdversaryMCPServer:
                 )
 
         return result
+
+    async def _handle_mark_false_positive(
+        self, arguments: dict[str, Any]
+    ) -> list[types.TextContent]:
+        """Handle mark false positive request."""
+        try:
+            finding_uuid = arguments.get("finding_uuid")
+            reason = arguments.get("reason", "Marked as false positive via MCP")
+            
+            if not finding_uuid:
+                raise AdversaryToolError("finding_uuid is required")
+                
+            self.false_positive_manager.mark_false_positive(finding_uuid, reason)
+            
+            result = f"✅ **Finding marked as false positive**\n\n"
+            result += f"**UUID:** {finding_uuid}\n"
+            result += f"**Reason:** {reason}\n"
+            
+            return [types.TextContent(type="text", text=result)]
+            
+        except Exception as e:
+            logger.error(f"Error marking false positive: {e}")
+            raise AdversaryToolError(f"Failed to mark false positive: {str(e)}")
+
+    async def _handle_unmark_false_positive(
+        self, arguments: dict[str, Any]
+    ) -> list[types.TextContent]:
+        """Handle unmark false positive request."""
+        try:
+            finding_uuid = arguments.get("finding_uuid")
+            
+            if not finding_uuid:
+                raise AdversaryToolError("finding_uuid is required")
+                
+            success = self.false_positive_manager.unmark_false_positive(finding_uuid)
+            
+            if success:
+                result = f"✅ **Finding unmarked as false positive**\n\n"
+                result += f"**UUID:** {finding_uuid}\n"
+            else:
+                result = f"⚠️ **Finding not found in false positives**\n\n"
+                result += f"**UUID:** {finding_uuid}\n"
+            
+            return [types.TextContent(type="text", text=result)]
+            
+        except Exception as e:
+            logger.error(f"Error unmarking false positive: {e}")
+            raise AdversaryToolError(f"Failed to unmark false positive: {str(e)}")
+
+    async def _handle_list_false_positives(
+        self, arguments: dict[str, Any]
+    ) -> list[types.TextContent]:
+        """Handle list false positives request."""
+        try:
+            false_positives = self.false_positive_manager.get_false_positives()
+            
+            result = f"# False Positives ({len(false_positives)} found)\n\n"
+            
+            if not false_positives:
+                result += "No false positives found.\n"
+                return [types.TextContent(type="text", text=result)]
+            
+            for fp in false_positives:
+                result += f"## {fp['uuid']}\n\n"
+                result += f"**Reason:** {fp.get('reason', 'No reason provided')}\n"
+                result += f"**Marked:** {fp.get('marked_date', 'Unknown')}\n"
+                if fp.get('last_updated') != fp.get('marked_date'):
+                    result += f"**Updated:** {fp.get('last_updated', 'Unknown')}\n"
+                result += "\n---\n\n"
+            
+            return [types.TextContent(type="text", text=result)]
+            
+        except Exception as e:
+            logger.error(f"Error listing false positives: {e}")
+            raise AdversaryToolError(f"Failed to list false positives: {str(e)}")
 
 
 async def async_main() -> None:

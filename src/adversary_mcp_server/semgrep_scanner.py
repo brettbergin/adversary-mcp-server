@@ -160,9 +160,14 @@ class SemgrepScanner:
         """
         rule_id = finding.get("check_id", "semgrep-unknown")
         message = finding.get("message", "Security issue detected by Semgrep")
-        severity = self._map_semgrep_severity(
-            finding.get("metadata", {}).get("severity", "info")
+        # Extract severity from multiple possible locations in semgrep output
+        severity_str = (
+            finding.get("metadata", {}).get("severity") or
+            finding.get("extra", {}).get("severity") or
+            finding.get("severity") or
+            "info"  # Default fallback
         )
+        severity = self._map_semgrep_severity(severity_str)
         category = self._map_semgrep_category(rule_id, message)
 
         # Extract location information
@@ -208,6 +213,7 @@ class SemgrepScanner:
         config: str | None = None,
         rules: str | None = None,
         timeout: int = 60,
+        severity_threshold: Severity | None = None,
     ) -> list[ThreatMatch]:
         """Scan source code using Semgrep.
 
@@ -218,6 +224,7 @@ class SemgrepScanner:
             config: Semgrep config to use (default: auto)
             rules: Specific rules to use
             timeout: Timeout in seconds
+            severity_threshold: Minimum severity threshold for filtering
 
         Returns:
             List of ThreatMatch instances
@@ -290,6 +297,10 @@ class SemgrepScanner:
                 if result.stderr:
                     logger.debug(f"Semgrep stderr: {result.stderr}")
 
+                # Apply severity filtering if specified
+                if severity_threshold:
+                    threats = self._filter_by_severity(threats, severity_threshold)
+
                 logger.info(f"Semgrep found {len(threats)} security issues")
                 return threats
 
@@ -312,6 +323,7 @@ class SemgrepScanner:
         config: str | None = None,
         rules: str | None = None,
         timeout: int = 60,
+        severity_threshold: Severity | None = None,
     ) -> list[ThreatMatch]:
         """Scan a file using Semgrep.
 
@@ -321,6 +333,7 @@ class SemgrepScanner:
             config: Semgrep config to use
             rules: Specific rules to use
             timeout: Timeout in seconds
+            severity_threshold: Minimum severity threshold for filtering
 
         Returns:
             List of ThreatMatch instances
@@ -344,6 +357,7 @@ class SemgrepScanner:
                 config=config,
                 rules=rules,
                 timeout=timeout,
+                severity_threshold=severity_threshold,
             )
 
         except Exception as e:
@@ -365,6 +379,34 @@ class SemgrepScanner:
         }
         return extension_map.get(language, ".txt")
 
+    def _filter_by_severity(
+        self,
+        threats: list[ThreatMatch],
+        min_severity: Severity,
+    ) -> list[ThreatMatch]:
+        """Filter threats by minimum severity level.
+
+        Args:
+            threats: List of threats to filter
+            min_severity: Minimum severity level
+
+        Returns:
+            Filtered list of threats
+        """
+        severity_order = [
+            Severity.LOW,
+            Severity.MEDIUM,
+            Severity.HIGH,
+            Severity.CRITICAL,
+        ]
+        min_index = severity_order.index(min_severity)
+
+        return [
+            threat
+            for threat in threats
+            if severity_order.index(threat.severity) >= min_index
+        ]
+
     def scan_directory(
         self,
         directory_path: str,
@@ -372,6 +414,7 @@ class SemgrepScanner:
         rules: str | None = None,
         timeout: int = 120,
         recursive: bool = True,
+        severity_threshold: Severity | None = None,
     ) -> list[ThreatMatch]:
         """Scan entire directory using Semgrep efficiently.
 
@@ -381,6 +424,7 @@ class SemgrepScanner:
             rules: Specific rules to use
             timeout: Timeout in seconds (default: 120 for directories)
             recursive: Whether to scan subdirectories
+            severity_threshold: Minimum severity threshold for filtering
 
         Returns:
             List of ThreatMatch instances for all files in directory
@@ -441,6 +485,10 @@ class SemgrepScanner:
                                 f"Failed to convert Semgrep finding to threat: {e}"
                             )
                             continue
+
+                    # Apply severity filtering if specified
+                    if severity_threshold:
+                        threats = self._filter_by_severity(threats, severity_threshold)
 
                     return threats
 
