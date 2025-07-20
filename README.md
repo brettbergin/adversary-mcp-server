@@ -170,6 +170,8 @@ All scanning tools now support:
 ```json
 {
   "use_llm": true,              // Enable LLM prompts
+  "use_semgrep": true,          // Enable Semgrep static analysis
+  "output_format": "json",      // Output format: "text" or "json"
   "severity_threshold": "medium", // Filter by severity
   "include_exploits": true,       // Include exploit examples
   "confidence_threshold": 0.8     // AI confidence filtering
@@ -240,6 +242,152 @@ Use adv_diff_scan with severity_threshold="high" and working_directory="/path/to
 2. **Valid git repository**: The directory must contain a `.git` folder
 3. **Valid branches**: Both source and target branches must exist
 4. **Git available**: `git` command must be available in PATH
+
+---
+
+## **🆕 Semgrep Integration**
+
+### **Overview**
+
+The Adversary MCP Server now includes integrated Semgrep static analysis as a third scanning engine, providing comprehensive security coverage through:
+
+- **Built-in Rules Engine** (95+ custom rules)
+- **AI-Powered Analysis** (LLM prompts and insights) 
+- **Semgrep Static Analysis** (industry-standard rule database)
+
+### **Automatic Setup**
+
+Semgrep integration works out-of-the-box with automatic detection:
+
+```bash
+# Check if Semgrep is available
+adversary-mcp-cli status
+
+# The status command will show:
+# ✅ Semgrep: Available (Free tier)
+# or
+# ✅ Semgrep: Available (Pro tier) - if SEMGREP_APP_TOKEN is set
+```
+
+### **Free vs Pro Semgrep**
+
+The integration automatically detects your Semgrep configuration:
+
+#### **Free Semgrep** (Default)
+- Uses Semgrep's built-in rule database
+- No configuration required
+- Community rules and patterns
+
+#### **Semgrep Pro** (Automatic Detection)
+```bash
+# Set your Semgrep App Token for Pro features
+export SEMGREP_APP_TOKEN="your_semgrep_token_here"
+
+# Now all scans automatically use Pro features
+adversary-mcp-cli scan myproject/ --use-semgrep=true
+```
+
+### **Usage in MCP Tools**
+
+All MCP scanning tools support the `use_semgrep` parameter:
+
+```json
+{
+  "source_code": "eval(user_input)",
+  "file_path": "app.py", 
+  "language": "python",
+  "use_semgrep": true,        // Enable Semgrep scanning
+  "output_format": "json"     // Get structured JSON output
+}
+```
+
+### **CLI Usage**
+
+```bash
+# Enable Semgrep in CLI scans
+adversary-mcp-cli scan myproject/ --use-semgrep=true
+
+# Combine all three engines (Rules + AI + Semgrep)
+adversary-mcp-cli scan myproject/ --use-llm=true --use-semgrep=true
+
+# Semgrep-only scanning (disable other engines)
+adversary-mcp-cli scan myproject/ --use-llm=false --use-semgrep=true
+
+# Semgrep with git diff scanning
+adversary-mcp-cli scan --diff --use-semgrep=true --source-branch=main
+```
+
+### **Configuration Options**
+
+Semgrep behavior can be customized through configuration:
+
+```bash
+# Configure Semgrep settings
+adversary-mcp-cli configure
+# This will prompt for:
+# - Semgrep timeout (default: 60 seconds)
+# - Custom Semgrep config path (optional)
+# - Specific rules to use (optional)
+```
+
+Or set via environment:
+```bash
+export SEMGREP_APP_TOKEN="your_token"          # Enable Pro features
+export ADVERSARY_SEMGREP_TIMEOUT="120"        # Custom timeout
+export ADVERSARY_SEMGREP_CONFIG="/path/to/config.yml"  # Custom config
+```
+
+### **Smart Result Merging**
+
+The integration intelligently combines results from all three engines:
+
+```bash
+# Example output showing merged results
+adversary-mcp-cli scan app.py --use-llm=true --use-semgrep=true
+
+# Results will show:
+# Rules Engine: 2 threats found
+# Semgrep: 3 threats found  
+# LLM Analysis: 1 additional threat found
+# Total (after deduplication): 4 unique threats
+```
+
+### **JSON Output with Semgrep**
+
+Get structured output including Semgrep findings:
+
+```bash
+# JSON output with all engines
+adversary-mcp-cli scan app.py --use-semgrep=true --output=results.json
+
+# The JSON will include:
+# - rules_threats: Findings from built-in rules
+# - semgrep_threats: Findings from Semgrep
+# - llm_analysis: AI-generated prompts (if enabled)
+# - scan_metadata: Detailed statistics
+```
+
+### **Performance and Availability**
+
+- **Graceful Degradation**: If Semgrep is not installed, scanning continues with other engines
+- **Timeout Protection**: Configurable timeouts prevent hung scans
+- **Automatic Cleanup**: Temporary files are automatically cleaned up
+- **Error Handling**: Clear error messages for configuration issues
+
+### **Installation Requirements**
+
+Semgrep integration requires the Semgrep CLI tool:
+
+```bash
+# Install Semgrep (if not already installed)
+pip install semgrep
+
+# Verify installation
+semgrep --version
+
+# Check availability in Adversary MCP
+adversary-mcp-cli status
+```
 
 ---
 
@@ -435,6 +583,7 @@ The `scan` command now supports git diff-aware scanning with the following optio
 | `--severity` | Minimum severity threshold | `medium` |
 | `--include-exploits/--no-exploits` | Include exploit examples | `true` |
 | `--use-llm/--no-llm` | Enable AI analysis | `true` |
+| `--use-semgrep/--no-semgrep` | Enable Semgrep static analysis | `true` |
 | `--output` | Output results to JSON file | None |
 
 #### **Diff Scanning Examples:**
@@ -470,7 +619,7 @@ adversary-mcp-cli scan /path/to/repo --diff --source-branch=main --target-branch
 
 ## Security Coverage
 
-### **🆕 Comprehensive Hybrid Analysis (95+ Rules + AI)**
+### **🆕 Comprehensive Triple-Engine Analysis (95+ Rules + AI + Semgrep)**
 
 #### **Traditional Rule-Based Detection**
 - **Python** (25+ rules): SQL injection, command injection, deserialization, path traversal
@@ -486,6 +635,13 @@ adversary-mcp-cli scan /path/to/repo --diff --source-branch=main --target-branch
 - **Advanced Injection Variants**: Detects novel attack vectors
 - **Compliance Violations**: Recognizes regulatory requirement breaches
 - **Security Anti-Patterns**: Identifies poor security practices
+
+#### **🆕 Semgrep Static Analysis**
+- **Industry-Standard Scanning**: Leverages Semgrep's extensive rule database
+- **Free & Pro Support**: Automatically detects `SEMGREP_APP_TOKEN` for Pro features
+- **Smart Deduplication**: Intelligently merges Semgrep findings with other engine results
+- **Category Mapping**: Automatically maps Semgrep rule IDs to threat categories
+- **Performance Optimized**: Efficient scanning with configurable timeouts
 
 ### **🆕 Enhanced Standards Compliance**
 
@@ -508,13 +664,14 @@ adversary-mcp-cli scan /path/to/repo --diff --source-branch=main --target-branch
 
 ## 🏗️ Enhanced Architecture
 
-The v0.7.1 release features a **hybrid architecture** combining multiple analysis engines:
+The v0.7.7 release features a **triple-engine architecture** combining multiple analysis engines:
 
 ```mermaid
 graph TB
     A[Source Code] --> B[Enhanced Scanner]
     B --> C[AST Scanner]
     B --> D[🆕 LLM Analyzer]
+    B --> Q[🆕 Semgrep Scanner]
     
     C --> E[Rule Engine]
     E --> F[95+ Built-in Rules]
@@ -523,16 +680,23 @@ graph TB
     D --> H[LLM Service]
     H --> I[AI Security Analysis]
     
+    Q --> R[Semgrep Engine]
+    R --> S[Industry Rules Database]
+    R --> T[Pro Rules (Optional)]
+    
     C --> J[Threat Matches]
     D --> K[LLM Findings]
+    Q --> U[Semgrep Findings]
     
     J --> L[🆕 Intelligent Merger]
     K --> L
+    U --> L
     
     L --> M[Enhanced Results]
     M --> N[Confidence Scoring]
     M --> O[Deduplication]
     M --> P[Statistical Analysis]
+    M --> V[🆕 JSON Output]
     
     subgraph "🆕 AI Enhancement"
         D
@@ -549,12 +713,21 @@ graph TB
         J
     end
     
-    subgraph "🆕 Hybrid Output"
+    subgraph "🆕 Semgrep Integration"
+        Q
+        R
+        S
+        T
+        U
+    end
+    
+    subgraph "🆕 Triple-Engine Output"
         L
         M
         N
         O
         P
+        V
     end
 ```
 
@@ -562,30 +735,31 @@ graph TB
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Cursor IDE    │───▶│🆕 Enhanced MCP  │───▶│🆕 Hybrid Engine │
+│   Cursor IDE    │───▶│🆕 Enhanced MCP  │───▶│🆕 Triple Engine │
 │                 │    │     Server      │    │                 │
 │ • Code editing  │    │ • adv_* tools   │    │ • AST Analysis  │
 │ • Chat interface│    │ • AI integration│    │ • LLM Analysis  │
-│ • Tool calling  │    │ • Protocol      │    │ • Hot-reload    │
+│ • Tool calling  │    │ • JSON output   │    │ • Semgrep Scan  │
+│ • Auto-save     │    │ • Protocol v2   │    │ • Hot-reload    │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
                                                         │
                               ┌─────────────────────────┼─────────────────────────┐
                               │                         ▼                         │
                     ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-                    │🆕 Enhanced Rules│    │  Custom Rules   │    │Organization Rules│
-                    │   (95+ rules)   │    │  User defined   │    │ Company policies│
-                    │ Multi-language  │    │ Project specific│    │  Compliance     │
-                    │ + AI Categories │    │ + AI Templates  │    │ + AI Validation │
+                    │🆕 Enhanced Rules│    │  Custom Rules   │    │🆕 Semgrep Rules │
+                    │   (95+ rules)   │    │  User defined   │    │Industry Standard│
+                    │ Multi-language  │    │ Project specific│    │ Free + Pro Tiers│
+                    │ + AI Categories │    │ + AI Templates  │    │ Auto-detection  │
                     └─────────────────┘    └─────────────────┘    └─────────────────┘
                                                         │
                               ┌─────────────────────────┼─────────────────────────┐
                               │                         ▼                         │
                     ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-                    │ 🆕 LLM Service  │     │🆕 Confidence    │    │🆕 Statistical   │
-                    │   Integration   │    │   Scoring       │    │   Analysis      │
-                    │ • External APIs │    │ • Reliability   │    │ • Detailed      │
-                    │ • Context-aware │    │ • Deduplication │    │   Metrics       │
-                    │ • NL Explanations│   │ • Smart Merging │    │ • Trend Analysis│
+                    │ 🆕 LLM Service  │     │🆕 Triple Merger │    │🆕 JSON + Stats  │
+                    │   Integration   │    │   Engine        │    │   Analysis      │
+                    │ • External APIs │    │ • Deduplication │    │ • Auto-save     │
+                    │ • Context-aware │    │ • Confidence    │    │ • Version Ctrl  │
+                    │ • NL Explanations│   │ • Smart Merging │    │ • CI/CD Ready   │
                     └─────────────────┘    └─────────────────┘    └─────────────────┘
 ```
 
@@ -635,6 +809,64 @@ adversary-mcp-cli scan . --confidence-threshold 0.9 --use-llm=true
 
 # Combine rules and AI with custom thresholds
 adversary-mcp-cli scan . --severity=high --confidence-threshold=0.7
+```
+
+### **🆕 JSON Output & Auto-Save**
+
+#### **Structured JSON Output**
+
+All MCP tools now support JSON output format for programmatic integration:
+
+##### **MCP Tool Usage**
+```json
+{
+  "source_code": "eval(user_input)",
+  "file_path": "app.py",
+  "language": "python", 
+  "use_llm": true,
+  "use_semgrep": true,
+  "output_format": "json"        // Enable JSON output
+}
+```
+
+##### **CLI Usage**
+```bash
+# Save scan results to JSON file
+adversary-mcp-cli scan myproject/ --output=scan-results.json
+
+# All engines with JSON output
+adversary-mcp-cli scan myproject/ --use-llm=true --use-semgrep=true --output=results.json
+
+# Git diff scanning with JSON output
+adversary-mcp-cli scan --diff --use-semgrep=true --output=diff-scan.json
+```
+
+#### **Automatic JSON Generation**
+
+When using MCP tools with `output_format: "json"`, results are automatically saved to the project root:
+
+```
+your-project/
+├── adversary_scan_results_20240101_120000.json    // Single file scans
+├── adversary_directory_results_20240101_120500.json  // Directory scans  
+├── adversary_diff_results_20240101_121000.json    // Git diff scans
+└── your-code-files...
+```
+
+#### **Version Control Integration**
+
+JSON files are automatically generated in your project root, making them perfect for:
+
+- **Git tracking**: Commit scan results alongside code changes
+- **CI/CD integration**: Parse JSON results in build pipelines
+- **Trend analysis**: Track security metrics over time
+- **Reporting**: Generate dashboards from structured data
+
+```bash
+# Example CI/CD workflow
+adversary-mcp-cli scan --diff --output=security-scan.json
+git add security-scan.json
+git commit -m "Security scan results for PR"
 ```
 
 ### **🆕 Enhanced Reporting**

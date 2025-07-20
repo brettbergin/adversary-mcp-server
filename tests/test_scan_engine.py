@@ -63,6 +63,7 @@ class TestEnhancedScanResult:
             language=Language.PYTHON,
             rules_threats=rules_threats,
             llm_threats=llm_threats,
+            semgrep_threats=[],
             scan_metadata=scan_metadata,
         )
 
@@ -104,6 +105,7 @@ class TestEnhancedScanResult:
             language=Language.PYTHON,
             rules_threats=rules_threats,
             llm_threats=llm_threats,
+            semgrep_threats=[],
             scan_metadata={},
         )
 
@@ -152,6 +154,7 @@ class TestEnhancedScanResult:
             language=Language.PYTHON,
             rules_threats=rules_threats,
             llm_threats=llm_threats,
+            semgrep_threats=[],
             scan_metadata={},
         )
 
@@ -200,6 +203,7 @@ class TestEnhancedScanResult:
             language=Language.PYTHON,
             rules_threats=rules_threats,
             llm_threats=llm_threats,
+            semgrep_threats=[],
             scan_metadata={},
         )
 
@@ -248,6 +252,7 @@ class TestEnhancedScanResult:
             language=Language.PYTHON,
             rules_threats=threats,
             llm_threats=[],
+            semgrep_threats=[],
             scan_metadata={},
         )
 
@@ -283,6 +288,7 @@ class TestEnhancedScanResult:
             language=Language.PYTHON,
             rules_threats=threats,
             llm_threats=[],
+            semgrep_threats=[],
             scan_metadata={},
         )
 

@@ -112,6 +112,17 @@ class AdversaryMCPServer:
                                 "description": "Whether to include LLM analysis prompts (for use with your client's LLM)",
                                 "default": False,
                             },
+                            "use_semgrep": {
+                                "type": "boolean",
+                                "description": "Whether to include Semgrep analysis",
+                                "default": True,
+                            },
+                            "output_format": {
+                                "type": "string",
+                                "description": "Output format for results",
+                                "enum": ["text", "json"],
+                                "default": "text",
+                            },
                         },
                         "required": ["content", "language"],
                     },
@@ -141,6 +152,17 @@ class AdversaryMCPServer:
                                 "type": "boolean",
                                 "description": "Whether to include LLM analysis prompts (for use with your client's LLM)",
                                 "default": False,
+                            },
+                            "use_semgrep": {
+                                "type": "boolean",
+                                "description": "Whether to include Semgrep analysis",
+                                "default": True,
+                            },
+                            "output_format": {
+                                "type": "string",
+                                "description": "Output format for results",
+                                "enum": ["text", "json"],
+                                "default": "text",
                             },
                         },
                         "required": ["file_path"],
@@ -176,6 +198,17 @@ class AdversaryMCPServer:
                                 "type": "boolean",
                                 "description": "Whether to include LLM analysis prompts (for use with your client's LLM)",
                                 "default": False,
+                            },
+                            "use_semgrep": {
+                                "type": "boolean",
+                                "description": "Whether to include Semgrep analysis",
+                                "default": True,
+                            },
+                            "output_format": {
+                                "type": "string",
+                                "description": "Output format for results",
+                                "enum": ["text", "json"],
+                                "default": "text",
                             },
                         },
                         "required": ["directory_path"],
@@ -215,6 +248,17 @@ class AdversaryMCPServer:
                                 "type": "boolean",
                                 "description": "Whether to include LLM analysis prompts (for use with your client's LLM)",
                                 "default": False,
+                            },
+                            "use_semgrep": {
+                                "type": "boolean",
+                                "description": "Whether to include Semgrep analysis",
+                                "default": True,
+                            },
+                            "output_format": {
+                                "type": "string",
+                                "description": "Output format for results",
+                                "enum": ["text", "json"],
+                                "default": "text",
                             },
                         },
                         "required": ["source_branch", "target_branch"],
@@ -379,6 +423,8 @@ class AdversaryMCPServer:
             severity_threshold = arguments.get("severity_threshold", "medium")
             include_exploits = arguments.get("include_exploits", True)
             use_llm = arguments.get("use_llm", False)
+            use_semgrep = arguments.get("use_semgrep", True)
+            output_format = arguments.get("output_format", "text")
 
             # Convert language string to enum
             language = Language(language_str)
@@ -390,6 +436,7 @@ class AdversaryMCPServer:
                 file_path="input.code",
                 language=language,
                 use_llm=False,  # Always False for rules scan
+                use_semgrep=use_semgrep,
                 severity_threshold=severity_enum,
             )
 
@@ -406,20 +453,26 @@ class AdversaryMCPServer:
                             f"Failed to generate exploits for {threat.rule_id}: {e}"
                         )
 
-            # Format results with enhanced information
-            result = self._format_enhanced_scan_results(scan_result, "code")
+            # Format results based on output format
+            if output_format == "json":
+                result = self._format_json_scan_results(scan_result, "code")
+                # Auto-save JSON results to project root
+                self._save_scan_results_json(result, ".")
+            else:
+                # Format results with enhanced information
+                result = self._format_enhanced_scan_results(scan_result, "code")
 
-            # Add LLM prompts if requested
-            if use_llm:
-                result += self._add_llm_analysis_prompts(
-                    content, language, "input.code"
-                )
-
-                # Add LLM exploit prompts for each threat found
-                if include_exploits and scan_result.all_threats:
-                    result += self._add_llm_exploit_prompts(
-                        scan_result.all_threats, content
+                # Add LLM prompts if requested
+                if use_llm:
+                    result += self._add_llm_analysis_prompts(
+                        content, language, "input.code"
                     )
+
+                    # Add LLM exploit prompts for each threat found
+                    if include_exploits and scan_result.all_threats:
+                        result += self._add_llm_exploit_prompts(
+                            scan_result.all_threats, content
+                        )
 
             return [types.TextContent(type="text", text=result)]
 
@@ -435,6 +488,8 @@ class AdversaryMCPServer:
             severity_threshold = arguments.get("severity_threshold", "medium")
             include_exploits = arguments.get("include_exploits", True)
             use_llm = arguments.get("use_llm", False)
+            use_semgrep = arguments.get("use_semgrep", True)
+            output_format = arguments.get("output_format", "text")
 
             if not file_path.exists():
                 raise AdversaryToolError(f"File not found: {file_path}")
@@ -446,6 +501,7 @@ class AdversaryMCPServer:
             scan_result = self.scan_engine.scan_file(
                 file_path=file_path,
                 use_llm=False,  # Always False for rules scan
+                use_semgrep=use_semgrep,
                 severity_threshold=severity_enum,
             )
 
@@ -469,37 +525,43 @@ class AdversaryMCPServer:
                             f"Failed to generate exploits for {threat.rule_id}: {e}"
                         )
 
-            # Format results with enhanced information
-            result = self._format_enhanced_scan_results(scan_result, str(file_path))
+            # Format results based on output format
+            if output_format == "json":
+                result = self._format_json_scan_results(scan_result, str(file_path))
+                # Auto-save JSON results to project root
+                self._save_scan_results_json(result, str(file_path.parent))
+            else:
+                # Format results with enhanced information
+                result = self._format_enhanced_scan_results(scan_result, str(file_path))
 
-            # Add LLM prompts if requested
-            if use_llm:
-                # Read file content for LLM analysis
-                try:
-                    with open(file_path, "r", encoding="utf-8") as f:
-                        file_content = f.read()
+                # Add LLM prompts if requested
+                if use_llm:
+                    # Read file content for LLM analysis
+                    try:
+                        with open(file_path, "r", encoding="utf-8") as f:
+                            file_content = f.read()
 
-                    # Detect language from file extension
-                    file_ext = file_path.suffix.lower()
-                    language_map = {
-                        ".py": Language.PYTHON,
-                        ".js": Language.JAVASCRIPT,
-                        ".ts": Language.TYPESCRIPT,
-                    }
-                    language = language_map.get(file_ext, Language.PYTHON)
+                        # Detect language from file extension
+                        file_ext = file_path.suffix.lower()
+                        language_map = {
+                            ".py": Language.PYTHON,
+                            ".js": Language.JAVASCRIPT,
+                            ".ts": Language.TYPESCRIPT,
+                        }
+                        language = language_map.get(file_ext, Language.PYTHON)
 
-                    result += self._add_llm_analysis_prompts(
-                        file_content, language, str(file_path)
-                    )
-
-                    # Add LLM exploit prompts for each threat found
-                    if include_exploits and scan_result.all_threats:
-                        result += self._add_llm_exploit_prompts(
-                            scan_result.all_threats, file_content
+                        result += self._add_llm_analysis_prompts(
+                            file_content, language, str(file_path)
                         )
 
-                except Exception as e:
-                    result += f"\n\n⚠️ **LLM Analysis:** Could not read file for LLM analysis: {e}\n"
+                        # Add LLM exploit prompts for each threat found
+                        if include_exploits and scan_result.all_threats:
+                            result += self._add_llm_exploit_prompts(
+                                scan_result.all_threats, file_content
+                            )
+
+                    except Exception as e:
+                        result += f"\n\n⚠️ **LLM Analysis:** Could not read file for LLM analysis: {e}\n"
 
             return [types.TextContent(type="text", text=result)]
 
@@ -516,6 +578,8 @@ class AdversaryMCPServer:
             severity_threshold = arguments.get("severity_threshold", "medium")
             include_exploits = arguments.get("include_exploits", True)
             use_llm = arguments.get("use_llm", False)
+            use_semgrep = arguments.get("use_semgrep", True)
+            output_format = arguments.get("output_format", "text")
 
             if not directory_path.exists():
                 raise AdversaryToolError(f"Directory not found: {directory_path}")
@@ -528,6 +592,7 @@ class AdversaryMCPServer:
                 directory_path=directory_path,
                 recursive=recursive,
                 use_llm=False,  # Always False for rules scan
+                use_semgrep=use_semgrep,
                 severity_threshold=severity_enum,
                 max_files=50,  # Limit files for performance
             )
@@ -550,42 +615,48 @@ class AdversaryMCPServer:
                             f"Failed to generate exploits for {threat.rule_id}: {e}"
                         )
 
-            # Format results with enhanced information
-            result = self._format_directory_scan_results(
-                scan_results, str(directory_path)
-            )
+            # Format results based on output format
+            if output_format == "json":
+                result = self._format_json_directory_results(scan_results, str(directory_path))
+                # Auto-save JSON results to project root
+                self._save_scan_results_json(result, str(directory_path))
+            else:
+                # Format results with enhanced information
+                result = self._format_directory_scan_results(
+                    scan_results, str(directory_path)
+                )
 
-            # Add LLM prompts if requested (only for files with issues)
-            if use_llm and scan_results:
-                result += "\n\n# 🤖 LLM Analysis Prompts\n\n"
-                result += "For enhanced LLM-based analysis, use the following prompts with your client's LLM:\n\n"
-                result += "**Note:** Directory scans include prompts for the first 3 files with security issues.\n\n"
+                # Add LLM prompts if requested (only for files with issues)
+                if use_llm and scan_results:
+                    result += "\n\n# 🤖 LLM Analysis Prompts\n\n"
+                    result += "For enhanced LLM-based analysis, use the following prompts with your client's LLM:\n\n"
+                    result += "**Note:** Directory scans include prompts for the first 3 files with security issues.\n\n"
 
-                files_with_issues = [sr for sr in scan_results if sr.all_threats][:3]
-                for i, scan_result in enumerate(files_with_issues, 1):
-                    try:
-                        with open(scan_result.file_path, "r", encoding="utf-8") as f:
-                            file_content = f.read()
+                    files_with_issues = [sr for sr in scan_results if sr.all_threats][:3]
+                    for i, scan_result in enumerate(files_with_issues, 1):
+                        try:
+                            with open(scan_result.file_path, "r", encoding="utf-8") as f:
+                                file_content = f.read()
 
-                        # Detect language
-                        file_ext = Path(scan_result.file_path).suffix.lower()
-                        language_map = {
-                            ".py": Language.PYTHON,
-                            ".js": Language.JAVASCRIPT,
-                            ".ts": Language.TYPESCRIPT,
-                        }
-                        language = language_map.get(file_ext, Language.PYTHON)
+                            # Detect language
+                            file_ext = Path(scan_result.file_path).suffix.lower()
+                            language_map = {
+                                ".py": Language.PYTHON,
+                                ".js": Language.JAVASCRIPT,
+                                ".ts": Language.TYPESCRIPT,
+                            }
+                            language = language_map.get(file_ext, Language.PYTHON)
 
-                        result += f"## File {i}: {scan_result.file_path}\n\n"
-                        result += self._add_llm_analysis_prompts(
-                            file_content,
-                            language,
-                            str(scan_result.file_path),
-                            include_header=False,
-                        )
+                            result += f"## File {i}: {scan_result.file_path}\n\n"
+                            result += self._add_llm_analysis_prompts(
+                                file_content,
+                                language,
+                                str(scan_result.file_path),
+                                include_header=False,
+                            )
 
-                    except Exception as e:
-                        result += f"⚠️ Could not read {scan_result.file_path} for LLM analysis: {e}\n\n"
+                        except Exception as e:
+                            result += f"⚠️ Could not read {scan_result.file_path} for LLM analysis: {e}\n\n"
 
             return [types.TextContent(type="text", text=result)]
 
@@ -603,6 +674,8 @@ class AdversaryMCPServer:
             severity_threshold = arguments.get("severity_threshold", "medium")
             include_exploits = arguments.get("include_exploits", True)
             use_llm = arguments.get("use_llm", False)
+            use_semgrep = arguments.get("use_semgrep", True)
+            output_format = arguments.get("output_format", "text")
 
             # Convert severity threshold to enum
             severity_enum = Severity(severity_threshold)
@@ -627,6 +700,7 @@ class AdversaryMCPServer:
                 target_branch=target_branch,
                 working_dir=working_dir_path,
                 use_llm=False,  # Always False for rules scan
+                use_semgrep=use_semgrep,
                 severity_threshold=severity_enum,
             )
 
@@ -649,56 +723,62 @@ class AdversaryMCPServer:
                             f"Failed to generate exploits for {threat.rule_id}: {e}"
                         )
 
-            # Format results
-            result = self._format_diff_scan_results(
-                scan_results, diff_summary, source_branch, target_branch
-            )
+            # Format results based on output format
+            if output_format == "json":
+                result = self._format_json_diff_results(scan_results, diff_summary, f"{source_branch}..{target_branch}")
+                # Auto-save JSON results to project root
+                self._save_scan_results_json(result, str(working_dir_path))
+            else:
+                # Format results
+                result = self._format_diff_scan_results(
+                    scan_results, diff_summary, source_branch, target_branch
+                )
 
-            # Add LLM prompts if requested
-            if use_llm and scan_results:
-                result += "\n\n# 🤖 LLM Analysis Prompts\n\n"
-                result += "For enhanced LLM-based analysis, use the following prompts with your client's LLM:\n\n"
-                result += "**Note:** Diff scans include prompts for changed code in files with security issues.\n\n"
+                # Add LLM prompts if requested
+                if use_llm and scan_results:
+                    result += "\n\n# 🤖 LLM Analysis Prompts\n\n"
+                    result += "For enhanced LLM-based analysis, use the following prompts with your client's LLM:\n\n"
+                    result += "**Note:** Diff scans include prompts for changed code in files with security issues.\n\n"
 
-                files_with_issues = [
-                    (path, results)
-                    for path, results in scan_results.items()
-                    if any(r.all_threats for r in results)
-                ][:3]
-                for i, (file_path, file_scan_results) in enumerate(
-                    files_with_issues, 1
-                ):
-                    try:
-                        # Get the changed code from the diff
-                        diff_changes = self.diff_scanner.get_diff_changes(
-                            source_branch, target_branch, working_dir_path
-                        )
-                        if file_path in diff_changes:
-                            chunks = diff_changes[file_path]
-                            # For LLM analysis, include minimal context for better understanding
-                            changed_code = "\n".join(
-                                chunk.get_added_lines_with_minimal_context()
-                                for chunk in chunks
+                    files_with_issues = [
+                        (path, results)
+                        for path, results in scan_results.items()
+                        if any(r.all_threats for r in results)
+                    ][:3]
+                    for i, (file_path, file_scan_results) in enumerate(
+                        files_with_issues, 1
+                    ):
+                        try:
+                            # Get the changed code from the diff
+                            diff_changes = self.diff_scanner.get_diff_changes(
+                                source_branch, target_branch, working_dir_path
                             )
+                            if file_path in diff_changes:
+                                chunks = diff_changes[file_path]
+                                # For LLM analysis, include minimal context for better understanding
+                                changed_code = "\n".join(
+                                    chunk.get_added_lines_with_minimal_context()
+                                    for chunk in chunks
+                                )
 
-                            # Detect language
-                            file_ext = Path(file_path).suffix.lower()
-                            language_map = {
-                                ".py": Language.PYTHON,
-                                ".js": Language.JAVASCRIPT,
-                                ".ts": Language.TYPESCRIPT,
-                            }
-                            language = language_map.get(file_ext, Language.PYTHON)
+                                # Detect language
+                                file_ext = Path(file_path).suffix.lower()
+                                language_map = {
+                                    ".py": Language.PYTHON,
+                                    ".js": Language.JAVASCRIPT,
+                                    ".ts": Language.TYPESCRIPT,
+                                }
+                                language = language_map.get(file_ext, Language.PYTHON)
 
-                            result += f"## File {i}: {file_path}\n\n"
-                            result += self._add_llm_analysis_prompts(
-                                changed_code, language, file_path, include_header=False
+                                result += f"## File {i}: {file_path}\n\n"
+                                result += self._add_llm_analysis_prompts(
+                                    changed_code, language, file_path, include_header=False
+                                )
+
+                        except Exception as e:
+                            result += (
+                                f"⚠️ Could not get changed code for {file_path}: {e}\n\n"
                             )
-
-                    except Exception as e:
-                        result += (
-                            f"⚠️ Could not get changed code for {file_path}: {e}\n\n"
-                        )
 
             return [types.TextContent(type="text", text=result)]
 
@@ -1347,6 +1427,246 @@ class AdversaryMCPServer:
                         result += "\n"
 
         return result
+
+    def _format_json_scan_results(
+        self, scan_result: EnhancedScanResult, scan_target: str
+    ) -> str:
+        """Format enhanced scan results as JSON.
+
+        Args:
+            scan_result: Enhanced scan result object
+            scan_target: Target that was scanned
+
+        Returns:
+            JSON formatted scan results
+        """
+        import json
+        from datetime import datetime
+
+        # Convert threats to dictionaries
+        threats_data = []
+        for threat in scan_result.all_threats:
+            threat_data = {
+                "rule_id": threat.rule_id,
+                "rule_name": threat.rule_name,
+                "description": threat.description,
+                "category": threat.category.value,
+                "severity": threat.severity.value,
+                "file_path": threat.file_path,
+                "line_number": threat.line_number,
+                "end_line_number": getattr(threat, "end_line_number", threat.line_number),
+                "code_snippet": threat.code_snippet,
+                "confidence": threat.confidence,
+                "source": getattr(threat, "source", "rules"),
+                "cwe_id": getattr(threat, "cwe_id", []),
+                "owasp_category": getattr(threat, "owasp_category", ""),
+                "remediation": getattr(threat, "remediation", ""),
+                "references": getattr(threat, "references", []),
+                "exploit_examples": getattr(threat, "exploit_examples", []),
+            }
+            threats_data.append(threat_data)
+
+        # Create comprehensive JSON structure
+        result_data = {
+            "scan_metadata": {
+                "target": scan_target,
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "language": scan_result.language.value,
+                "file_path": scan_result.file_path,
+                "scan_type": "enhanced",
+                "total_threats": len(scan_result.all_threats),
+            },
+            "scan_configuration": {
+                "rules_scan_enabled": scan_result.scan_metadata.get("rules_scan_success", False),
+                "llm_scan_enabled": scan_result.scan_metadata.get("llm_scan_success", False),
+                "semgrep_scan_enabled": scan_result.scan_metadata.get("semgrep_scan_success", False),
+            },
+            "statistics": scan_result.stats,
+            "threats": threats_data,
+            "scan_details": {
+                "rules_scan_success": scan_result.scan_metadata.get("rules_scan_success", False),
+                "llm_scan_success": scan_result.scan_metadata.get("llm_scan_success", False),
+                "semgrep_scan_success": scan_result.scan_metadata.get("semgrep_scan_success", False),
+                "source_lines": scan_result.scan_metadata.get("source_lines", 0),
+                "source_size": scan_result.scan_metadata.get("source_size", 0),
+            },
+        }
+
+        return json.dumps(result_data, indent=2)
+
+    def _format_json_directory_results(
+        self, scan_results: List[EnhancedScanResult], scan_target: str
+    ) -> str:
+        """Format directory scan results as JSON.
+
+        Args:
+            scan_results: List of enhanced scan results
+            scan_target: Target directory that was scanned
+
+        Returns:
+            JSON formatted directory scan results
+        """
+        import json
+        from datetime import datetime
+
+        # Combine all threats
+        all_threats = []
+        files_scanned = []
+        
+        for scan_result in scan_results:
+            files_scanned.append({
+                "file_path": scan_result.file_path,
+                "language": scan_result.language.value,
+                "threat_count": len(scan_result.all_threats),
+                "scan_success": scan_result.scan_metadata.get("rules_scan_success", False),
+            })
+            
+            for threat in scan_result.all_threats:
+                threat_data = {
+                    "rule_id": threat.rule_id,
+                    "rule_name": threat.rule_name,
+                    "description": threat.description,
+                    "category": threat.category.value,
+                    "severity": threat.severity.value,
+                    "file_path": threat.file_path,
+                    "line_number": threat.line_number,
+                    "end_line_number": getattr(threat, "end_line_number", threat.line_number),
+                    "code_snippet": threat.code_snippet,
+                    "confidence": threat.confidence,
+                    "source": getattr(threat, "source", "rules"),
+                    "cwe_id": getattr(threat, "cwe_id", []),
+                    "owasp_category": getattr(threat, "owasp_category", ""),
+                    "remediation": getattr(threat, "remediation", ""),
+                    "references": getattr(threat, "references", []),
+                    "exploit_examples": getattr(threat, "exploit_examples", []),
+                }
+                all_threats.append(threat_data)
+
+        # Calculate summary statistics
+        severity_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+        for threat in all_threats:
+            severity_counts[threat["severity"]] += 1
+
+        result_data = {
+            "scan_metadata": {
+                "target": scan_target,
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "scan_type": "directory",
+                "total_threats": len(all_threats),
+                "files_scanned": len(files_scanned),
+            },
+            "statistics": {
+                "total_threats": len(all_threats),
+                "severity_counts": severity_counts,
+                "files_with_threats": len([f for f in files_scanned if f["threat_count"] > 0]),
+            },
+            "files": files_scanned,
+            "threats": all_threats,
+        }
+
+        return json.dumps(result_data, indent=2)
+
+    def _format_json_diff_results(
+        self, scan_results: Dict[str, List[EnhancedScanResult]], diff_summary: Dict[str, any], scan_target: str
+    ) -> str:
+        """Format git diff scan results as JSON.
+
+        Args:
+            scan_results: Dictionary mapping file paths to scan results
+            diff_summary: Git diff summary information
+            scan_target: Target branches for diff scan
+
+        Returns:
+            JSON formatted diff scan results
+        """
+        import json
+        from datetime import datetime
+
+        # Collect all threats from all files
+        all_threats = []
+        files_changed = []
+
+        for file_path, file_scan_results in scan_results.items():
+            file_threat_count = 0
+            for scan_result in file_scan_results:
+                file_threat_count += len(scan_result.all_threats)
+                for threat in scan_result.all_threats:
+                    threat_data = {
+                        "rule_id": threat.rule_id,
+                        "rule_name": threat.rule_name,
+                        "description": threat.description,
+                        "category": threat.category.value,
+                        "severity": threat.severity.value,
+                        "file_path": threat.file_path,
+                        "line_number": threat.line_number,
+                        "end_line_number": getattr(threat, "end_line_number", threat.line_number),
+                        "code_snippet": threat.code_snippet,
+                        "confidence": threat.confidence,
+                        "source": getattr(threat, "source", "rules"),
+                        "cwe_id": getattr(threat, "cwe_id", []),
+                        "owasp_category": getattr(threat, "owasp_category", ""),
+                        "remediation": getattr(threat, "remediation", ""),
+                        "references": getattr(threat, "references", []),
+                        "exploit_examples": getattr(threat, "exploit_examples", []),
+                    }
+                    all_threats.append(threat_data)
+            
+            files_changed.append({
+                "file_path": file_path,
+                "threat_count": file_threat_count,
+                "lines_added": diff_summary.get("files_changed", {}).get(file_path, {}).get("lines_added", 0),
+                "lines_removed": diff_summary.get("files_changed", {}).get(file_path, {}).get("lines_removed", 0),
+            })
+
+        # Calculate summary statistics
+        severity_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+        for threat in all_threats:
+            severity_counts[threat["severity"]] += 1
+
+        result_data = {
+            "scan_metadata": {
+                "target": scan_target,
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "scan_type": "git_diff",
+                "total_threats": len(all_threats),
+                "files_changed": len(files_changed),
+            },
+            "diff_summary": diff_summary,
+            "statistics": {
+                "total_threats": len(all_threats),
+                "severity_counts": severity_counts,
+                "files_with_threats": len([f for f in files_changed if f["threat_count"] > 0]),
+            },
+            "files": files_changed,
+            "threats": all_threats,
+        }
+
+        return json.dumps(result_data, indent=2)
+
+    def _save_scan_results_json(
+        self, json_data: str, working_dir: str = "."
+    ) -> Optional[str]:
+        """Save scan results to .adversary-scan-results.json in project root.
+
+        Args:
+            json_data: JSON formatted scan results
+            working_dir: Working directory to save file in
+
+        Returns:
+            Path to saved file or None if save failed
+        """
+        try:
+            from pathlib import Path
+            
+            output_path = Path(working_dir) / ".adversary-scan-results.json"
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(json_data)
+            
+            logger.info(f"Scan results saved to {output_path}")
+            return str(output_path)
+        except Exception as e:
+            logger.warning(f"Failed to save scan results JSON: {e}")
+            return None
 
     async def run(self) -> None:
         """Run the MCP server."""

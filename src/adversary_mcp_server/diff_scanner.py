@@ -290,6 +290,7 @@ class GitDiffScanner:
         target_branch: str,
         working_dir: Optional[Path] = None,
         use_llm: bool = False,
+        use_semgrep: bool = True,
         severity_threshold: Optional[Severity] = None,
     ) -> Dict[str, List[EnhancedScanResult]]:
         """Scan security vulnerabilities in git diff changes.
@@ -299,6 +300,7 @@ class GitDiffScanner:
             target_branch: Target branch name
             working_dir: Working directory for git operations (uses self.working_dir if not specified)
             use_llm: Whether to use LLM analysis
+            use_semgrep: Whether to use Semgrep analysis
             severity_threshold: Minimum severity threshold for filtering
 
         Returns:
@@ -353,6 +355,7 @@ class GitDiffScanner:
                     file_path=file_path,
                     language=language,
                     use_llm=use_llm,
+                    use_semgrep=use_semgrep,
                     severity_threshold=severity_threshold,
                 )
 

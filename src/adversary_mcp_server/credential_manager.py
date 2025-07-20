@@ -31,6 +31,11 @@ class SecurityConfig:
     enable_semgrep_scanning: bool = True
     enable_bandit_scanning: bool = True
 
+    # Semgrep Configuration
+    semgrep_config: Optional[str] = None  # Path to custom semgrep config
+    semgrep_rules: Optional[str] = None  # Specific rules to use
+    semgrep_timeout: int = 60  # Timeout for semgrep scans in seconds
+
     # Exploit Generation
     enable_exploit_generation: bool = True
     exploit_safety_mode: bool = True  # Limit exploit generation to safe examples
@@ -77,6 +82,8 @@ class SecurityConfig:
             "llm_analysis_enabled": self.enable_llm_analysis,
             "llm_analysis_available": self.is_llm_analysis_available(),
             "llm_mode": "client_based",
+            "semgrep_scanning_enabled": self.enable_semgrep_scanning,
+            "ast_scanning_enabled": self.enable_ast_scanning,
             "exploit_generation_enabled": self.enable_exploit_generation,
             "exploit_safety_mode": self.exploit_safety_mode,
             "severity_threshold": self.severity_threshold,
