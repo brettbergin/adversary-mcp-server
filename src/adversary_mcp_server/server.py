@@ -617,7 +617,9 @@ class AdversaryMCPServer:
 
             # Format results based on output format
             if output_format == "json":
-                result = self._format_json_directory_results(scan_results, str(directory_path))
+                result = self._format_json_directory_results(
+                    scan_results, str(directory_path)
+                )
                 # Auto-save JSON results to project root
                 self._save_scan_results_json(result, str(directory_path))
             else:
@@ -632,10 +634,14 @@ class AdversaryMCPServer:
                     result += "For enhanced LLM-based analysis, use the following prompts with your client's LLM:\n\n"
                     result += "**Note:** Directory scans include prompts for the first 3 files with security issues.\n\n"
 
-                    files_with_issues = [sr for sr in scan_results if sr.all_threats][:3]
+                    files_with_issues = [sr for sr in scan_results if sr.all_threats][
+                        :3
+                    ]
                     for i, scan_result in enumerate(files_with_issues, 1):
                         try:
-                            with open(scan_result.file_path, "r", encoding="utf-8") as f:
+                            with open(
+                                scan_result.file_path, "r", encoding="utf-8"
+                            ) as f:
                                 file_content = f.read()
 
                             # Detect language
@@ -725,7 +731,9 @@ class AdversaryMCPServer:
 
             # Format results based on output format
             if output_format == "json":
-                result = self._format_json_diff_results(scan_results, diff_summary, f"{source_branch}..{target_branch}")
+                result = self._format_json_diff_results(
+                    scan_results, diff_summary, f"{source_branch}..{target_branch}"
+                )
                 # Auto-save JSON results to project root
                 self._save_scan_results_json(result, str(working_dir_path))
             else:
@@ -772,7 +780,10 @@ class AdversaryMCPServer:
 
                                 result += f"## File {i}: {file_path}\n\n"
                                 result += self._add_llm_analysis_prompts(
-                                    changed_code, language, file_path, include_header=False
+                                    changed_code,
+                                    language,
+                                    file_path,
+                                    include_header=False,
                                 )
 
                         except Exception as e:
@@ -1454,7 +1465,9 @@ class AdversaryMCPServer:
                 "severity": threat.severity.value,
                 "file_path": threat.file_path,
                 "line_number": threat.line_number,
-                "end_line_number": getattr(threat, "end_line_number", threat.line_number),
+                "end_line_number": getattr(
+                    threat, "end_line_number", threat.line_number
+                ),
                 "code_snippet": threat.code_snippet,
                 "confidence": threat.confidence,
                 "source": getattr(threat, "source", "rules"),
@@ -1477,16 +1490,28 @@ class AdversaryMCPServer:
                 "total_threats": len(scan_result.all_threats),
             },
             "scan_configuration": {
-                "rules_scan_enabled": scan_result.scan_metadata.get("rules_scan_success", False),
-                "llm_scan_enabled": scan_result.scan_metadata.get("llm_scan_success", False),
-                "semgrep_scan_enabled": scan_result.scan_metadata.get("semgrep_scan_success", False),
+                "rules_scan_enabled": scan_result.scan_metadata.get(
+                    "rules_scan_success", False
+                ),
+                "llm_scan_enabled": scan_result.scan_metadata.get(
+                    "llm_scan_success", False
+                ),
+                "semgrep_scan_enabled": scan_result.scan_metadata.get(
+                    "semgrep_scan_success", False
+                ),
             },
             "statistics": scan_result.stats,
             "threats": threats_data,
             "scan_details": {
-                "rules_scan_success": scan_result.scan_metadata.get("rules_scan_success", False),
-                "llm_scan_success": scan_result.scan_metadata.get("llm_scan_success", False),
-                "semgrep_scan_success": scan_result.scan_metadata.get("semgrep_scan_success", False),
+                "rules_scan_success": scan_result.scan_metadata.get(
+                    "rules_scan_success", False
+                ),
+                "llm_scan_success": scan_result.scan_metadata.get(
+                    "llm_scan_success", False
+                ),
+                "semgrep_scan_success": scan_result.scan_metadata.get(
+                    "semgrep_scan_success", False
+                ),
                 "source_lines": scan_result.scan_metadata.get("source_lines", 0),
                 "source_size": scan_result.scan_metadata.get("source_size", 0),
             },
@@ -1512,15 +1537,19 @@ class AdversaryMCPServer:
         # Combine all threats
         all_threats = []
         files_scanned = []
-        
+
         for scan_result in scan_results:
-            files_scanned.append({
-                "file_path": scan_result.file_path,
-                "language": scan_result.language.value,
-                "threat_count": len(scan_result.all_threats),
-                "scan_success": scan_result.scan_metadata.get("rules_scan_success", False),
-            })
-            
+            files_scanned.append(
+                {
+                    "file_path": scan_result.file_path,
+                    "language": scan_result.language.value,
+                    "threat_count": len(scan_result.all_threats),
+                    "scan_success": scan_result.scan_metadata.get(
+                        "rules_scan_success", False
+                    ),
+                }
+            )
+
             for threat in scan_result.all_threats:
                 threat_data = {
                     "rule_id": threat.rule_id,
@@ -1530,7 +1559,9 @@ class AdversaryMCPServer:
                     "severity": threat.severity.value,
                     "file_path": threat.file_path,
                     "line_number": threat.line_number,
-                    "end_line_number": getattr(threat, "end_line_number", threat.line_number),
+                    "end_line_number": getattr(
+                        threat, "end_line_number", threat.line_number
+                    ),
                     "code_snippet": threat.code_snippet,
                     "confidence": threat.confidence,
                     "source": getattr(threat, "source", "rules"),
@@ -1558,7 +1589,9 @@ class AdversaryMCPServer:
             "statistics": {
                 "total_threats": len(all_threats),
                 "severity_counts": severity_counts,
-                "files_with_threats": len([f for f in files_scanned if f["threat_count"] > 0]),
+                "files_with_threats": len(
+                    [f for f in files_scanned if f["threat_count"] > 0]
+                ),
             },
             "files": files_scanned,
             "threats": all_threats,
@@ -1567,7 +1600,10 @@ class AdversaryMCPServer:
         return json.dumps(result_data, indent=2)
 
     def _format_json_diff_results(
-        self, scan_results: Dict[str, List[EnhancedScanResult]], diff_summary: Dict[str, any], scan_target: str
+        self,
+        scan_results: Dict[str, List[EnhancedScanResult]],
+        diff_summary: Dict[str, any],
+        scan_target: str,
     ) -> str:
         """Format git diff scan results as JSON.
 
@@ -1599,7 +1635,9 @@ class AdversaryMCPServer:
                         "severity": threat.severity.value,
                         "file_path": threat.file_path,
                         "line_number": threat.line_number,
-                        "end_line_number": getattr(threat, "end_line_number", threat.line_number),
+                        "end_line_number": getattr(
+                            threat, "end_line_number", threat.line_number
+                        ),
                         "code_snippet": threat.code_snippet,
                         "confidence": threat.confidence,
                         "source": getattr(threat, "source", "rules"),
@@ -1610,13 +1648,19 @@ class AdversaryMCPServer:
                         "exploit_examples": getattr(threat, "exploit_examples", []),
                     }
                     all_threats.append(threat_data)
-            
-            files_changed.append({
-                "file_path": file_path,
-                "threat_count": file_threat_count,
-                "lines_added": diff_summary.get("files_changed", {}).get(file_path, {}).get("lines_added", 0),
-                "lines_removed": diff_summary.get("files_changed", {}).get(file_path, {}).get("lines_removed", 0),
-            })
+
+            files_changed.append(
+                {
+                    "file_path": file_path,
+                    "threat_count": file_threat_count,
+                    "lines_added": diff_summary.get("files_changed", {})
+                    .get(file_path, {})
+                    .get("lines_added", 0),
+                    "lines_removed": diff_summary.get("files_changed", {})
+                    .get(file_path, {})
+                    .get("lines_removed", 0),
+                }
+            )
 
         # Calculate summary statistics
         severity_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
@@ -1635,7 +1679,9 @@ class AdversaryMCPServer:
             "statistics": {
                 "total_threats": len(all_threats),
                 "severity_counts": severity_counts,
-                "files_with_threats": len([f for f in files_changed if f["threat_count"] > 0]),
+                "files_with_threats": len(
+                    [f for f in files_changed if f["threat_count"] > 0]
+                ),
             },
             "files": files_changed,
             "threats": all_threats,
@@ -1657,11 +1703,11 @@ class AdversaryMCPServer:
         """
         try:
             from pathlib import Path
-            
+
             output_path = Path(working_dir) / ".adversary-scan-results.json"
             with open(output_path, "w", encoding="utf-8") as f:
                 f.write(json_data)
-            
+
             logger.info(f"Scan results saved to {output_path}")
             return str(output_path)
         except Exception as e:

@@ -1,0 +1,269 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 0.7.8)'
+        required: true
+        type: string
+
+env:
+  UV_NO_TELEMETRY: 1
+  PYTHONUNBUFFERED: 1
+
+jobs:
+  validate-release:
+    name: Validate Release
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+      with:
+        enable-cache: true
+
+    - name: Install dependencies
+      run: |
+        uv venv --python 3.11
+        source .venv/bin/activate
+        uv pip install -e ".[dev]"
+
+    - name: Run full test suite
+      run: |
+        source .venv/bin/activate
+        python -m pytest tests/ \
+          --cov=adversary_mcp_server \
+          --cov-fail-under=80 \
+          -v
+
+    - name: Run security scans
+      run: |
+        source .venv/bin/activate
+        python -m bandit -r src/ --severity-level medium
+        pip install semgrep safety
+        python -m semgrep --config=auto src/ --severity=WARNING
+        safety check
+
+    - name: Verify version consistency
+      run: |
+        source .venv/bin/activate
+        
+        # Get version from pyproject.toml
+        PYPROJECT_VERSION=$(grep -E '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
+        echo "Version in pyproject.toml: $PYPROJECT_VERSION"
+        
+        # Get version from package
+        PACKAGE_VERSION=$(python -c "from adversary_mcp_server import __version__; print(__version__)")
+        echo "Version in package: $PACKAGE_VERSION"
+        
+        # Get CLI version
+        CLI_VERSION=$(adversary-mcp-cli --version | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+')
+        echo "Version from CLI: $CLI_VERSION"
+        
+        # Check if they match
+        if [ "$PYPROJECT_VERSION" != "$PACKAGE_VERSION" ] || [ "$PYPROJECT_VERSION" != "$CLI_VERSION" ]; then
+          echo "Version mismatch detected!"
+          echo "pyproject.toml: $PYPROJECT_VERSION"
+          echo "package: $PACKAGE_VERSION" 
+          echo "CLI: $CLI_VERSION"
+          exit 1
+        fi
+        
+        echo "All versions match: $PYPROJECT_VERSION"
+
+  build-and-publish:
+    name: Build and Publish
+    runs-on: ubuntu-latest
+    needs: validate-release
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+      with:
+        enable-cache: true
+
+    - name: Install build dependencies
+      run: |
+        uv venv --python 3.11
+        source .venv/bin/activate
+        uv pip install build twine
+
+    - name: Build package
+      run: |
+        source .venv/bin/activate
+        uv build
+
+    - name: Check package
+      run: |
+        source .venv/bin/activate
+        python -m twine check dist/*
+
+    - name: Test package installation
+      run: |
+        source .venv/bin/activate
+        pip install dist/*.whl
+        adversary-mcp-cli --version
+        adversary-mcp-cli status
+
+    - name: Publish to Test PyPI
+      if: github.event_name == 'workflow_dispatch'
+      run: |
+        source .venv/bin/activate
+        python -m twine upload --repository-url https://test.pypi.org/legacy/ dist/*
+      env:
+        TWINE_USERNAME: __token__
+        TWINE_PASSWORD: ${{ secrets.TEST_PYPI_API_TOKEN }}
+
+    - name: Publish to PyPI
+      if: github.event_name == 'release'
+      run: |
+        source .venv/bin/activate
+        python -m twine upload dist/*
+      env:
+        TWINE_USERNAME: __token__
+        TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+
+    - name: Upload release artifacts
+      if: github.event_name == 'release'
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-packages
+        path: dist/
+        retention-days: 90
+
+  create-docker-image:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: validate-release
+    if: github.event_name == 'release'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to GitHub Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ghcr.io/${{ github.repository }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=semver,pattern={{major}}
+
+    - name: Create Dockerfile
+      run: |
+        cat > Dockerfile << 'EOF'
+        FROM python:3.11-slim
+
+        # Set environment variables
+        ENV PYTHONUNBUFFERED=1 \
+            UV_NO_TELEMETRY=1 \
+            ADVERSARY_CONFIG_DIR=/app/config
+
+        # Install system dependencies
+        RUN apt-get update && apt-get install -y \
+            git \
+            curl \
+            && rm -rf /var/lib/apt/lists/*
+
+        # Install uv
+        RUN pip install uv
+
+        # Create app directory
+        WORKDIR /app
+
+        # Copy project files
+        COPY . .
+
+        # Install the package
+        RUN uv venv && \
+            source .venv/bin/activate && \
+            uv pip install -e .
+
+        # Create config directory
+        RUN mkdir -p /app/config
+
+        # Set up the entrypoint
+        COPY docker-entrypoint.sh /usr/local/bin/
+        RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+        ENTRYPOINT ["docker-entrypoint.sh"]
+        CMD ["adversary-mcp-server"]
+        EOF
+
+    - name: Create Docker entrypoint
+      run: |
+        cat > docker-entrypoint.sh << 'EOF'
+        #!/bin/bash
+        set -e
+
+        # Activate virtual environment
+        source /app/.venv/bin/activate
+
+        # Execute the command
+        exec "$@"
+        EOF
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+  notify:
+    name: Notify Release
+    runs-on: ubuntu-latest
+    needs: [build-and-publish, create-docker-image]
+    if: always() && github.event_name == 'release'
+    
+    steps:
+    - name: Notify success
+      if: needs.build-and-publish.result == 'success'
+      run: |
+        echo "✅ Release ${{ github.event.release.tag_name }} published successfully!"
+        echo "📦 Package: https://pypi.org/project/adversary-mcp-server/"
+        echo "🐳 Docker: ghcr.io/${{ github.repository }}:${{ github.event.release.tag_name }}"
+
+    - name: Notify failure
+      if: needs.build-and-publish.result == 'failure'
+      run: |
+        echo "❌ Release ${{ github.event.release.tag_name }} failed!"
+        exit 1

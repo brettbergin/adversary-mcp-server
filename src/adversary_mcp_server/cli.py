@@ -378,7 +378,7 @@ def scan(
 
                 # Initialize scan engine
                 scan_engine = ScanEngine(threat_engine, credential_manager)
-                
+
                 # Scan file using enhanced scanner
                 severity_enum = Severity(severity) if severity else None
                 scan_result = scan_engine.scan_file(
@@ -397,7 +397,7 @@ def scan(
 
                 # Initialize scan engine
                 scan_engine = ScanEngine(threat_engine, credential_manager)
-                
+
                 # Scan directory using enhanced scanner
                 severity_enum = Severity(severity) if severity else None
                 scan_results = scan_engine.scan_directory(

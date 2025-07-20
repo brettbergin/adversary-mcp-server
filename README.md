@@ -1070,6 +1070,72 @@ The project uses centralized version management - you only need to update the ve
 
 ---
 
+## CI/CD Pipeline
+
+### Automated Testing & Quality Assurance
+
+The project uses GitHub Actions for comprehensive CI/CD automation:
+
+#### **🔄 Continuous Integration** (`.github/workflows/ci.yml`)
+
+**Multi-Environment Testing:**
+- **Python versions**: 3.10, 3.11, 3.12
+- **Operating systems**: Ubuntu, macOS, Windows
+- **Dependencies**: Automatic uv-based installation
+
+**Quality Gates:**
+- ✅ **Unit Tests**: 400+ tests with 80% coverage requirement
+- ✅ **Code Quality**: Ruff linting, MyPy type checking, Black formatting
+- ✅ **Security Scans**: Bandit, Semgrep, Safety dependency checks  
+- ✅ **Build Verification**: Package building and installation testing
+- ✅ **Integration Tests**: Real CLI and scanning functionality
+
+#### **🚀 Release Automation** (`.github/workflows/release.yml`)
+
+**Automated Publishing:**
+- Version consistency validation
+- Security scan verification
+- PyPI package publishing
+- Docker image building
+- GitHub release creation
+
+#### **🔒 Dependency Management** (`.github/workflows/dependency-updates.yml`)
+
+**Weekly Security Monitoring:**
+- Automated dependency updates
+- Vulnerability scanning
+- Security issue creation
+- PR generation for updates
+
+#### **📊 Status Monitoring** (`.github/workflows/status-badges.yml`)
+
+**Live Project Metrics:**
+- Test count and status tracking
+- Coverage percentage monitoring
+- Version and rule count updates
+- Automated badge updates
+
+### Development Workflow
+
+```bash
+# All checks run automatically on push/PR
+git push origin feature-branch
+
+# Manual quality checks
+make check-all  # Run all linting, tests, and security scans
+```
+
+### Contributing & Quality Standards
+
+See [CONTRIBUTING.md](.github/CONTRIBUTING.md) for:
+- Development setup instructions
+- Code quality requirements  
+- Testing guidelines
+- Security standards
+- Release process
+
+---
+
 ## Support
 
 - **Documentation**: [GitHub Wiki](https://github.com/brettbergin/adversary-mcp-server/wiki)

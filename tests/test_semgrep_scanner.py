@@ -35,7 +35,7 @@ class TestSemgrepScanner:
     def test_check_semgrep_available_success(self, mock_run):
         """Test successful Semgrep availability check."""
         mock_run.return_value.returncode = 0
-        
+
         scanner = SemgrepScanner(self.threat_engine)
         assert scanner.is_available() is True
 
@@ -43,7 +43,7 @@ class TestSemgrepScanner:
     def test_check_semgrep_available_failure(self, mock_run):
         """Test failed Semgrep availability check."""
         mock_run.side_effect = FileNotFoundError()
-        
+
         scanner = SemgrepScanner(self.threat_engine)
         assert scanner.is_available() is False
 
@@ -71,23 +71,50 @@ class TestSemgrepScanner:
     def test_map_semgrep_category(self):
         """Test Semgrep category mapping."""
         # Test SQL injection
-        assert self.scanner._map_semgrep_category("sql-injection", "SQL issue") == Category.INJECTION
-        assert self.scanner._map_semgrep_category("sqli-test", "SQL problem") == Category.INJECTION
-        
+        assert (
+            self.scanner._map_semgrep_category("sql-injection", "SQL issue")
+            == Category.INJECTION
+        )
+        assert (
+            self.scanner._map_semgrep_category("sqli-test", "SQL problem")
+            == Category.INJECTION
+        )
+
         # Test XSS
-        assert self.scanner._map_semgrep_category("xss-vulnerability", "XSS issue") == Category.XSS
-        assert self.scanner._map_semgrep_category("cross-site-scripting", "XSS") == Category.XSS
-        
+        assert (
+            self.scanner._map_semgrep_category("xss-vulnerability", "XSS issue")
+            == Category.XSS
+        )
+        assert (
+            self.scanner._map_semgrep_category("cross-site-scripting", "XSS")
+            == Category.XSS
+        )
+
         # Test auth
-        assert self.scanner._map_semgrep_category("auth-bypass", "Auth issue") == Category.AUTHENTICATION
-        assert self.scanner._map_semgrep_category("jwt-vulnerability", "JWT") == Category.AUTHENTICATION
-        
+        assert (
+            self.scanner._map_semgrep_category("auth-bypass", "Auth issue")
+            == Category.AUTHENTICATION
+        )
+        assert (
+            self.scanner._map_semgrep_category("jwt-vulnerability", "JWT")
+            == Category.AUTHENTICATION
+        )
+
         # Test crypto
-        assert self.scanner._map_semgrep_category("crypto-weakness", "Crypto") == Category.CRYPTOGRAPHY
-        assert self.scanner._map_semgrep_category("weak-hash", "Hash") == Category.CRYPTOGRAPHY
-        
+        assert (
+            self.scanner._map_semgrep_category("crypto-weakness", "Crypto")
+            == Category.CRYPTOGRAPHY
+        )
+        assert (
+            self.scanner._map_semgrep_category("weak-hash", "Hash")
+            == Category.CRYPTOGRAPHY
+        )
+
         # Test default
-        assert self.scanner._map_semgrep_category("unknown-rule", "Unknown") == Category.VALIDATION
+        assert (
+            self.scanner._map_semgrep_category("unknown-rule", "Unknown")
+            == Category.VALIDATION
+        )
 
     def test_convert_semgrep_finding_to_threat(self):
         """Test conversion of Semgrep finding to ThreatMatch."""
@@ -98,19 +125,25 @@ class TestSemgrepScanner:
                 "severity": "error",
                 "cwe": ["CWE-95"],
                 "owasp": "A03:2021",
-                "references": ["https://example.com/eval-security"]
+                "references": ["https://example.com/eval-security"],
             },
             "start": {"line": 15},
             "end": {"line": 15},
-            "extra": {
-                "lines": "eval(user_input)"
-            }
+            "extra": {"lines": "eval(user_input)"},
         }
-        
-        threat = self.scanner._convert_semgrep_finding_to_threat(semgrep_finding, "test.py")
-        
-        assert threat.rule_id == "semgrep-python.lang.security.audit.dangerous-eval.dangerous-eval"
-        assert threat.rule_name == "Semgrep: python.lang.security.audit.dangerous-eval.dangerous-eval"
+
+        threat = self.scanner._convert_semgrep_finding_to_threat(
+            semgrep_finding, "test.py"
+        )
+
+        assert (
+            threat.rule_id
+            == "semgrep-python.lang.security.audit.dangerous-eval.dangerous-eval"
+        )
+        assert (
+            threat.rule_name
+            == "Semgrep: python.lang.security.audit.dangerous-eval.dangerous-eval"
+        )
         assert threat.description == "Found 'eval' which can execute arbitrary code"
         assert threat.severity == Severity.CRITICAL
         assert threat.file_path == "test.py"
@@ -133,7 +166,7 @@ class TestSemgrepScanner:
     def test_scan_code_success(self, mock_unlink, mock_open, mock_run):
         """Test successful code scanning with Semgrep."""
         # Mock Semgrep availability
-        with patch.object(self.scanner, '_semgrep_available', True):
+        with patch.object(self.scanner, "_semgrep_available", True):
             # Mock Semgrep output
             semgrep_output = {
                 "results": [
@@ -143,27 +176,30 @@ class TestSemgrepScanner:
                         "metadata": {"severity": "error"},
                         "start": {"line": 1},
                         "end": {"line": 1},
-                        "extra": {"lines": "eval(user_input)"}
+                        "extra": {"lines": "eval(user_input)"},
                     }
                 ]
             }
-            
+
             mock_run.return_value.returncode = 0
             mock_run.return_value.stdout = json.dumps(semgrep_output)
             mock_run.return_value.stderr = ""
-            
+
             # Mock file operations
             mock_file = MagicMock()
             mock_file.name = "/tmp/test.py"
             mock_open.return_value.__enter__.return_value = mock_file
-            
+
             source_code = "eval(user_input)"
             threats = self.scanner.scan_code(source_code, "test.py", Language.PYTHON)
-            
+
             assert len(threats) == 1
-            assert threats[0].rule_id == "semgrep-python.lang.security.audit.dangerous-eval.dangerous-eval"
+            assert (
+                threats[0].rule_id
+                == "semgrep-python.lang.security.audit.dangerous-eval.dangerous-eval"
+            )
             assert threats[0].severity == Severity.CRITICAL
-            
+
             # Verify Semgrep was called correctly
             mock_run.assert_called_once()
             args = mock_run.call_args[0][0]
@@ -175,10 +211,10 @@ class TestSemgrepScanner:
     @patch("adversary_mcp_server.semgrep_scanner.subprocess.run")
     def test_scan_code_unavailable(self, mock_run):
         """Test code scanning when Semgrep is unavailable."""
-        with patch.object(self.scanner, '_semgrep_available', False):
+        with patch.object(self.scanner, "_semgrep_available", False):
             source_code = "eval(user_input)"
             threats = self.scanner.scan_code(source_code, "test.py", Language.PYTHON)
-            
+
             assert threats == []
             mock_run.assert_not_called()
 
@@ -187,37 +223,39 @@ class TestSemgrepScanner:
     @patch("os.unlink")
     def test_scan_code_timeout(self, mock_unlink, mock_open, mock_run):
         """Test code scanning with timeout."""
-        with patch.object(self.scanner, '_semgrep_available', True):
+        with patch.object(self.scanner, "_semgrep_available", True):
             mock_run.side_effect = subprocess.TimeoutExpired("semgrep", 60)
-            
+
             # Mock file operations
             mock_file = MagicMock()
             mock_file.name = "/tmp/test.py"
             mock_open.return_value.__enter__.return_value = mock_file
-            
+
             source_code = "eval(user_input)"
-            
+
             with pytest.raises(SemgrepError, match="timed out"):
-                self.scanner.scan_code(source_code, "test.py", Language.PYTHON, timeout=60)
+                self.scanner.scan_code(
+                    source_code, "test.py", Language.PYTHON, timeout=60
+                )
 
     @patch("adversary_mcp_server.semgrep_scanner.subprocess.run")
     @patch("builtins.open", create=True)
     @patch("os.unlink")
     def test_scan_code_invalid_json(self, mock_unlink, mock_open, mock_run):
         """Test code scanning with invalid JSON output."""
-        with patch.object(self.scanner, '_semgrep_available', True):
+        with patch.object(self.scanner, "_semgrep_available", True):
             mock_run.return_value.returncode = 0
             mock_run.return_value.stdout = "invalid json"
             mock_run.return_value.stderr = ""
-            
+
             # Mock file operations
             mock_file = MagicMock()
             mock_file.name = "/tmp/test.py"
             mock_open.return_value.__enter__.return_value = mock_file
-            
+
             source_code = "eval(user_input)"
             threats = self.scanner.scan_code(source_code, "test.py", Language.PYTHON)
-            
+
             assert threats == []
 
     @patch("adversary_mcp_server.semgrep_scanner.subprocess.run")
@@ -225,23 +263,23 @@ class TestSemgrepScanner:
     @patch("os.unlink")
     def test_scan_code_custom_config(self, mock_unlink, mock_open, mock_run):
         """Test code scanning with custom config."""
-        with patch.object(self.scanner, '_semgrep_available', True):
+        with patch.object(self.scanner, "_semgrep_available", True):
             mock_run.return_value.returncode = 0
             mock_run.return_value.stdout = '{"results": []}'
             mock_run.return_value.stderr = ""
-            
+
             # Mock file operations
             mock_file = MagicMock()
             mock_file.name = "/tmp/test.py"
             mock_open.return_value.__enter__.return_value = mock_file
-            
+
             source_code = "eval(user_input)"
             threats = self.scanner.scan_code(
                 source_code, "test.py", Language.PYTHON, config="custom-config.yml"
             )
-            
+
             assert threats == []
-            
+
             # Verify custom config was used
             args = mock_run.call_args[0][0]
             assert "custom-config.yml" in args
@@ -250,9 +288,11 @@ class TestSemgrepScanner:
     def test_scan_file_success(self, mock_open):
         """Test successful file scanning."""
         mock_file_content = "eval(user_input)"
-        mock_open.return_value.__enter__.return_value.read.return_value = mock_file_content
-        
-        with patch.object(self.scanner, 'scan_code') as mock_scan_code:
+        mock_open.return_value.__enter__.return_value.read.return_value = (
+            mock_file_content
+        )
+
+        with patch.object(self.scanner, "scan_code") as mock_scan_code:
             mock_scan_code.return_value = [
                 ThreatMatch(
                     rule_id="test_rule",
@@ -264,9 +304,9 @@ class TestSemgrepScanner:
                     line_number=1,
                 )
             ]
-            
+
             threats = self.scanner.scan_file("test.py", Language.PYTHON)
-            
+
             assert len(threats) == 1
             mock_scan_code.assert_called_once_with(
                 source_code=mock_file_content,
@@ -279,7 +319,7 @@ class TestSemgrepScanner:
 
     def test_scan_file_unavailable(self):
         """Test file scanning when Semgrep is unavailable."""
-        with patch.object(self.scanner, '_semgrep_available', False):
+        with patch.object(self.scanner, "_semgrep_available", False):
             threats = self.scanner.scan_file("test.py", Language.PYTHON)
             assert threats == []
 
@@ -300,14 +340,16 @@ class TestSemgrepScannerIntegration:
 
     def test_python_code_with_eval(self):
         """Test scanning Python code with eval vulnerability."""
-        python_code = '''
+        python_code = """
 def dangerous_function(user_input):
     result = eval(user_input)  # This should be detected
     return result
-'''
-        
-        with patch.object(self.scanner, '_semgrep_available', True):
-            with patch("adversary_mcp_server.semgrep_scanner.subprocess.run") as mock_run:
+"""
+
+        with patch.object(self.scanner, "_semgrep_available", True):
+            with patch(
+                "adversary_mcp_server.semgrep_scanner.subprocess.run"
+            ) as mock_run:
                 # Mock realistic Semgrep output for eval detection
                 semgrep_output = {
                     "results": [
@@ -317,27 +359,31 @@ def dangerous_function(user_input):
                             "metadata": {
                                 "severity": "error",
                                 "cwe": ["CWE-95"],
-                                "owasp": "A03:2021"
+                                "owasp": "A03:2021",
                             },
                             "start": {"line": 3},
                             "end": {"line": 3},
-                            "extra": {"lines": "    result = eval(user_input)  # This should be detected"}
+                            "extra": {
+                                "lines": "    result = eval(user_input)  # This should be detected"
+                            },
                         }
                     ]
                 }
-                
+
                 mock_run.return_value.returncode = 0
                 mock_run.return_value.stdout = json.dumps(semgrep_output)
                 mock_run.return_value.stderr = ""
-                
+
                 with patch("builtins.open", create=True) as mock_open:
                     mock_file = MagicMock()
                     mock_file.name = "/tmp/test.py"
                     mock_open.return_value.__enter__.return_value = mock_file
-                    
+
                     with patch("os.unlink"):
-                        threats = self.scanner.scan_code(python_code, "test.py", Language.PYTHON)
-                
+                        threats = self.scanner.scan_code(
+                            python_code, "test.py", Language.PYTHON
+                        )
+
                 assert len(threats) == 1
                 threat = threats[0]
                 assert "eval" in threat.description.lower()
@@ -347,14 +393,16 @@ def dangerous_function(user_input):
 
     def test_javascript_code_with_xss(self):
         """Test scanning JavaScript code with XSS vulnerability."""
-        js_code = '''
+        js_code = """
 function displayUser(userInput) {
     document.innerHTML = userInput;  // This should be detected as XSS
 }
-'''
-        
-        with patch.object(self.scanner, '_semgrep_available', True):
-            with patch("adversary_mcp_server.semgrep_scanner.subprocess.run") as mock_run:
+"""
+
+        with patch.object(self.scanner, "_semgrep_available", True):
+            with patch(
+                "adversary_mcp_server.semgrep_scanner.subprocess.run"
+            ) as mock_run:
                 # Mock realistic Semgrep output for XSS detection
                 semgrep_output = {
                     "results": [
@@ -364,27 +412,29 @@ function displayUser(userInput) {
                             "metadata": {
                                 "severity": "warning",
                                 "cwe": ["CWE-79"],
-                                "owasp": "A07:2021"
+                                "owasp": "A07:2021",
                             },
                             "start": {"line": 2},
                             "end": {"line": 2},
-                            "extra": {"lines": "    document.innerHTML = userInput;"}
+                            "extra": {"lines": "    document.innerHTML = userInput;"},
                         }
                     ]
                 }
-                
+
                 mock_run.return_value.returncode = 0
                 mock_run.return_value.stdout = json.dumps(semgrep_output)
                 mock_run.return_value.stderr = ""
-                
+
                 with patch("builtins.open", create=True) as mock_open:
                     mock_file = MagicMock()
                     mock_file.name = "/tmp/test.js"
                     mock_open.return_value.__enter__.return_value = mock_file
-                    
+
                     with patch("os.unlink"):
-                        threats = self.scanner.scan_code(js_code, "test.js", Language.JAVASCRIPT)
-                
+                        threats = self.scanner.scan_code(
+                            js_code, "test.js", Language.JAVASCRIPT
+                        )
+
                 assert len(threats) == 1
                 threat = threats[0]
                 assert "xss" in threat.description.lower()
@@ -393,28 +443,32 @@ function displayUser(userInput) {
 
     def test_no_vulnerabilities_found(self):
         """Test scanning code with no vulnerabilities."""
-        safe_code = '''
+        safe_code = """
 def safe_function():
     return "Hello, World!"
-'''
-        
-        with patch.object(self.scanner, '_semgrep_available', True):
-            with patch("adversary_mcp_server.semgrep_scanner.subprocess.run") as mock_run:
+"""
+
+        with patch.object(self.scanner, "_semgrep_available", True):
+            with patch(
+                "adversary_mcp_server.semgrep_scanner.subprocess.run"
+            ) as mock_run:
                 # Mock empty Semgrep output
                 semgrep_output = {"results": []}
-                
+
                 mock_run.return_value.returncode = 0
                 mock_run.return_value.stdout = json.dumps(semgrep_output)
                 mock_run.return_value.stderr = ""
-                
+
                 with patch("builtins.open", create=True) as mock_open:
                     mock_file = MagicMock()
                     mock_file.name = "/tmp/test.py"
                     mock_open.return_value.__enter__.return_value = mock_file
-                    
+
                     with patch("os.unlink"):
-                        threats = self.scanner.scan_code(safe_code, "test.py", Language.PYTHON)
-                
+                        threats = self.scanner.scan_code(
+                            safe_code, "test.py", Language.PYTHON
+                        )
+
                 assert len(threats) == 0
 
 

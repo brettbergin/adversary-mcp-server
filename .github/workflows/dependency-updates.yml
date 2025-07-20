@@ -1,0 +1,316 @@
+name: Dependency Updates
+
+on:
+  schedule:
+    # Run weekly on Mondays at 9 AM UTC
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+
+env:
+  UV_NO_TELEMETRY: 1
+  PYTHONUNBUFFERED: 1
+
+jobs:
+  security-updates:
+    name: Security Updates
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+      with:
+        enable-cache: true
+
+    - name: Install security tools
+      run: |
+        uv venv --python 3.11
+        source .venv/bin/activate
+        pip install safety bandit semgrep
+
+    - name: Check for security vulnerabilities
+      id: security-check
+      run: |
+        source .venv/bin/activate
+        
+        # Check for vulnerable dependencies
+        safety check --json --output security-vulnerabilities.json || true
+        
+        # Check if there are any vulnerabilities
+        if [ -s security-vulnerabilities.json ] && [ "$(cat security-vulnerabilities.json)" != "[]" ]; then
+          echo "vulnerabilities=true" >> $GITHUB_OUTPUT
+          echo "Security vulnerabilities found:"
+          safety check
+        else
+          echo "vulnerabilities=false" >> $GITHUB_OUTPUT
+          echo "No security vulnerabilities found"
+        fi
+
+    - name: Create security issue
+      if: steps.security-check.outputs.vulnerabilities == 'true'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          let vulnerabilities = '';
+          
+          try {
+            const securityData = fs.readFileSync('security-vulnerabilities.json', 'utf8');
+            const vulns = JSON.parse(securityData);
+            
+            if (vulns.length > 0) {
+              vulnerabilities = vulns.map(vuln => {
+                return `- **${vuln.package_name}** (${vuln.installed_version}): ${vuln.vulnerability_id}\n  - ${vuln.advisory}\n  - Fix: Update to version ${vuln.updated_version || 'latest'}`;
+              }).join('\n\n');
+            }
+          } catch (error) {
+            vulnerabilities = 'Error reading security vulnerabilities file';
+          }
+          
+          const issueBody = `## 🔒 Security Vulnerabilities Detected
+          
+          The automated security scan has detected vulnerabilities in dependencies:
+          
+          ${vulnerabilities}
+          
+          ### Recommended Actions
+          1. Review the vulnerabilities above
+          2. Update affected dependencies to safe versions
+          3. Run tests to ensure compatibility
+          4. Deploy the fixes as soon as possible
+          
+          ### Automated Check Details
+          - **Scan Date**: ${new Date().toISOString()}
+          - **Workflow**: [${context.workflow}](${context.payload.repository.html_url}/actions/runs/${context.runId})
+          
+          This issue was created automatically by the dependency security scanner.`;
+          
+          // Check if a similar issue already exists
+          const existingIssues = await github.rest.issues.listForRepo({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            labels: ['security', 'dependencies'],
+            state: 'open'
+          });
+          
+          if (existingIssues.data.length === 0) {
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '🔒 Security Vulnerabilities in Dependencies',
+              body: issueBody,
+              labels: ['security', 'dependencies', 'automated']
+            });
+          }
+
+  update-dependencies:
+    name: Update Dependencies
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+      with:
+        enable-cache: true
+
+    - name: Update dependencies
+      run: |
+        uv venv --python 3.11
+        source .venv/bin/activate
+        
+        # Backup current lock file
+        cp uv.lock uv.lock.backup
+        
+        # Update dependencies
+        uv pip compile pyproject.toml -o uv.lock --upgrade
+        uv pip compile --extra dev pyproject.toml -o uv-dev.lock --upgrade
+
+    - name: Install updated dependencies
+      run: |
+        source .venv/bin/activate
+        uv pip install -e ".[dev]"
+
+    - name: Run tests with updated dependencies
+      id: test-updates
+      run: |
+        source .venv/bin/activate
+        
+        # Run a subset of tests to verify compatibility
+        python -m pytest tests/test_threat_engine.py tests/test_cli.py -v --tb=short
+        
+        # Run security scans
+        python -m bandit -r src/ --severity-level medium
+        
+        echo "tests_passed=true" >> $GITHUB_OUTPUT
+      continue-on-error: true
+
+    - name: Revert on test failure
+      if: steps.test-updates.outputs.tests_passed != 'true'
+      run: |
+        echo "Tests failed with updated dependencies, reverting..."
+        cp uv.lock.backup uv.lock
+        echo "tests_passed=false" >> $GITHUB_OUTPUT
+
+    - name: Check for meaningful changes
+      id: check-changes
+      run: |
+        if git diff --quiet uv.lock; then
+          echo "changes=false" >> $GITHUB_OUTPUT
+          echo "No dependency updates available"
+        else
+          echo "changes=true" >> $GITHUB_OUTPUT
+          echo "Dependency updates available"
+          git diff uv.lock
+        fi
+
+    - name: Create Pull Request
+      if: steps.check-changes.outputs.changes == 'true' && steps.test-updates.outputs.tests_passed == 'true'
+      uses: peter-evans/create-pull-request@v5
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        commit-message: "chore: update dependencies"
+        title: "🔄 Automated Dependency Updates"
+        body: |
+          ## 🔄 Automated Dependency Updates
+          
+          This PR contains automated dependency updates.
+          
+          ### Changes
+          - Updated `uv.lock` with latest compatible versions
+          - All tests pass with updated dependencies
+          - Security scan completed successfully
+          
+          ### Verification
+          - ✅ Tests pass with new dependencies
+          - ✅ Security scan completed
+          - ✅ No breaking changes detected
+          
+          ### Review Checklist
+          - [ ] Review dependency changes
+          - [ ] Verify no breaking changes
+          - [ ] Check for any new security advisories
+          - [ ] Test manually if needed
+          
+          **Auto-generated by dependency update workflow**
+        branch: automated/dependency-updates
+        labels: |
+          dependencies
+          automated
+          chore
+        reviewers: |
+          brettbergin
+        draft: false
+
+  dependency-audit:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+      with:
+        enable-cache: true
+
+    - name: Install audit tools
+      run: |
+        uv venv --python 3.11
+        source .venv/bin/activate
+        uv pip install -e ".[dev]"
+        pip install pip-audit safety bandit
+
+    - name: Run comprehensive dependency audit
+      run: |
+        source .venv/bin/activate
+        
+        echo "=== Dependency Tree ==="
+        pip list --format=json > dependency-list.json
+        pip list
+        
+        echo -e "\n=== License Check ==="
+        pip-licenses --format=json --output-file=licenses.json
+        pip-licenses
+        
+        echo -e "\n=== Security Audit ==="
+        pip-audit --format=json --output=audit-report.json
+        pip-audit
+        
+        echo -e "\n=== Safety Check ==="
+        safety check --json --output=safety-report.json
+        safety check
+        
+        echo -e "\n=== Outdated Packages ==="
+        pip list --outdated --format=json > outdated-packages.json
+        pip list --outdated
+
+    - name: Upload audit reports
+      uses: actions/upload-artifact@v4
+      with:
+        name: dependency-audit-reports
+        path: |
+          dependency-list.json
+          licenses.json
+          audit-report.json
+          safety-report.json
+          outdated-packages.json
+        retention-days: 30
+
+    - name: Comment audit summary
+      if: github.event_name == 'workflow_dispatch'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          
+          // Read audit results
+          let auditSummary = '## 📊 Dependency Audit Summary\n\n';
+          
+          try {
+            // Count dependencies
+            const depList = JSON.parse(fs.readFileSync('dependency-list.json', 'utf8'));
+            auditSummary += `- **Total Dependencies**: ${depList.length}\n`;
+            
+            // Check for outdated packages
+            const outdated = JSON.parse(fs.readFileSync('outdated-packages.json', 'utf8'));
+            auditSummary += `- **Outdated Packages**: ${outdated.length}\n`;
+            
+            // License information
+            const licenses = JSON.parse(fs.readFileSync('licenses.json', 'utf8'));
+            const licenseTypes = [...new Set(licenses.map(l => l.License))];
+            auditSummary += `- **License Types**: ${licenseTypes.join(', ')}\n`;
+            
+            auditSummary += '\n### 📈 Details\n';
+            auditSummary += `- Audit completed on ${new Date().toISOString()}\n`;
+            auditSummary += `- Reports available in [workflow artifacts](${context.payload.repository.html_url}/actions/runs/${context.runId})\n`;
+            
+          } catch (error) {
+            auditSummary += '❌ Error reading audit files\n';
+          }
+          
+          console.log(auditSummary);

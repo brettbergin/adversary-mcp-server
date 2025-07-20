@@ -184,15 +184,17 @@ class ScanEngine:
 
         # Initialize Semgrep scanner
         self.semgrep_scanner = SemgrepScanner(self.threat_engine)
-        
+
         # Check if Semgrep scanning is enabled in config
         config = self.credential_manager.load_config()
         self.enable_semgrep_analysis = (
             config.enable_semgrep_scanning and self.semgrep_scanner.is_available()
         )
-        
+
         if not self.semgrep_scanner.is_available():
-            logger.warning("Semgrep not available - install semgrep for enhanced analysis")
+            logger.warning(
+                "Semgrep not available - install semgrep for enhanced analysis"
+            )
 
         # Initialize LLM analyzer if enabled
         self.llm_analyzer = None
@@ -310,7 +312,9 @@ class ScanEngine:
         if severity_threshold:
             rules_threats = self._filter_by_severity(rules_threats, severity_threshold)
             llm_threats = self._filter_by_severity(llm_threats, severity_threshold)
-            semgrep_threats = self._filter_by_severity(semgrep_threats, severity_threshold)
+            semgrep_threats = self._filter_by_severity(
+                semgrep_threats, severity_threshold
+            )
 
         return EnhancedScanResult(
             file_path=file_path,

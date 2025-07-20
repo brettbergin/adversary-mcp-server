@@ -63,13 +63,13 @@ class SemgrepScanner:
             Environment variables including SEMGREP_APP_TOKEN if available
         """
         env = os.environ.copy()
-        
+
         # Check for Semgrep App token for Pro features
         if "SEMGREP_APP_TOKEN" in env:
             logger.info("Semgrep App token detected - using Pro features")
         else:
             logger.info("Using free Semgrep version")
-        
+
         return env
 
     def _map_semgrep_severity(self, severity: str) -> Severity:
@@ -112,21 +112,31 @@ class SemgrepScanner:
             return Category.AUTHENTICATION
         elif any(keyword in rule_id_lower for keyword in ["crypto", "hash", "encrypt"]):
             return Category.CRYPTOGRAPHY
-        elif any(keyword in rule_id_lower for keyword in ["path", "traversal", "directory"]):
+        elif any(
+            keyword in rule_id_lower for keyword in ["path", "traversal", "directory"]
+        ):
             return Category.PATH_TRAVERSAL
-        elif any(keyword in rule_id_lower for keyword in ["rce", "command", "exec", "eval"]):
+        elif any(
+            keyword in rule_id_lower for keyword in ["rce", "command", "exec", "eval"]
+        ):
             return Category.RCE
         elif any(keyword in rule_id_lower for keyword in ["ssrf", "request"]):
             return Category.SSRF
-        elif any(keyword in rule_id_lower for keyword in ["deserial", "pickle", "yaml"]):
+        elif any(
+            keyword in rule_id_lower for keyword in ["deserial", "pickle", "yaml"]
+        ):
             return Category.DESERIALIZATION
         elif any(keyword in rule_id_lower for keyword in ["secret", "key", "password"]):
             return Category.SECRETS
-        elif any(keyword in rule_id_lower for keyword in ["csrf", "cross-site-request"]):
+        elif any(
+            keyword in rule_id_lower for keyword in ["csrf", "cross-site-request"]
+        ):
             return Category.CSRF
         elif any(keyword in rule_id_lower for keyword in ["dos", "denial", "regex"]):
             return Category.DOS
-        elif any(keyword in rule_id_lower for keyword in ["config", "debug", "setting"]):
+        elif any(
+            keyword in rule_id_lower for keyword in ["config", "debug", "setting"]
+        ):
             return Category.CONFIGURATION
         elif any(keyword in rule_id_lower for keyword in ["log", "logging"]):
             return Category.LOGGING
@@ -150,12 +160,14 @@ class SemgrepScanner:
         """
         rule_id = finding.get("check_id", "semgrep-unknown")
         message = finding.get("message", "Security issue detected by Semgrep")
-        severity = self._map_semgrep_severity(finding.get("metadata", {}).get("severity", "info"))
+        severity = self._map_semgrep_severity(
+            finding.get("metadata", {}).get("severity", "info")
+        )
         category = self._map_semgrep_category(rule_id, message)
 
         # Extract location information
         start_line = finding.get("start", {}).get("line", 1)
-        
+
         # Extract code snippet
         code_snippet = finding.get("extra", {}).get("lines", "")
         if not code_snippet:

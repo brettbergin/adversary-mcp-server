@@ -65,10 +65,10 @@ class TestDemoCommand:
         # Create mock EnhancedScanResult objects
         python_result = Mock()
         python_result.all_threats = [python_threat]
-        
+
         js_result = Mock()
         js_result.all_threats = [js_threat]
-        
+
         mock_scanner_instance.scan_code.side_effect = [
             python_result,  # Python demo
             js_result,  # JavaScript demo

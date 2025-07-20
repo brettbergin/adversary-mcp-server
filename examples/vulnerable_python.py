@@ -18,13 +18,19 @@ app = Flask(__name__)
 
 def vulnerable_sql_query(username, password):
     """SQL Injection vulnerability - string concatenation."""
-    conn = sqlite3.connect('users.db')
+    conn = sqlite3.connect("users.db")
     cursor = conn.cursor()
-    
+
     # VULNERABILITY: SQL Injection via string concatenation
-    query = "SELECT * FROM users WHERE username = '" + username + "' AND password = '" + password + "'"
+    query = (
+        "SELECT * FROM users WHERE username = '"
+        + username
+        + "' AND password = '"
+        + password
+        + "'"
+    )
     cursor.execute(query)
-    
+
     return cursor.fetchone()
 
 
@@ -32,7 +38,7 @@ def vulnerable_command_execution(user_input):
     """Command injection vulnerability - os.system with user input."""
     # VULNERABILITY: Command injection
     os.system("echo " + user_input)
-    
+
     # Another command injection variant
     subprocess.call("ls " + user_input, shell=True)
 
@@ -50,16 +56,16 @@ def vulnerable_file_access(filename):
         return f.read()
 
 
-@app.route('/search')
+@app.route("/search")
 def vulnerable_web_endpoint():
     """Web vulnerability example."""
-    query = request.args.get('q', '')
-    
+    query = request.args.get("q", "")
+
     # VULNERABILITY: SQL injection in web context
-    conn = sqlite3.connect('app.db')
+    conn = sqlite3.connect("app.db")
     cursor = conn.cursor()
     cursor.execute(f"SELECT * FROM products WHERE name LIKE '%{query}%'")
-    
+
     results = cursor.fetchall()
     return str(results)
 
@@ -68,13 +74,13 @@ def hardcoded_secrets():
     """Information disclosure - hardcoded secrets."""
     # VULNERABILITY: Hardcoded API key
     api_key = "sk-1234567890abcdef1234567890abcdef"
-    
+
     # VULNERABILITY: Hardcoded password
     admin_password = "admin123"
-    
+
     # VULNERABILITY: Hardcoded database credentials
     db_connection = "postgresql://admin:password123@localhost:5432/mydb"
-    
+
     return api_key, admin_password, db_connection
 
 
@@ -83,10 +89,10 @@ def weak_crypto():
     # VULNERABILITY: Weak hashing algorithm
     password = "user_password"
     weak_hash = hashlib.md5(password.encode()).hexdigest()
-    
+
     # VULNERABILITY: Predictable random numbers for security
     session_token = str(random.randint(1000, 9999))
-    
+
     return weak_hash, session_token
 
 
@@ -106,15 +112,15 @@ def exec_vulnerability(user_script):
 if __name__ == "__main__":
     # Example usage (DO NOT RUN IN PRODUCTION)
     print("Example vulnerable code - for educational purposes only")
-    
+
     # Test SQL injection
     vulnerable_sql_query("admin", "password")
-    
+
     # Test command injection
     vulnerable_command_execution("test")
-    
+
     # Test hardcoded secrets
     secrets = hardcoded_secrets()
     print(f"Found secrets: {secrets}")
-    
-    app.run(debug=True)  # VULNERABILITY: Debug mode in production 
+
+    app.run(debug=True)  # VULNERABILITY: Debug mode in production
