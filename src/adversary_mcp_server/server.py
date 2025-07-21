@@ -504,7 +504,7 @@ class AdversaryMCPServer:
                 source_code=content,
                 file_path="input.code",
                 language=language,
-                use_llm=False,  # Always False for rules scan
+                use_llm=use_llm,
                 use_semgrep=use_semgrep,
                 use_rules=use_rules,
                 severity_threshold=severity_enum,
@@ -571,7 +571,7 @@ class AdversaryMCPServer:
             # Scan the file using enhanced scanner (rules-based)
             scan_result = self.scan_engine.scan_file(
                 file_path=file_path,
-                use_llm=False,  # Always False for rules scan
+                use_llm=use_llm,
                 use_semgrep=use_semgrep,
                 use_rules=use_rules,
                 severity_threshold=severity_enum,
@@ -664,7 +664,7 @@ class AdversaryMCPServer:
             scan_results = self.scan_engine.scan_directory(
                 directory_path=directory_path,
                 recursive=recursive,
-                use_llm=False,  # Always False for rules scan
+                use_llm=use_llm,
                 use_semgrep=use_semgrep,
                 use_rules=use_rules,
                 severity_threshold=severity_enum,
@@ -778,7 +778,7 @@ class AdversaryMCPServer:
                 source_branch=source_branch,
                 target_branch=target_branch,
                 working_dir=working_dir_path,
-                use_llm=False,  # Always False for rules scan
+                use_llm=use_llm,
                 use_semgrep=use_semgrep,
                 use_rules=use_rules,
                 severity_threshold=severity_enum,
@@ -1558,7 +1558,7 @@ class AdversaryMCPServer:
         result_data = {
             "scan_metadata": {
                 "target": scan_target,
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(datetime.UTC).isoformat(),
                 "language": scan_result.language.value,
                 "file_path": scan_result.file_path,
                 "scan_type": "enhanced",
@@ -1659,7 +1659,7 @@ class AdversaryMCPServer:
         result_data = {
             "scan_metadata": {
                 "target": scan_target,
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(datetime.UTC).isoformat(),
                 "scan_type": "directory",
                 "total_threats": len(all_threats),
                 "files_scanned": len(files_scanned),
@@ -1751,7 +1751,7 @@ class AdversaryMCPServer:
         result_data = {
             "scan_metadata": {
                 "target": scan_target,
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(datetime.UTC).isoformat(),
                 "scan_type": "git_diff",
                 "total_threats": len(all_threats),
                 "files_changed": len(files_changed),
