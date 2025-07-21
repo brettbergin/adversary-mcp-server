@@ -458,7 +458,7 @@ class ScanEngine:
 
         # Run Semgrep ONCE for entire directory (if enabled)
         semgrep_threats = []
-        semgrep_metadata = {"semgrep_scan_success": False}
+        semgrep_metadata: dict[str, Any] = {"semgrep_scan_success": False}
 
         if use_semgrep and self.enable_semgrep_analysis:
             try:
@@ -472,7 +472,7 @@ class ScanEngine:
                     recursive=recursive,
                     severity_threshold=severity_threshold,
                 )
-                semgrep_metadata = {
+                semgrep_metadata: dict[str, Any] = {
                     "semgrep_scan_success": True,
                     "semgrep_threats_found": len(semgrep_threats),
                     "semgrep_scan_reason": "directory_scan_completed",
@@ -482,7 +482,7 @@ class ScanEngine:
                 )
             except Exception as e:
                 logger.error(f"Semgrep directory scan failed: {e}")
-                semgrep_metadata = {
+                semgrep_metadata: dict[str, Any] = {
                     "semgrep_scan_success": False,
                     "semgrep_scan_error": str(e),
                     "semgrep_scan_reason": "directory_scan_failed",

@@ -554,7 +554,7 @@ class AdversaryMCPServer:
     ) -> list[types.TextContent]:
         """Handle file scanning request."""
         try:
-            file_path = Path(arguments["file_path"])
+            file_path = Path(arguments["file_path"]).resolve()
             severity_threshold = arguments.get("severity_threshold", "medium")
             include_exploits = arguments.get("include_exploits", True)
             use_llm = arguments.get("use_llm", False)
@@ -601,7 +601,7 @@ class AdversaryMCPServer:
             if output_format == "json":
                 result = self._format_json_scan_results(scan_result, str(file_path))
                 # Auto-save JSON results to project root
-                self._save_scan_results_json(result, str(file_path.parent))
+                self._save_scan_results_json(result, ".")
             else:
                 # Format results with enhanced information
                 result = self._format_enhanced_scan_results(scan_result, str(file_path))
@@ -645,7 +645,7 @@ class AdversaryMCPServer:
     ) -> list[types.TextContent]:
         """Handle directory scanning request."""
         try:
-            directory_path = Path(arguments["directory_path"])
+            directory_path = Path(arguments["directory_path"]).resolve()
             recursive = arguments.get("recursive", True)
             severity_threshold = arguments.get("severity_threshold", "medium")
             include_exploits = arguments.get("include_exploits", True)
@@ -695,7 +695,7 @@ class AdversaryMCPServer:
                     scan_results, str(directory_path)
                 )
                 # Auto-save JSON results to project root
-                self._save_scan_results_json(result, str(directory_path))
+                self._save_scan_results_json(result, ".")
             else:
                 # Format results with enhanced information
                 result = self._format_directory_scan_results(
@@ -809,7 +809,7 @@ class AdversaryMCPServer:
                     scan_results, diff_summary, f"{source_branch}..{target_branch}"
                 )
                 # Auto-save JSON results to project root
-                self._save_scan_results_json(result, str(working_dir_path))
+                self._save_scan_results_json(result, ".")
             else:
                 # Format results
                 result = self._format_diff_scan_results(
@@ -1773,7 +1773,7 @@ class AdversaryMCPServer:
     def _save_scan_results_json(
         self, json_data: str, working_dir: str = "."
     ) -> str | None:
-        """Save scan results to .adversary-scan-results.json in project root.
+        """Save scan results to .adversary.json in project root.
 
         Args:
             json_data: JSON formatted scan results
