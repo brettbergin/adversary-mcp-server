@@ -326,13 +326,13 @@ class TestAdversaryMCPServerExtended:
     @pytest.mark.asyncio
     async def test_call_tool_get_version(self, server):
         """Test get_version tool call."""
-        with patch.object(server, "_get_version", return_value="0.4.3"):
+        with patch.object(server, "_get_version", return_value="0.8.5"):
             result = await server._handle_get_version()
 
         assert len(result) == 1
         assert isinstance(result[0], types.TextContent)
         assert "# Adversary MCP Server" in result[0].text
-        assert "**Version:** 0.4.3" in result[0].text
+        assert "**Version:** 0.8.5" in result[0].text
         assert "**LLM Integration:** Client-based" in result[0].text
         assert (
             "**Supported Languages:** Python, JavaScript, TypeScript" in result[0].text
@@ -916,3 +916,48 @@ class TestAdversaryMCPServerVersionIntegration:
             assert any("**Version:**" in line for line in lines)
             assert any("**LLM Integration:**" in line for line in lines)
             assert any("**Supported Languages:**" in line for line in lines)
+
+    @pytest.mark.asyncio
+    async def test_scan_tools_with_output_parameter(self, server):
+        """Test that scan tools accept and use the output parameter."""
+        import os
+        import tempfile
+        from unittest.mock import patch
+
+        # Test scan_code with output parameter
+        with tempfile.TemporaryDirectory() as temp_dir:
+            custom_output = os.path.join(temp_dir, "custom_scan_results.json")
+
+            arguments = {
+                "content": "test code",
+                "language": "python",
+                "output_format": "json",
+                "output": custom_output,
+            }
+
+            with patch.object(server.scan_engine, "scan_code") as mock_scan:
+                from adversary_mcp_server.scan_engine import EnhancedScanResult
+                from adversary_mcp_server.threat_engine import Language
+
+                mock_result = EnhancedScanResult(
+                    rules_threats=[],
+                    llm_threats=[],
+                    semgrep_threats=[],
+                    file_path="input.code",
+                    language=Language.PYTHON,
+                    scan_metadata={},
+                )
+                mock_scan.return_value = mock_result
+
+                result = await server._handle_scan_code(arguments)
+
+                # Check that the result was returned
+                assert len(result) == 1
+
+                # Check that the custom output file was created
+                assert os.path.exists(custom_output)
+
+                # Verify the file contains JSON data
+                with open(custom_output) as f:
+                    content = f.read()
+                    assert '"target": "code"' in content

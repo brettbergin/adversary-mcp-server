@@ -129,6 +129,10 @@ class AdversaryMCPServer:
                                 "enum": ["text", "json"],
                                 "default": "text",
                             },
+                            "output": {
+                                "type": "string",
+                                "description": "Path to output file for JSON results (optional, defaults to .adversary.json in project root)",
+                            },
                         },
                         "required": ["content", "language"],
                     },
@@ -175,13 +179,17 @@ class AdversaryMCPServer:
                                 "enum": ["text", "json"],
                                 "default": "text",
                             },
+                            "output": {
+                                "type": "string",
+                                "description": "Path to output file for JSON results (optional, defaults to .adversary.json in project root)",
+                            },
                         },
                         "required": ["file_path"],
                     },
                 ),
                 Tool(
-                    name="adv_scan_directory",
-                    description="Scan a directory for security vulnerabilities",
+                    name="adv_scan_folder",
+                    description="Scan a folder for security vulnerabilities",
                     inputSchema={
                         "type": "object",
                         "properties": {
@@ -225,6 +233,10 @@ class AdversaryMCPServer:
                                 "description": "Output format for results",
                                 "enum": ["text", "json"],
                                 "default": "text",
+                            },
+                            "output": {
+                                "type": "string",
+                                "description": "Path to output file for JSON results (optional, defaults to .adversary.json in project root)",
                             },
                         },
                         "required": ["directory_path"],
@@ -453,7 +465,7 @@ class AdversaryMCPServer:
                     return await self._handle_scan_code(arguments)
                 elif name == "adv_scan_file":
                     return await self._handle_scan_file(arguments)
-                elif name == "adv_scan_directory":
+                elif name == "adv_scan_folder":
                     return await self._handle_scan_directory(arguments)
                 elif name == "adv_diff_scan":
                     return await self._handle_diff_scan(arguments)
@@ -494,6 +506,7 @@ class AdversaryMCPServer:
             use_semgrep = arguments.get("use_semgrep", True)
             use_rules = arguments.get("use_rules", True)
             output_format = arguments.get("output_format", "text")
+            output_path = arguments.get("output")
 
             # Convert language string to enum
             language = Language(language_str)
@@ -526,8 +539,9 @@ class AdversaryMCPServer:
             # Format results based on output format
             if output_format == "json":
                 result = self._format_json_scan_results(scan_result, "code")
-                # Auto-save JSON results to project root
-                self._save_scan_results_json(result, ".")
+                # Save JSON results to custom path or default location
+                save_path = output_path if output_path else "."
+                self._save_scan_results_json(result, save_path)
             else:
                 # Format results with enhanced information
                 result = self._format_enhanced_scan_results(scan_result, "code")
@@ -561,6 +575,7 @@ class AdversaryMCPServer:
             use_semgrep = arguments.get("use_semgrep", True)
             use_rules = arguments.get("use_rules", True)
             output_format = arguments.get("output_format", "text")
+            output_path = arguments.get("output")
 
             if not file_path.exists():
                 raise AdversaryToolError(f"File not found: {file_path}")
@@ -583,8 +598,8 @@ class AdversaryMCPServer:
                 try:
                     with open(file_path, encoding="utf-8") as f:
                         file_content = f.read()
-                except Exception:
-                    pass
+                except Exception: # nosec B110: ignore 
+                    pass # nosec B110: ignore 
 
                 for threat in scan_result.all_threats:
                     try:
@@ -600,8 +615,9 @@ class AdversaryMCPServer:
             # Format results based on output format
             if output_format == "json":
                 result = self._format_json_scan_results(scan_result, str(file_path))
-                # Auto-save JSON results to project root
-                self._save_scan_results_json(result, ".")
+                # Save JSON results to custom path or default location
+                save_path = output_path if output_path else "."
+                self._save_scan_results_json(result, save_path)
             else:
                 # Format results with enhanced information
                 result = self._format_enhanced_scan_results(scan_result, str(file_path))
@@ -653,6 +669,7 @@ class AdversaryMCPServer:
             use_semgrep = arguments.get("use_semgrep", True)
             use_rules = arguments.get("use_rules", True)
             output_format = arguments.get("output_format", "text")
+            output_path = arguments.get("output")
 
             if not directory_path.exists():
                 raise AdversaryToolError(f"Directory not found: {directory_path}")
@@ -694,8 +711,9 @@ class AdversaryMCPServer:
                 result = self._format_json_directory_results(
                     scan_results, str(directory_path)
                 )
-                # Auto-save JSON results to project root
-                self._save_scan_results_json(result, ".")
+                # Save JSON results to custom path or default location
+                save_path = output_path if output_path else "."
+                self._save_scan_results_json(result, save_path)
             else:
                 # Format results with enhanced information
                 result = self._format_directory_scan_results(
@@ -1577,6 +1595,38 @@ class AdversaryMCPServer:
             },
             "statistics": scan_result.stats,
             "threats": threats_data,
+            "scanner_execution_status": {
+                "rules_scanner": {
+                    "executed": scan_result.scan_metadata.get(
+                        "rules_scan_success", False
+                    ),
+                    "reason": scan_result.scan_metadata.get(
+                        "rules_scan_reason", "unknown"
+                    ),
+                    "error": scan_result.scan_metadata.get("rules_scan_error", None),
+                    "threats_found": scan_result.stats.get("rules_threats", 0),
+                },
+                "llm_scanner": {
+                    "executed": scan_result.scan_metadata.get(
+                        "llm_scan_success", False
+                    ),
+                    "reason": scan_result.scan_metadata.get(
+                        "llm_scan_reason", "unknown"
+                    ),
+                    "error": scan_result.scan_metadata.get("llm_scan_error", None),
+                    "threats_found": scan_result.stats.get("llm_threats", 0),
+                },
+                "semgrep_scanner": {
+                    "executed": scan_result.scan_metadata.get(
+                        "semgrep_scan_success", False
+                    ),
+                    "reason": scan_result.scan_metadata.get(
+                        "semgrep_scan_reason", "unknown"
+                    ),
+                    "error": scan_result.scan_metadata.get("semgrep_scan_error", None),
+                    "threats_found": scan_result.stats.get("semgrep_threats", 0),
+                },
+            },
             "scan_details": {
                 "rules_scan_success": scan_result.scan_metadata.get(
                     "rules_scan_success", False
@@ -1663,6 +1713,71 @@ class AdversaryMCPServer:
                 "scan_type": "directory",
                 "total_threats": len(all_threats),
                 "files_scanned": len(files_scanned),
+            },
+            "scanner_execution_summary": {
+                "rules_scanner": {
+                    "files_processed": len(
+                        [
+                            f
+                            for f in scan_results
+                            if f.scan_metadata.get("rules_scan_success", False)
+                        ]
+                    ),
+                    "files_failed": len(
+                        [
+                            f
+                            for f in scan_results
+                            if not f.scan_metadata.get("rules_scan_success", False)
+                            and f.scan_metadata.get("rules_scan_reason")
+                            not in ["disabled", "not_available"]
+                        ]
+                    ),
+                    "total_threats": sum(
+                        f.stats.get("rules_threats", 0) for f in scan_results
+                    ),
+                },
+                "semgrep_scanner": {
+                    "files_processed": len(
+                        [
+                            f
+                            for f in scan_results
+                            if f.scan_metadata.get("semgrep_scan_success", False)
+                        ]
+                    ),
+                    "files_failed": len(
+                        [
+                            f
+                            for f in scan_results
+                            if not f.scan_metadata.get("semgrep_scan_success", False)
+                            and f.scan_metadata.get("semgrep_scan_reason")
+                            not in ["disabled", "not_available"]
+                        ]
+                    ),
+                    "total_threats": sum(
+                        f.stats.get("semgrep_threats", 0) for f in scan_results
+                    ),
+                },
+                "llm_scanner": {
+                    "files_processed": len(
+                        [
+                            f
+                            for f in scan_results
+                            if f.scan_metadata.get("llm_scan_success", False)
+                        ]
+                    ),
+                    "files_failed": len(
+                        [
+                            f
+                            for f in scan_results
+                            if not f.scan_metadata.get("llm_scan_success", False)
+                            and f.scan_metadata.get("llm_scan_reason")
+                            not in ["disabled", "not_available"]
+                        ]
+                    ),
+                    "total_threats": sum(
+                        f.stats.get("llm_threats", 0) for f in scan_results
+                    ),
+                },
             },
             "statistics": {
                 "total_threats": len(all_threats),
@@ -1771,13 +1886,13 @@ class AdversaryMCPServer:
         return json.dumps(result_data, indent=2)
 
     def _save_scan_results_json(
-        self, json_data: str, working_dir: str = "."
+        self, json_data: str, output_path: str = "."
     ) -> str | None:
-        """Save scan results to .adversary.json in project root.
+        """Save scan results to JSON file.
 
         Args:
             json_data: JSON formatted scan results
-            working_dir: Working directory to save file in
+            output_path: Output file path or directory (defaults to .adversary.json in current dir)
 
         Returns:
             Path to saved file or None if save failed
@@ -1785,12 +1900,23 @@ class AdversaryMCPServer:
         try:
             from pathlib import Path
 
-            output_path = Path(working_dir) / ".adversary.json"
-            with open(output_path, "w", encoding="utf-8") as f:
+            path = Path(output_path)
+
+            # If output_path is a directory, append the default filename
+            if path.is_dir() or (not path.suffix and not path.exists()):
+                final_path = path / ".adversary.json"
+            else:
+                # output_path is a full file path
+                final_path = path
+
+            # Ensure parent directory exists
+            final_path.parent.mkdir(parents=True, exist_ok=True)
+
+            with open(final_path, "w", encoding="utf-8") as f:
                 f.write(json_data)
 
-            logger.info(f"Scan results saved to {output_path}")
-            return str(output_path)
+            logger.info(f"Scan results saved to {final_path}")
+            return str(final_path)
         except Exception as e:
             logger.warning(f"Failed to save scan results JSON: {e}")
             return None

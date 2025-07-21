@@ -218,8 +218,8 @@ class TestMCPServerUseRulesFlag:
             Path(test_file).unlink()
 
     @pytest.mark.asyncio
-    async def test_adv_scan_directory_with_use_rules_false(self, server):
-        """Test adv_scan_directory with use_rules=False."""
+    async def test_adv_scan_folder_with_use_rules_false(self, server):
+        """Test adv_scan_folder with use_rules=False."""
         with tempfile.TemporaryDirectory() as temp_dir:
             test_file = Path(temp_dir) / "test.py"
             test_file.write_text("import os; os.system(user_input)")
@@ -283,7 +283,7 @@ class TestMCPServerUseRulesFlag:
         scan_tools = [
             "adv_scan_code",
             "adv_scan_file",
-            "adv_scan_directory",
+            "adv_scan_folder",
             "adv_diff_scan",
         ]
 
@@ -405,8 +405,8 @@ class TestMCPServerUseRulesFlag:
             call_args = mock_scan_code.call_args
             assert call_args.kwargs["use_rules"] is True
             assert call_args.kwargs["use_semgrep"] is True
-            # Note: use_llm is always False for scan_code - LLM is added separately
-            assert call_args.kwargs["use_llm"] is False
+            # use_llm parameter is now properly passed through
+            assert call_args.kwargs["use_llm"] is True
 
     @pytest.mark.asyncio
     async def test_output_format_with_rules_disabled(self, server):
