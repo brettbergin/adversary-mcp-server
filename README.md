@@ -44,7 +44,7 @@ adversary-mcp-cli status
 ### 1. Initial Setup
 
 ```bash
-# Configure the security engine  
+# Configure the security engine
 adversary-mcp-cli configure
 
 # View available rules and setup
@@ -75,7 +75,7 @@ Once configured, you can use these MCP tools in Cursor:
 
 - `adv_scan_code` - Hybrid scanning with rules + AI analysis
 - `adv_scan_file` - file scanning with LLM support
-- `adv_scan_directory` - directory scanning
+- `adv_scan_folder` - folder scanning
 - `adv_diff_scan` - **🆕 Git diff-aware scanning** - scans only changed files between branches
 - `adv_list_rules` - List all 95+ security rules
 - `adv_get_rule_details` - Get details about specific rules
@@ -83,6 +83,9 @@ Once configured, you can use these MCP tools in Cursor:
 - `adv_configure_settings` - Configuration management
 - `adv_get_status` - Check server status and AI availability
 - `adv_get_version` - Get version information
+- `adv_mark_false_positive` - Mark false positive
+- `adv_unmark_false_positives` - Unmark false positive
+- `adv_list_false_postives` - List false positives
 
 ### 4. Enable Hot-Reload (Optional)
 
@@ -107,7 +110,7 @@ adversary-mcp-cli scan --diff
 adversary-mcp-cli scan --diff --source-branch=develop --target-branch=feature/auth
 
 # Scan with high severity filter
-adversary-mcp-cli scan --diff --severity=high --use-llm=true
+adversary-mcp-cli scan --diff --severity=high --no-rules --use-llm --use-semgrep
 ```
 
 ---
@@ -116,10 +119,10 @@ adversary-mcp-cli scan --diff --severity=high --use-llm=true
 
 ```bash
 # Scan with AI enhancement (hybrid mode)
-Use adv_scan_code with use_llm=true for comprehensive analysis
+Use adv_scan_code with use_llm=true use_semgrep=true use_rules=true for comprehensive analysis
 
 # Traditional rules-only scanning
-Use adv_scan_code with use_llm=false for simple analysis
+Use adv_scan_code with use_rules=true for simple analysis
 ```
 
 ### **AI Analysis Features**
@@ -154,7 +157,7 @@ adversary-mcp-cli status
 |------|-------------|-------------------|
 | `adv_scan_code` | **🆕 Hybrid scan** of source code | ✅ LLM prompts, confidence scoring |
 | `adv_scan_file` | **🆕 Enhanced** file scanning | ✅ AI-powered prompts, detailed explanations |
-| `adv_scan_directory` | **🆕 Intelligent** directory scanning | ✅ Batch LLM prompts, statistical insights |
+| `adv_scan_folder` | **🆕 Intelligent** folder scanning | ✅ Batch LLM prompts, statistical insights |
 | `adv_diff_scan` | **🆕 Git diff-aware scanning** - scans only newly added lines | ✅ Smart change detection, branch comparison, requires `working_directory` |
 | `adv_generate_exploit` | **🆕 AI-enhanced** exploit generation | ✅ Context-aware prompts, safety mode |
 | `adv_list_rules` | List all 95+ threat detection rules | Enhanced with AI rule categories |
@@ -162,6 +165,9 @@ adversary-mcp-cli status
 | `adv_configure_settings` | **🆕 Advanced** configuration management | ✅ LLM settings, validation |
 | `adv_get_status` | Get server status and **🆕 AI availability** | ✅ LLM configuration status |
 | `adv_get_version` | Get version information | Shows AI capabilities |
+| `adv_mark_false_positive` | Mark false positive | Mark false positive |
+| `adv_unmark_false_positive` | Unmark flase positive | unmark false positive |
+| `adv_list_false_positves` | list false positives | list false positives |
 
 ### **🆕 Enhanced Tool Parameters**
 
@@ -174,24 +180,9 @@ All scanning tools now support:
   "output_format": "json",      // Output format: "text" or "json"
   "severity_threshold": "medium", // Filter by severity
   "include_exploits": true,       // Include exploit examples
-  "confidence_threshold": 0.8     // AI confidence filtering
+  "confidence_threshold": 0.8,     // AI confidence filtering
+  "output": "/path/to/.adversary.json" // Output file path for json output
 }
-```
-
-### Example Usage in Cursor
-
-```
-# NEW: AI-powered vulnerability scanning
-Use adv_scan_code with use_llm=true to analyze this function
-
-# NEW: Git diff-aware scanning
-Use adv_diff_scan to scan only changed files between branches
-
-# NEW: Generate AI-enhanced exploits
-Use adv_generate_exploit for this SQL injection
-
-# NEW: Check AI analysis availability
-Use adv_get_status to get the MCP server status
 ```
 
 ### **🆕 Git Diff-Aware Scanning**
@@ -222,6 +213,7 @@ This prevents false positives from flagging existing code as new vulnerabilities
   "severity_threshold": "medium", // Filter results by severity
   "include_exploits": true,       // Include exploit examples
   "use_llm": true                // Enable AI analysis
+  "output": "/path/to/.adversary.json" // path to json output file.
 }
 ```
 
@@ -252,7 +244,7 @@ Use adv_diff_scan with severity_threshold="high" and working_directory="/path/to
 The Adversary MCP Server now includes integrated Semgrep static analysis as a third scanning engine, providing comprehensive security coverage through:
 
 - **Built-in Rules Engine** (95+ custom rules)
-- **AI-Powered Analysis** (LLM prompts and insights) 
+- **AI-Powered Analysis** (LLM prompts and insights)
 - **Semgrep Static Analysis** (industry-standard rule database)
 
 ### **Automatic Setup**
@@ -284,7 +276,7 @@ The integration automatically detects your Semgrep configuration:
 export SEMGREP_APP_TOKEN="your_semgrep_token_here"
 
 # Now all scans automatically use Pro features
-adversary-mcp-cli scan myproject/ --use-semgrep=true
+adversary-mcp-cli scan myproject/ --use-semgrep
 ```
 
 ### **Usage in MCP Tools**
@@ -294,7 +286,7 @@ All MCP scanning tools support the `use_semgrep` parameter:
 ```json
 {
   "source_code": "eval(user_input)",
-  "file_path": "app.py", 
+  "file_path": "app.py",
   "language": "python",
   "use_semgrep": true,        // Enable Semgrep scanning
   "output_format": "json"     // Get structured JSON output
@@ -305,16 +297,16 @@ All MCP scanning tools support the `use_semgrep` parameter:
 
 ```bash
 # Enable Semgrep in CLI scans
-adversary-mcp-cli scan myproject/ --use-semgrep=true
+adversary-mcp-cli scan myproject/ --use-semgrep
 
 # Combine all three engines (Rules + AI + Semgrep)
-adversary-mcp-cli scan myproject/ --use-llm=true --use-semgrep=true
+adversary-mcp-cli scan myproject/ --use-llm --use-semgrep
 
 # Semgrep-only scanning (disable other engines)
-adversary-mcp-cli scan myproject/ --use-llm=false --use-semgrep=true
+adversary-mcp-cli scan myproject/ --no-llm --use-semgrep
 
 # Semgrep with git diff scanning
-adversary-mcp-cli scan --diff --use-semgrep=true --source-branch=main
+adversary-mcp-cli scan --diff --use-semgrep --source-branch=main
 ```
 
 ### **Configuration Options**
@@ -343,11 +335,11 @@ The integration intelligently combines results from all three engines:
 
 ```bash
 # Example output showing merged results
-adversary-mcp-cli scan app.py --use-llm=true --use-semgrep=true
+adversary-mcp-cli scan app.py --use-llm --use-semgrep
 
 # Results will show:
 # Rules Engine: 2 threats found
-# Semgrep: 3 threats found  
+# Semgrep: 3 threats found
 # LLM Analysis: 1 additional threat found
 # Total (after deduplication): 4 unique threats
 ```
@@ -358,7 +350,7 @@ Get structured output including Semgrep findings:
 
 ```bash
 # JSON output with all engines
-adversary-mcp-cli scan app.py --use-semgrep=true --output=results.json
+adversary-mcp-cli scan app.py --use-semgrep --output=results.json
 
 # The JSON will include:
 # - rules_threats: Findings from built-in rules
@@ -407,7 +399,7 @@ Rules are automatically organized in your user directory:
 ~/.local/share/adversary-mcp-server/rules/
 ├── built-in/              # Core security rules (95 rules)
 │   ├── python-rules.yaml        # 🆕 Enhanced Python rules
-│   ├── javascript-rules.yaml    # 🆕 Enhanced JavaScript rules  
+│   ├── javascript-rules.yaml    # 🆕 Enhanced JavaScript rules
 │   ├── typescript-rules.yaml    # 🆕 Enhanced TypeScript rules
 │   ├── web-security-rules.yaml  # 🆕 Enhanced Web security
 │   ├── api-security-rules.yaml  # 🆕 Enhanced API security
@@ -437,7 +429,7 @@ adversary-mcp-cli rules stats --detailed
 # View rules directory and contents
 adversary-mcp-cli show-rules-dir
 
-# List all loaded rules with source files  
+# List all loaded rules with source files
 adversary-mcp-cli list-rules
 
 # List rules with full file paths
@@ -476,19 +468,19 @@ rules:
     category: secrets
     severity: critical
     languages: [python, javascript, typescript]
-    
+
     conditions:
       - type: pattern
         value: "API_KEY\\s*=\\s*['\"][a-zA-Z0-9-_]{20,}['\"]"
-    
+
     remediation: |
       Store API keys in environment variables:
       - Use os.getenv('API_KEY') instead of hardcoding
       - Implement proper secrets management
-    
+
     references:
       - https://owasp.org/Top10/A05_2021-Security_Misconfiguration/
-    
+
     cwe_id: CWE-798
     owasp_category: A05:2021
 ```
@@ -601,7 +593,7 @@ adversary-mcp-cli scan --diff --severity=high
 adversary-mcp-cli scan --diff --output=security-diff.json
 
 # Comprehensive diff analysis with AI - includes LLM prompts for enhanced analysis
-adversary-mcp-cli scan --diff --use-llm=true --include-exploits=true
+adversary-mcp-cli scan --diff --use-llm --include-exploits=true
 
 # Specify custom directory for git operations
 adversary-mcp-cli scan /path/to/repo --diff --source-branch=main --target-branch=HEAD
@@ -623,7 +615,7 @@ adversary-mcp-cli scan /path/to/repo --diff --source-branch=main --target-branch
 
 #### **Traditional Rule-Based Detection**
 - **Python** (25+ rules): SQL injection, command injection, deserialization, path traversal
-- **JavaScript/TypeScript** (30+ rules): XSS, prototype pollution, eval injection, CORS issues  
+- **JavaScript/TypeScript** (30+ rules): XSS, prototype pollution, eval injection, CORS issues
 - **Web Security** (18+ rules): CSRF, clickjacking, security headers, session management
 - **API Security** (15+ rules): Authentication bypass, parameter pollution, mass assignment
 - **Cryptography** (15+ rules): Weak algorithms, hardcoded keys, poor randomness
@@ -672,39 +664,39 @@ graph TB
     B --> C[AST Scanner]
     B --> D[🆕 LLM Analyzer]
     B --> Q[🆕 Semgrep Scanner]
-    
+
     C --> E[Rule Engine]
     E --> F[95+ Built-in Rules]
     E --> G[Custom Rules]
-    
+
     D --> H[LLM Service]
     H --> I[AI Security Analysis]
-    
+
     Q --> R[Semgrep Engine]
     R --> S[Industry Rules Database]
     R --> T[Pro Rules - Optional]
-    
+
     C --> J[Threat Matches]
     D --> K[LLM Findings]
     Q --> U[Semgrep Findings]
-    
+
     J --> L[🆕 Intelligent Merger]
     K --> L
     U --> L
-    
+
     L --> M[Enhanced Results]
     M --> N[Confidence Scoring]
     M --> O[Deduplication]
     M --> P[Statistical Analysis]
     M --> V[🆕 JSON Output]
-    
+
     subgraph "🆕 AI Enhancement"
         D
         H
         I
         K
     end
-    
+
     subgraph "Traditional Analysis"
         C
         E
@@ -712,7 +704,7 @@ graph TB
         G
         J
     end
-    
+
     subgraph "🆕 Semgrep Integration"
         Q
         R
@@ -720,7 +712,7 @@ graph TB
         T
         U
     end
-    
+
     subgraph "🆕 Triple-Engine Output"
         L
         M
@@ -769,13 +761,13 @@ graph TB
 #### **Traditional Rules-Only Analysis**
 ```bash
 # Fast, deterministic scanning
-adversary-mcp-cli scan myproject/ --use-llm=false --severity=medium
+adversary-mcp-cli scan myproject/ --no-llm --severity=medium
 ```
 
 #### **🆕 AI-Enhanced Analysis**
 ```bash
 # Comprehensive hybrid analysis with LLM prompts
-adversary-mcp-cli scan myproject/ --use-llm=true --confidence-threshold=0.8
+adversary-mcp-cli scan myproject/ --use-llm --confidence-threshold=0.8
 ```
 
 #### **🆕 Git Diff-Aware Scanning**
@@ -787,7 +779,7 @@ adversary-mcp-cli scan --diff --source-branch=main --target-branch=HEAD
 adversary-mcp-cli scan --diff --source-branch=staging --target-branch=production --severity=high
 
 # Scan current branch changes with AI analysis - includes LLM prompts for new code
-adversary-mcp-cli scan --diff --use-llm=true --include-exploits=true
+adversary-mcp-cli scan --diff --use-llm --include-exploits=true
 
 # Specify repository directory for git operations
 adversary-mcp-cli scan /path/to/repo --diff --source-branch=main --target-branch=feature/new
@@ -805,7 +797,7 @@ adversary-mcp-cli configure --exploit-safety-mode=true
 #### **🆕 Confidence and Filtering**
 ```bash
 # Filter by AI confidence levels
-adversary-mcp-cli scan . --confidence-threshold 0.9 --use-llm=true
+adversary-mcp-cli scan . --confidence-threshold 0.9 --use-llm
 
 # Combine rules and AI with custom thresholds
 adversary-mcp-cli scan . --severity=high --confidence-threshold=0.7
@@ -822,7 +814,7 @@ All MCP tools now support JSON output format for programmatic integration:
 {
   "source_code": "eval(user_input)",
   "file_path": "app.py",
-  "language": "python", 
+  "language": "python",
   "use_llm": true,
   "use_semgrep": true,
   "output_format": "json"        // Enable JSON output
@@ -835,10 +827,10 @@ All MCP tools now support JSON output format for programmatic integration:
 adversary-mcp-cli scan myproject/ --output=scan-results.json
 
 # All engines with JSON output
-adversary-mcp-cli scan myproject/ --use-llm=true --use-semgrep=true --output=results.json
+adversary-mcp-cli scan myproject/ --use-llm --use-semgrep --output=results.json
 
 # Git diff scanning with JSON output
-adversary-mcp-cli scan --diff --use-semgrep=true --output=diff-scan.json
+adversary-mcp-cli scan --diff --use-semgrep --output=diff-scan.json
 ```
 
 #### **Automatic JSON Generation**
@@ -848,7 +840,7 @@ When using MCP tools with `output_format: "json"`, results are automatically sav
 ```
 your-project/
 ├── adversary_scan_results_20240101_120000.json    // Single file scans
-├── adversary_directory_results_20240101_120500.json  // Directory scans  
+├── adversary_directory_results_20240101_120500.json  // Directory scans
 ├── adversary_diff_results_20240101_121000.json    // Git diff scans
 └── your-code-files...
 ```
@@ -880,7 +872,7 @@ adversary-mcp-cli scan . --format=detailed --include-ai-analysis --output=report
 #### **🆕 Statistical Analysis**
 ```bash
 # Get detailed statistics about threats found
-adversary-mcp-cli scan . --stats --use-llm=true
+adversary-mcp-cli scan . --stats --use-llm
 ```
 
 ### **🆕 Integration Capabilities**
@@ -930,14 +922,14 @@ jobs:
       - uses: actions/checkout@v3
         with:
           fetch-depth: 0  # Required for git diff analysis
-      
+
       - uses: actions/setup-python@v4
         with:
           python-version: '3.11'
-      
+
       - name: Install Adversary MCP
         run: pip install adversary-mcp-server
-      
+
       - name: Diff Security Scan (PR) - Scans only newly added lines
         if: github.event_name == 'pull_request'
         run: |
@@ -948,14 +940,14 @@ jobs:
             --output=security-diff.json
         env:
           GITHUB_WORKSPACE: ${{ github.workspace }}
-      
+
       - name: Full Security Scan (Push to main)
         if: github.ref == 'refs/heads/main'
         run: |
           adversary-mcp-cli scan . \
             --severity medium \
             --output=security-full.json
-      
+
       - name: Upload Results
         uses: actions/upload-artifact@v3
         with:
@@ -1009,7 +1001,7 @@ make install
 # Run tests
 make test
 
-# Code quality checks  
+# Code quality checks
 make lint
 ```
 
@@ -1058,7 +1050,7 @@ The project uses centralized version management - you only need to update the ve
 
 2. **All components automatically use the updated version:**
    - CLI: `adversary-mcp-cli --version`
-   - Server: MCP server initialization 
+   - Server: MCP server initialization
    - Package: `from adversary_mcp_server import __version__`
 
 3. **Lock file updates automatically:**
@@ -1086,7 +1078,7 @@ The project uses GitHub Actions for comprehensive CI/CD automation:
 **Quality Gates:**
 - ✅ **Unit Tests**: 400+ tests with 80% coverage requirement
 - ✅ **Code Quality**: Ruff linting, MyPy type checking, Black formatting
-- ✅ **Security Scans**: Bandit, Semgrep, Safety dependency checks  
+- ✅ **Security Scans**: Bandit, Semgrep, Safety dependency checks
 - ✅ **Build Verification**: Package building and installation testing
 - ✅ **Integration Tests**: Real CLI and scanning functionality
 
@@ -1129,7 +1121,7 @@ make check-all  # Run all linting, tests, and security scans
 
 See [CONTRIBUTING.md](.github/CONTRIBUTING.md) for:
 - Development setup instructions
-- Code quality requirements  
+- Code quality requirements
 - Testing guidelines
 - Security standards
 - Release process
@@ -1175,12 +1167,12 @@ If you encounter the error `"Failed to get diff summary"` when using `adv_diff_s
    ```
    Error: Tool adv_diff_scan failed: Diff scanning failed: Git diff operation failed: Failed to get diff summary
    ```
-   
+
    **Solution:** Specify the correct working directory:
    ```json
    {
      "source_branch": "main",
-     "target_branch": "feature/my-branch", 
+     "target_branch": "feature/my-branch",
      "working_directory": "/path/to/your/git/repository"
    }
    ```
@@ -1189,7 +1181,7 @@ If you encounter the error `"Failed to get diff summary"` when using `adv_diff_s
    ```
    Error: Branch validation failed: Branch not found
    ```
-   
+
    **Solution:** Verify branch names exist:
    ```bash
    cd /path/to/your/repo
@@ -1200,7 +1192,7 @@ If you encounter the error `"Failed to get diff summary"` when using `adv_diff_s
    ```
    Error: Git command failed: fatal: not a git repository
    ```
-   
+
    **Solution:** Ensure you're pointing to a valid git repository:
    ```json
    {
@@ -1212,13 +1204,13 @@ If you encounter the error `"Failed to get diff summary"` when using `adv_diff_s
    ```
    Error: Git command not found
    ```
-   
+
    **Solution:** Install git or ensure it's in your PATH.
 
 #### **Best Practices:**
 
 - Always specify the `working_directory` parameter when the repository is not in the current directory
-- Use full/absolute paths for `working_directory` to avoid confusion  
+- Use full/absolute paths for `working_directory` to avoid confusion
 - Verify branch names with `git branch -a` before running scans
 - For remote branches, use the full name (e.g., `origin/main` not just `main`)
 
@@ -1226,7 +1218,7 @@ If you encounter the error `"Failed to get diff summary"` when using `adv_diff_s
 ```json
 {
   "source_branch": "origin/main",
-  "target_branch": "HEAD", 
+  "target_branch": "HEAD",
   "working_directory": "/Users/username/my-project",
   "severity_threshold": "medium",
   "include_exploits": true,

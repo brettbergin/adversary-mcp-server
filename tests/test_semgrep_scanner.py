@@ -4,7 +4,7 @@ import json
 import os
 import subprocess
 import sys
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
 
@@ -313,6 +313,7 @@ class TestSemgrepScanner:
                 config=None,
                 rules=None,
                 timeout=60,
+                severity_threshold=None,
             )
 
     def test_scan_file_unavailable(self):
@@ -468,6 +469,305 @@ def safe_function():
                         )
 
                 assert len(threats) == 0
+
+    @patch("adversary_mcp_server.semgrep_scanner.subprocess.run")
+    def test_severity_filtering_with_threshold(self, mock_run):
+        """Test severity filtering with severity threshold."""
+        # Mock Semgrep output with mixed severities
+        semgrep_output = {
+            "results": [
+                {
+                    "check_id": "test.high.severity",
+                    "message": "High severity issue",
+                    "path": "test.py",
+                    "start": {"line": 1},
+                    "metadata": {"severity": "warning"},  # Maps to HIGH
+                },
+                {
+                    "check_id": "test.medium.severity",
+                    "message": "Medium severity issue",
+                    "path": "test.py",
+                    "start": {"line": 2},
+                    "metadata": {"severity": "info"},  # Maps to MEDIUM
+                },
+                {
+                    "check_id": "test.critical.severity",
+                    "message": "Critical severity issue",
+                    "path": "test.py",
+                    "start": {"line": 3},
+                    "metadata": {"severity": "error"},  # Maps to CRITICAL
+                },
+            ]
+        }
+
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stdout = json.dumps(semgrep_output)
+        mock_run.return_value.stderr = ""
+
+        # Test with HIGH threshold - should only get HIGH and CRITICAL
+        with patch("tempfile.NamedTemporaryFile"):
+            with patch("os.unlink"):
+                threats = self.scanner.scan_code(
+                    "test code",
+                    "test.py",
+                    Language.PYTHON,
+                    severity_threshold=Severity.HIGH,
+                )
+
+                assert len(threats) == 2
+                severities = [t.severity for t in threats]
+                assert Severity.HIGH in severities
+                assert Severity.CRITICAL in severities
+                assert Severity.MEDIUM not in severities
+
+    def test_filter_by_severity_method(self):
+        """Test the _filter_by_severity method directly."""
+        # Create test threats with different severities
+        threats = [
+            ThreatMatch(
+                rule_id="rule1",
+                rule_name="Rule 1",
+                description="Test",
+                category=Category.INJECTION,
+                severity=Severity.LOW,
+                file_path="test.py",
+                line_number=1,
+            ),
+            ThreatMatch(
+                rule_id="rule2",
+                rule_name="Rule 2",
+                description="Test",
+                category=Category.INJECTION,
+                severity=Severity.MEDIUM,
+                file_path="test.py",
+                line_number=2,
+            ),
+            ThreatMatch(
+                rule_id="rule3",
+                rule_name="Rule 3",
+                description="Test",
+                category=Category.INJECTION,
+                severity=Severity.HIGH,
+                file_path="test.py",
+                line_number=3,
+            ),
+            ThreatMatch(
+                rule_id="rule4",
+                rule_name="Rule 4",
+                description="Test",
+                category=Category.INJECTION,
+                severity=Severity.CRITICAL,
+                file_path="test.py",
+                line_number=4,
+            ),
+        ]
+
+        # Filter with MEDIUM threshold
+        filtered = self.scanner._filter_by_severity(threats, Severity.MEDIUM)
+        assert len(filtered) == 3
+        severities = [t.severity for t in filtered]
+        assert Severity.LOW not in severities
+        assert Severity.MEDIUM in severities
+        assert Severity.HIGH in severities
+        assert Severity.CRITICAL in severities
+
+        # Filter with HIGH threshold
+        filtered = self.scanner._filter_by_severity(threats, Severity.HIGH)
+        assert len(filtered) == 2
+        severities = [t.severity for t in filtered]
+        assert Severity.LOW not in severities
+        assert Severity.MEDIUM not in severities
+        assert Severity.HIGH in severities
+        assert Severity.CRITICAL in severities
+
+    def test_severity_extraction_multiple_locations(self):
+        """Test severity extraction from different locations in semgrep output."""
+        # Test severity in metadata.severity
+        finding1 = {
+            "check_id": "test.rule",
+            "message": "Test message",
+            "metadata": {"severity": "warning"},
+            "start": {"line": 1},
+        }
+        threat1 = self.scanner._convert_semgrep_finding_to_threat(finding1, "test.py")
+        assert threat1.severity == Severity.HIGH
+
+        # Test severity in extra.severity
+        finding2 = {
+            "check_id": "test.rule",
+            "message": "Test message",
+            "extra": {"severity": "error"},
+            "start": {"line": 1},
+        }
+        threat2 = self.scanner._convert_semgrep_finding_to_threat(finding2, "test.py")
+        assert threat2.severity == Severity.CRITICAL
+
+        # Test severity in top-level
+        finding3 = {
+            "check_id": "test.rule",
+            "message": "Test message",
+            "severity": "critical",
+            "start": {"line": 1},
+        }
+        threat3 = self.scanner._convert_semgrep_finding_to_threat(finding3, "test.py")
+        assert threat3.severity == Severity.CRITICAL
+
+        # Test fallback to default
+        finding4 = {
+            "check_id": "test.rule",
+            "message": "Test message",
+            "start": {"line": 1},
+        }
+        threat4 = self.scanner._convert_semgrep_finding_to_threat(finding4, "test.py")
+        assert threat4.severity == Severity.MEDIUM  # Default fallback
+
+    @patch("adversary_mcp_server.semgrep_scanner.subprocess.run")
+    def test_scan_file_with_severity_threshold(self, mock_run):
+        """Test scan_file method with severity threshold parameter."""
+        # Mock semgrep output
+        semgrep_output = {
+            "results": [
+                {
+                    "check_id": "test.rule",
+                    "message": "Test message",
+                    "path": "test.py",
+                    "start": {"line": 1},
+                    "metadata": {"severity": "warning"},  # HIGH severity
+                }
+            ]
+        }
+
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stdout = json.dumps(semgrep_output)
+        mock_run.return_value.stderr = ""
+
+        with patch("builtins.open", mock_open(read_data="test code")):
+            with patch("tempfile.NamedTemporaryFile"):
+                with patch("os.unlink"):
+                    # Test with CRITICAL threshold - should filter out HIGH severity
+                    threats = self.scanner.scan_file(
+                        "test.py", Language.PYTHON, severity_threshold=Severity.CRITICAL
+                    )
+                    assert len(threats) == 0
+
+                    # Test with MEDIUM threshold - should include HIGH severity
+                    threats = self.scanner.scan_file(
+                        "test.py", Language.PYTHON, severity_threshold=Severity.MEDIUM
+                    )
+                    assert len(threats) == 1
+
+    @patch("adversary_mcp_server.semgrep_scanner.subprocess.run")
+    def test_scan_directory_with_severity_threshold(self, mock_run):
+        """Test scan_directory method with severity threshold parameter."""
+        # Mock semgrep output with mixed severities
+        semgrep_output = {
+            "results": [
+                {
+                    "check_id": "test.high",
+                    "message": "High issue",
+                    "path": "file1.py",
+                    "start": {"line": 1},
+                    "metadata": {"severity": "warning"},  # HIGH
+                },
+                {
+                    "check_id": "test.medium",
+                    "message": "Medium issue",
+                    "path": "file2.py",
+                    "start": {"line": 1},
+                    "metadata": {"severity": "info"},  # MEDIUM
+                },
+            ]
+        }
+
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stdout = json.dumps(semgrep_output)
+        mock_run.return_value.stderr = ""
+
+        # Test with HIGH threshold
+        threats = self.scanner.scan_directory(
+            "/test/dir", severity_threshold=Severity.HIGH
+        )
+        assert len(threats) == 1
+        assert threats[0].severity == Severity.HIGH
+
+    def test_semgrep_severity_mapping_comprehensive(self):
+        """Test comprehensive semgrep severity mapping."""
+        test_cases = [
+            ("error", Severity.CRITICAL),
+            ("critical", Severity.CRITICAL),
+            ("warning", Severity.HIGH),
+            ("info", Severity.MEDIUM),
+            ("low", Severity.LOW),
+            ("unknown", Severity.LOW),  # Fallback case
+            ("", Severity.LOW),  # Empty string fallback
+        ]
+
+        for semgrep_severity, expected_severity in test_cases:
+            result = self.scanner._map_semgrep_severity(semgrep_severity)
+            assert (
+                result == expected_severity
+            ), f"Failed for severity: {semgrep_severity}"
+
+    def test_category_mapping_edge_cases(self):
+        """Test category mapping with edge cases."""
+        test_cases = [
+            ("sql-injection", "SQL injection detected", Category.INJECTION),
+            ("xss-stored", "Cross-site scripting found", Category.XSS),
+            ("authentication-bypass", "Auth bypass", Category.AUTHENTICATION),
+            ("crypto-weak", "Weak cryptography", Category.CRYPTOGRAPHY),
+            ("path-traversal", "Directory traversal", Category.PATH_TRAVERSAL),
+            ("rce-command", "Remote code execution", Category.RCE),
+            ("ssrf-request", "Server-side request forgery", Category.SSRF),
+            ("deserial-pickle", "Insecure deserialization", Category.DESERIALIZATION),
+            ("secret-key", "Hardcoded secret", Category.SECRETS),
+            ("csrf-missing", "CSRF protection missing", Category.CSRF),
+            ("dos-regex", "ReDoS vulnerability", Category.DOS),
+            ("config-debug", "Debug mode enabled", Category.CONFIGURATION),
+            ("log-injection", "Log injection", Category.INJECTION),
+            ("log-format", "Log format issue", Category.LOGGING),
+            ("input-validation", "Input validation missing", Category.VALIDATION),
+            (
+                "unknown-rule",
+                "Unknown rule type",
+                Category.VALIDATION,
+            ),  # Default fallback
+        ]
+
+        for rule_id, message, expected_category in test_cases:
+            result = self.scanner._map_semgrep_category(rule_id, message)
+            assert result == expected_category, f"Failed for rule_id: {rule_id}"
+
+    def test_get_file_extension_mapping(self):
+        """Test file extension mapping for different languages."""
+        assert self.scanner._get_file_extension(Language.PYTHON) == ".py"
+        assert self.scanner._get_file_extension(Language.JAVASCRIPT) == ".js"
+        assert self.scanner._get_file_extension(Language.TYPESCRIPT) == ".ts"
+
+    @patch("adversary_mcp_server.semgrep_scanner.subprocess.run")
+    def test_scan_code_with_semgrep_unavailable(self, mock_run):
+        """Test scan_code when semgrep is not available."""
+        # Create scanner with semgrep unavailable
+        with patch.object(self.scanner, "_semgrep_available", False):
+            threats = self.scanner.scan_code("test code", "test.py", Language.PYTHON)
+            assert threats == []
+            # Ensure subprocess.run was not called
+            mock_run.assert_not_called()
+
+    @patch("adversary_mcp_server.semgrep_scanner.subprocess.run")
+    def test_scan_file_with_semgrep_unavailable(self, mock_run):
+        """Test scan_file when semgrep is not available."""
+        with patch.object(self.scanner, "_semgrep_available", False):
+            threats = self.scanner.scan_file("test.py", Language.PYTHON)
+            assert threats == []
+            mock_run.assert_not_called()
+
+    @patch("adversary_mcp_server.semgrep_scanner.subprocess.run")
+    def test_scan_directory_with_semgrep_unavailable(self, mock_run):
+        """Test scan_directory when semgrep is not available."""
+        with patch.object(self.scanner, "_semgrep_available", False):
+            threats = self.scanner.scan_directory("/test/dir")
+            assert threats == []
+            mock_run.assert_not_called()
 
 
 if __name__ == "__main__":

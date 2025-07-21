@@ -462,6 +462,8 @@ class TestCLIScanCommand:
         """Test scanning with exploit generation."""
         # Setup mocks
         mock_manager = Mock()
+        mock_config = SecurityConfig()
+        mock_manager.load_config.return_value = mock_config
         mock_cred_manager.return_value = mock_manager
 
         mock_engine = Mock()
@@ -517,6 +519,8 @@ class TestCLIScanCommand:
         """Test scanning with output file."""
         # Setup mocks
         mock_manager = Mock()
+        mock_config = SecurityConfig()
+        mock_manager.load_config.return_value = mock_config
         mock_cred_manager.return_value = mock_manager
 
         mock_engine = Mock()

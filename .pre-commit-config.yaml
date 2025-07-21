@@ -1,0 +1,83 @@
+# Pre-commit hooks configuration for adversary-mcp-server
+# Install pre-commit hooks with: pre-commit install
+# Run manually with: pre-commit run --all-files
+
+repos:
+  # Code formatting with black
+  - repo: https://github.com/psf/black
+    rev: 24.10.0
+    hooks:
+      - id: black
+        language_version: python3
+
+  # Import sorting with isort  
+  - repo: https://github.com/pycqa/isort
+    rev: 5.13.2
+    hooks:
+      - id: isort
+        args: ["--profile", "black"]
+
+  # Linting with ruff (replaces flake8, pyflakes, etc.)
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+
+  # Type checking with mypy
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.11.2
+    hooks:
+      - id: mypy
+        additional_dependencies:
+          - types-PyYAML
+          - types-requests
+          - pydantic
+        args: [--config-file=pyproject.toml]
+
+  # Security scanning with bandit
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.10
+    hooks:
+      - id: bandit
+        args: ["-c", "pyproject.toml"]
+
+  # General pre-commit hooks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+      - id: check-merge-conflict
+      - id: debug-statements
+
+  # Local hooks for running tests and coverage
+  - repo: local
+    hooks:
+      - id: tests
+        name: Run tests with coverage
+        entry: make test
+        language: system
+        pass_filenames: false
+        always_run: true
+        
+      - id: security-scan
+        name: Security scanning
+        entry: make security-scan
+        language: system
+        pass_filenames: false
+        files: '\.py$'
+
+# Optional: exclude certain files or directories
+exclude: |
+  (?x)^(
+      \.git/|
+      \.venv/|
+      __pycache__/|
+      \.pytest_cache/|
+      build/|
+      dist/|
+      .*\.egg-info/
+  )$

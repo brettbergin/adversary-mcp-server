@@ -6,6 +6,7 @@ from typing import Any
 
 from .ast_scanner import ASTScanner
 from .credential_manager import CredentialManager
+from .false_positive_manager import FalsePositiveManager
 from .llm_scanner import LLMScanner
 from .semgrep_scanner import SemgrepScanner
 from .threat_engine import Language, Severity, ThreatEngine, ThreatMatch
@@ -175,6 +176,7 @@ class ScanEngine:
         """
         self.threat_engine = threat_engine or ThreatEngine()
         self.credential_manager = credential_manager or CredentialManager()
+        self.false_positive_manager = FalsePositiveManager()
 
         # Set LLM analysis based on parameter
         self.enable_llm_analysis = enable_llm_analysis
@@ -213,6 +215,7 @@ class ScanEngine:
         language: Language,
         use_llm: bool = True,
         use_semgrep: bool = True,
+        use_rules: bool = True,
         severity_threshold: Severity | None = None,
     ) -> EnhancedScanResult:
         """Scan source code using rules, Semgrep, and LLM analysis.
@@ -223,6 +226,7 @@ class ScanEngine:
             language: Programming language
             use_llm: Whether to use LLM analysis
             use_semgrep: Whether to use Semgrep analysis
+            use_rules: Whether to use rules-based scanner
             severity_threshold: Minimum severity threshold for filtering
 
         Returns:
@@ -233,19 +237,28 @@ class ScanEngine:
             "language": language.value,
             "use_llm": use_llm and self.enable_llm_analysis,
             "use_semgrep": use_semgrep and self.enable_semgrep_analysis,
+            "use_rules": use_rules,
             "source_lines": len(source_code.split("\n")),
             "source_size": len(source_code),
         }
 
-        # Perform AST-based rules scanning
+        # Perform AST-based rules scanning if enabled
         rules_threats = []
-        try:
-            rules_threats = self.ast_scanner.scan_code(source_code, file_path, language)
-            scan_metadata["rules_scan_success"] = True
-        except Exception as e:
-            logger.error(f"Rules-based scan failed for {file_path}: {e}")
+        if use_rules:
+            try:
+                rules_threats = self.ast_scanner.scan_code(
+                    source_code, file_path, language
+                )
+                scan_metadata["rules_scan_success"] = True
+                scan_metadata["rules_scan_reason"] = "analysis_completed"
+            except Exception as e:
+                logger.error(f"Rules-based scan failed for {file_path}: {e}")
+                scan_metadata["rules_scan_success"] = False
+                scan_metadata["rules_scan_error"] = str(e)
+                scan_metadata["rules_scan_reason"] = "scan_failed"
+        else:
             scan_metadata["rules_scan_success"] = False
-            scan_metadata["rules_scan_error"] = str(e)
+            scan_metadata["rules_scan_reason"] = "disabled"
 
         # Perform Semgrep scanning if enabled
         semgrep_threats = []
@@ -259,6 +272,7 @@ class ScanEngine:
                     config=config.semgrep_config,
                     rules=config.semgrep_rules,
                     timeout=config.semgrep_timeout,
+                    severity_threshold=severity_threshold,
                 )
                 scan_metadata["semgrep_scan_success"] = True
                 scan_metadata["semgrep_scan_reason"] = "analysis_completed"
@@ -316,6 +330,15 @@ class ScanEngine:
                 semgrep_threats, severity_threshold
             )
 
+        # Apply false positive filtering
+        rules_threats = self.false_positive_manager.filter_false_positives(
+            rules_threats
+        )
+        llm_threats = self.false_positive_manager.filter_false_positives(llm_threats)
+        semgrep_threats = self.false_positive_manager.filter_false_positives(
+            semgrep_threats
+        )
+
         return EnhancedScanResult(
             file_path=file_path,
             language=language,
@@ -331,6 +354,7 @@ class ScanEngine:
         language: Language | None = None,
         use_llm: bool = True,
         use_semgrep: bool = True,
+        use_rules: bool = True,
         severity_threshold: Severity | None = None,
     ) -> EnhancedScanResult:
         """Scan a single file using enhanced scanning.
@@ -340,6 +364,7 @@ class ScanEngine:
             language: Programming language (auto-detected if not provided)
             use_llm: Whether to use LLM analysis
             use_semgrep: Whether to use Semgrep analysis
+            use_rules: Whether to use rules-based scanner
             severity_threshold: Minimum severity threshold for filtering
 
         Returns:
@@ -379,6 +404,7 @@ class ScanEngine:
             language=language,
             use_llm=use_llm,
             use_semgrep=use_semgrep,
+            use_rules=use_rules,
             severity_threshold=severity_threshold,
         )
 
@@ -388,16 +414,18 @@ class ScanEngine:
         recursive: bool = True,
         use_llm: bool = True,
         use_semgrep: bool = True,
+        use_rules: bool = True,
         severity_threshold: Severity | None = None,
         max_files: int | None = None,
     ) -> list[EnhancedScanResult]:
-        """Scan a directory using enhanced scanning.
+        """Scan a directory using enhanced scanning with optimized Semgrep.
 
         Args:
             directory_path: Path to the directory to scan
             recursive: Whether to scan subdirectories
             use_llm: Whether to use LLM analysis
             use_semgrep: Whether to use Semgrep analysis
+            use_rules: Whether to use rules-based scanner
             severity_threshold: Minimum severity threshold for filtering
             max_files: Maximum number of files to scan
 
@@ -428,18 +456,81 @@ class ScanEngine:
                 if max_files and len(files_to_scan) >= max_files:
                     break
 
-        # Scan files
+        # Run Semgrep ONCE for entire directory (if enabled)
+        semgrep_threats = []
+        semgrep_metadata: dict[str, Any] = {"semgrep_scan_success": False}
+
+        if use_semgrep and self.enable_semgrep_analysis:
+            try:
+                config = self.credential_manager.load_config()
+                semgrep_threats = self.semgrep_scanner.scan_directory(
+                    directory_path=str(directory_path),
+                    config=config.semgrep_config,
+                    rules=config.semgrep_rules,
+                    timeout=config.semgrep_timeout
+                    * 2,  # Double timeout for directories
+                    recursive=recursive,
+                    severity_threshold=severity_threshold,
+                )
+                semgrep_metadata: dict[str, Any] = {
+                    "semgrep_scan_success": True,
+                    "semgrep_threats_found": len(semgrep_threats),
+                    "semgrep_scan_reason": "directory_scan_completed",
+                }
+                logger.info(
+                    f"Semgrep directory scan completed: {len(semgrep_threats)} threats found"
+                )
+            except Exception as e:
+                logger.error(f"Semgrep directory scan failed: {e}")
+                semgrep_metadata: dict[str, Any] = {
+                    "semgrep_scan_success": False,
+                    "semgrep_scan_error": str(e),
+                    "semgrep_scan_reason": "directory_scan_failed",
+                }
+
+        # Create a lookup for Semgrep threats by file path
+        semgrep_by_file = {}
+        for threat in semgrep_threats:
+            file_path = threat.file_path
+            if file_path not in semgrep_by_file:
+                semgrep_by_file[file_path] = []
+            semgrep_by_file[file_path].append(threat)
+
+        # Scan files with rules engine and LLM (but skip individual Semgrep calls)
         results = []
         for file_path, language in files_to_scan:
             try:
+                # Scan with rules and LLM only (skip Semgrep since we already did it)
                 result = self.scan_file(
                     file_path=file_path,
                     language=language,
                     use_llm=use_llm,
-                    use_semgrep=use_semgrep,
+                    use_semgrep=False,  # Skip individual Semgrep calls
+                    use_rules=use_rules,
                     severity_threshold=severity_threshold,
                 )
-                results.append(result)
+
+                # Add Semgrep threats for this file
+                file_path_str = str(file_path)
+                file_semgrep_threats = semgrep_by_file.get(file_path_str, [])
+
+                # Create enhanced result with Semgrep threats added
+                enhanced_result = EnhancedScanResult(
+                    file_path=result.file_path,
+                    language=result.language,
+                    rules_threats=result.rules_threats,
+                    llm_threats=result.llm_threats,
+                    semgrep_threats=file_semgrep_threats,
+                    scan_metadata={
+                        **result.scan_metadata,
+                        **semgrep_metadata,
+                        "directory_scan": True,
+                        "file_semgrep_threats": len(file_semgrep_threats),
+                    },
+                )
+
+                results.append(enhanced_result)
+
             except Exception as e:
                 logger.error(f"Failed to scan {file_path}: {e}")
                 # Create error result
@@ -455,7 +546,7 @@ class ScanEngine:
                             "error": str(e),
                             "rules_scan_success": False,
                             "llm_scan_success": False,
-                            "semgrep_scan_success": False,
+                            **semgrep_metadata,
                         },
                     )
                 )

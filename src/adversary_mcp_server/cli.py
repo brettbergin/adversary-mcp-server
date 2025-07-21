@@ -9,7 +9,7 @@ import click
 import yaml
 from rich.console import Console
 from rich.panel import Panel
-from rich.prompt import Confirm
+from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
 from . import get_version
@@ -47,23 +47,28 @@ def cli():
 @click.option(
     "--severity-threshold",
     type=click.Choice(["low", "medium", "high", "critical"]),
-    default="medium",
     help="Default severity threshold for scanning",
 )
 @click.option(
     "--enable-safety-mode/--disable-safety-mode",
-    default=True,
+    default=None,
     help="Enable safety mode for exploit generation",
 )
 @click.option(
     "--enable-llm/--disable-llm",
     default=None,
-    help="Enable LLM-based analysis and exploit generation (uses client's LLM)",
+    help="Enable LLM analysis and exploit generation (uses client's LLM)",
+)
+@click.option(
+    "--interactive/--no-interactive",
+    default=True,
+    help="Use interactive prompts when options are not provided",
 )
 def configure(
-    severity_threshold: str,
-    enable_safety_mode: bool,
+    severity_threshold: str | None,
+    enable_safety_mode: bool | None,
     enable_llm: bool | None,
+    interactive: bool,
 ):
     """Configure the Adversary MCP server settings."""
     try:
@@ -72,12 +77,71 @@ def configure(
         # Load existing config or create new one
         try:
             config = credential_manager.load_config()
+            console.print("📋 Current configuration loaded", style="blue")
         except Exception:
             config = SecurityConfig()
+            console.print("🆕 Creating new configuration", style="blue")
 
-        # Update configuration
-        config.severity_threshold = severity_threshold
-        config.exploit_safety_mode = enable_safety_mode
+        # Determine if we should use interactive mode
+        # Only prompt if interactive is enabled AND no CLI options were provided
+        use_interactive = interactive and (
+            severity_threshold is None
+            and enable_safety_mode is None
+            and enable_llm is None
+        )
+
+        # Show current config first (only in truly interactive mode)
+        if use_interactive:
+            console.print("\n📊 [bold]Current Configuration:[/bold]")
+            current_table = Table()
+            current_table.add_column("Setting", style="cyan")
+            current_table.add_column("Current Value", style="magenta")
+
+            current_table.add_row("Severity Threshold", config.severity_threshold)
+            current_table.add_row(
+                "Safety Mode",
+                "✓ Enabled" if config.exploit_safety_mode else "✗ Disabled",
+            )
+            current_table.add_row(
+                "LLM Analysis",
+                "✓ Enabled" if config.enable_llm_analysis else "✗ Disabled",
+            )
+            current_table.add_row(
+                "Exploit Generation",
+                "✓ Enabled" if config.enable_exploit_generation else "✗ Disabled",
+            )
+            current_table.add_row(
+                "Semgrep Scanning",
+                "✓ Enabled" if config.enable_semgrep_scanning else "✗ Disabled",
+            )
+            console.print(current_table)
+            console.print()
+
+        # Interactive prompts for missing options (only if truly interactive)
+        if use_interactive:
+            severity_threshold = Prompt.ask(
+                "Choose severity threshold",
+                choices=["low", "medium", "high", "critical"],
+                default=config.severity_threshold,
+                show_choices=True,
+            )
+
+            enable_safety_mode = Confirm.ask(
+                "Enable safety mode for exploit generation?",
+                default=config.exploit_safety_mode,
+            )
+
+            enable_llm = Confirm.ask(
+                "Enable LLM analysis and exploit generation?",
+                default=config.enable_llm_analysis,
+            )
+
+        # Update configuration only if values were provided
+        if severity_threshold is not None:
+            config.severity_threshold = severity_threshold
+
+        if enable_safety_mode is not None:
+            config.exploit_safety_mode = enable_safety_mode
 
         # Override LLM settings if explicitly specified
         if enable_llm is not None:
@@ -87,7 +151,7 @@ def configure(
         # Save configuration
         credential_manager.store_config(config)
 
-        console.print("✅ Configuration saved successfully!", style="green")
+        console.print("\n✅ Configuration saved successfully!", style="green")
 
         # Show current configuration
         table = Table(title="Current Configuration")
@@ -103,7 +167,7 @@ def configure(
             "✓ Enabled" if config.enable_llm_analysis else "✗ Disabled",
         )
         table.add_row(
-            "LLM Generation",
+            "Exploit Generation",
             "✓ Enabled" if config.enable_exploit_generation else "✗ Disabled",
         )
 
@@ -147,7 +211,7 @@ def status():
             "✓ Enabled" if config.enable_llm_analysis else "✗ Disabled",
         )
         config_table.add_row(
-            "LLM Generation",
+            "Exploit Generation",
             "✓ Enabled" if config.enable_exploit_generation else "✗ Disabled",
         )
         config_table.add_row(
@@ -193,8 +257,8 @@ def status():
 @click.option(
     "--severity",
     type=click.Choice(["low", "medium", "high", "critical"]),
-    default="medium",
-    help="Minimum severity threshold",
+    default=None,
+    help="Minimum severity threshold (uses global config if not specified)",
 )
 @click.option(
     "--output",
@@ -222,6 +286,11 @@ def status():
     help="Use Semgrep for static analysis",
 )
 @click.option(
+    "--use-rules/--no-rules",
+    default=True,
+    help="Use rules-based scanner for threat detection",
+)
+@click.option(
     "--diff/--no-diff",
     default=False,
     help="Enable git diff-aware scanning (scans only changed files)",
@@ -239,12 +308,13 @@ def status():
 def scan(
     target: str | None,
     language: str | None,
-    severity: str,
+    severity: str | None,
     output: str | None,
     recursive: bool,
     include_exploits: bool,
     use_llm: bool,
     use_semgrep: bool,
+    use_rules: bool,
     diff: bool,
     source_branch: str,
     target_branch: str,
@@ -265,6 +335,13 @@ def scan(
         except Exception:
             config = SecurityConfig()
             console.print("⚠️  Using default configuration", style="yellow")
+
+        # Use global severity threshold if not specified
+        if severity is None:
+            severity = config.severity_threshold
+            console.print(
+                f"🔧 Using global severity threshold: {severity}", style="blue"
+            )
 
         # Handle git diff-aware scanning
         if diff:
@@ -290,6 +367,7 @@ def scan(
                 target_branch=target_branch,
                 use_llm=use_llm,
                 use_semgrep=use_semgrep,
+                use_rules=use_rules,
                 severity_threshold=severity_enum,
             )
 
@@ -382,6 +460,7 @@ def scan(
                     language=Language(language),
                     use_llm=use_llm,
                     use_semgrep=use_semgrep,
+                    use_rules=use_rules,
                     severity_threshold=severity_enum,
                 )
 
@@ -401,6 +480,7 @@ def scan(
                     recursive=recursive,
                     use_llm=use_llm,
                     use_semgrep=use_semgrep,
+                    use_rules=use_rules,
                     severity_threshold=severity_enum,
                     max_files=50,  # Limit for performance
                 )
@@ -895,6 +975,93 @@ function calculate(expression) {
 
 
 @cli.command()
+@click.argument("finding_uuid")
+@click.option(
+    "--reason",
+    type=str,
+    help="Reason for marking as false positive",
+)
+@click.option(
+    "--confirm/--no-confirm",
+    default=True,
+    help="Require confirmation before marking as false positive",
+)
+def mark_false_positive(finding_uuid: str, reason: str | None, confirm: bool):
+    """Mark a finding as a false positive by UUID."""
+    try:
+        from .false_positive_manager import FalsePositiveManager
+
+        fp_manager = FalsePositiveManager()
+
+        if confirm and not Confirm.ask(
+            f"Mark finding {finding_uuid} as false positive?"
+        ):
+            console.print("Operation cancelled", style="yellow")
+            return
+
+        fp_manager.mark_false_positive(
+            finding_uuid, reason or "User marked as false positive"
+        )
+        console.print(
+            f"✅ Finding {finding_uuid} marked as false positive", style="green"
+        )
+
+    except Exception as e:
+        console.print(f"❌ Failed to mark as false positive: {e}", style="red")
+        sys.exit(1)
+
+
+@cli.command()
+@click.argument("finding_uuid")
+def unmark_false_positive(finding_uuid: str):
+    """Remove false positive marking from a finding by UUID."""
+    try:
+        from .false_positive_manager import FalsePositiveManager
+
+        fp_manager = FalsePositiveManager()
+        fp_manager.unmark_false_positive(finding_uuid)
+        console.print(
+            f"✅ Finding {finding_uuid} unmarked as false positive", style="green"
+        )
+
+    except Exception as e:
+        console.print(f"❌ Failed to unmark false positive: {e}", style="red")
+        sys.exit(1)
+
+
+@cli.command()
+def list_false_positives():
+    """List all findings marked as false positives."""
+    try:
+        from .false_positive_manager import FalsePositiveManager
+
+        fp_manager = FalsePositiveManager()
+        false_positives = fp_manager.get_false_positives()
+
+        if not false_positives:
+            console.print("No false positives found", style="green")
+            return
+
+        table = Table(title=f"False Positives ({len(false_positives)} found)")
+        table.add_column("UUID", style="cyan")
+        table.add_column("Reason", style="magenta")
+        table.add_column("Marked Date", style="yellow")
+
+        for fp in false_positives:
+            table.add_row(
+                fp["uuid"],
+                fp.get("reason", "No reason provided"),
+                fp.get("marked_date", "Unknown"),
+            )
+
+        console.print(table)
+
+    except Exception as e:
+        console.print(f"❌ Failed to list false positives: {e}", style="red")
+        sys.exit(1)
+
+
+@cli.command()
 def reset():
     """Reset all configuration and credentials."""
     if Confirm.ask("Are you sure you want to reset all configuration?"):
@@ -944,6 +1111,8 @@ def _display_scan_results(threats, target):
     table.add_column("Line", style="magenta")
     table.add_column("Rule", style="green")
     table.add_column("Severity", style="red")
+    table.add_column("Scanner", style="yellow")
+    table.add_column("CWE", style="dim cyan")
     table.add_column("Description", style="blue")
 
     for threat in threats:
@@ -955,14 +1124,25 @@ def _display_scan_results(threats, target):
             "critical": "bold red",
         }.get(threat.severity.value, "white")
 
+        # Format scanner source with appropriate styling
+        scanner_text = threat.source.upper() if hasattr(threat, "source") else "RULES"
+        scanner_color = {"RULES": "green", "SEMGREP": "blue", "LLM": "magenta"}.get(
+            scanner_text, "white"
+        )
+
+        # Format CWE ID
+        cwe_text = threat.cwe_id if hasattr(threat, "cwe_id") and threat.cwe_id else "-"
+
         table.add_row(
             threat.file_path,
             str(threat.line_number),
             threat.rule_name,
             f"[{severity_color}]{threat.severity.value}[/{severity_color}]",
+            f"[{scanner_color}]{scanner_text}[/{scanner_color}]",
+            cwe_text,
             (
-                threat.description[:50] + "..."
-                if len(threat.description) > 50
+                threat.description[:40] + "..."
+                if len(threat.description) > 40
                 else threat.description
             ),
         )
@@ -980,6 +1160,7 @@ def _save_results_to_file(threats, output_file):
         for threat in threats:
             results.append(
                 {
+                    "uuid": threat.uuid,
                     "rule_id": threat.rule_id,
                     "rule_name": threat.rule_name,
                     "description": threat.description,
@@ -996,6 +1177,8 @@ def _save_results_to_file(threats, output_file):
                     "cwe_id": threat.cwe_id,
                     "owasp_category": threat.owasp_category,
                     "confidence": threat.confidence,
+                    "source": getattr(threat, "source", "rules"),
+                    "is_false_positive": threat.is_false_positive,
                 }
             )
 

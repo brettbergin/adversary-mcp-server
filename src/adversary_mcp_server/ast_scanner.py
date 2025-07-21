@@ -461,6 +461,7 @@ class ASTScanner:
                     cwe_id=rule.cwe_id,
                     owasp_category=rule.owasp_category,
                     confidence=0.8,  # Default confidence
+                    source="rules",  # Rules engine
                 )
 
                 matches.append(threat_match)

@@ -160,9 +160,14 @@ class SemgrepScanner:
         """
         rule_id = finding.get("check_id", "semgrep-unknown")
         message = finding.get("message", "Security issue detected by Semgrep")
-        severity = self._map_semgrep_severity(
-            finding.get("metadata", {}).get("severity", "info")
+        # Extract severity from multiple possible locations in semgrep output
+        severity_str = (
+            finding.get("metadata", {}).get("severity")
+            or finding.get("extra", {}).get("severity")
+            or finding.get("severity")
+            or "info"  # Default fallback
         )
+        severity = self._map_semgrep_severity(severity_str)
         category = self._map_semgrep_category(rule_id, message)
 
         # Extract location information
@@ -197,6 +202,7 @@ class SemgrepScanner:
             references=references,
             cwe_id=cwe_id,
             owasp_category=finding.get("metadata", {}).get("owasp", ""),
+            source="semgrep",  # Semgrep scanner
         )
 
     def scan_code(
@@ -207,6 +213,7 @@ class SemgrepScanner:
         config: str | None = None,
         rules: str | None = None,
         timeout: int = 60,
+        severity_threshold: Severity | None = None,
     ) -> list[ThreatMatch]:
         """Scan source code using Semgrep.
 
@@ -217,6 +224,7 @@ class SemgrepScanner:
             config: Semgrep config to use (default: auto)
             rules: Specific rules to use
             timeout: Timeout in seconds
+            severity_threshold: Minimum severity threshold for filtering
 
         Returns:
             List of ThreatMatch instances
@@ -289,6 +297,10 @@ class SemgrepScanner:
                 if result.stderr:
                     logger.debug(f"Semgrep stderr: {result.stderr}")
 
+                # Apply severity filtering if specified
+                if severity_threshold:
+                    threats = self._filter_by_severity(threats, severity_threshold)
+
                 logger.info(f"Semgrep found {len(threats)} security issues")
                 return threats
 
@@ -311,6 +323,7 @@ class SemgrepScanner:
         config: str | None = None,
         rules: str | None = None,
         timeout: int = 60,
+        severity_threshold: Severity | None = None,
     ) -> list[ThreatMatch]:
         """Scan a file using Semgrep.
 
@@ -320,6 +333,7 @@ class SemgrepScanner:
             config: Semgrep config to use
             rules: Specific rules to use
             timeout: Timeout in seconds
+            severity_threshold: Minimum severity threshold for filtering
 
         Returns:
             List of ThreatMatch instances
@@ -343,6 +357,7 @@ class SemgrepScanner:
                 config=config,
                 rules=rules,
                 timeout=timeout,
+                severity_threshold=severity_threshold,
             )
 
         except Exception as e:
@@ -363,3 +378,132 @@ class SemgrepScanner:
             Language.TYPESCRIPT: ".ts",
         }
         return extension_map.get(language, ".txt")
+
+    def _filter_by_severity(
+        self,
+        threats: list[ThreatMatch],
+        min_severity: Severity,
+    ) -> list[ThreatMatch]:
+        """Filter threats by minimum severity level.
+
+        Args:
+            threats: List of threats to filter
+            min_severity: Minimum severity level
+
+        Returns:
+            Filtered list of threats
+        """
+        severity_order = [
+            Severity.LOW,
+            Severity.MEDIUM,
+            Severity.HIGH,
+            Severity.CRITICAL,
+        ]
+        min_index = severity_order.index(min_severity)
+
+        return [
+            threat
+            for threat in threats
+            if severity_order.index(threat.severity) >= min_index
+        ]
+
+    def scan_directory(
+        self,
+        directory_path: str,
+        config: str | None = None,
+        rules: str | None = None,
+        timeout: int = 120,
+        recursive: bool = True,
+        severity_threshold: Severity | None = None,
+    ) -> list[ThreatMatch]:
+        """Scan entire directory using Semgrep efficiently.
+
+        Args:
+            directory_path: Path to directory to scan
+            config: Semgrep config to use (default: auto)
+            rules: Specific rules to use
+            timeout: Timeout in seconds (default: 120 for directories)
+            recursive: Whether to scan subdirectories
+            severity_threshold: Minimum severity threshold for filtering
+
+        Returns:
+            List of ThreatMatch instances for all files in directory
+
+        Raises:
+            SemgrepError: If directory scanning fails
+        """
+        if not self._semgrep_available:
+            logger.warning("Semgrep not available, skipping Semgrep directory scan")
+            return []
+
+        try:
+            # Build Semgrep command for directory scanning
+            cmd = ["semgrep", "--json", "--quiet"]
+
+            # Add configuration
+            if config:
+                cmd.extend(["--config", config])
+            elif rules:
+                cmd.extend(["--config", rules])
+            else:
+                # Use auto config for comprehensive scanning
+                cmd.extend(["--config", "auto"])
+
+            # Add directory path
+            cmd.append(directory_path)
+
+            logger.info(f"Running Semgrep directory scan: {' '.join(cmd)}")
+
+            # Run Semgrep on entire directory
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,  # Don't raise on non-zero exit
+            )
+
+            # Parse results
+            if result.stdout:
+                try:
+                    semgrep_output = json.loads(result.stdout)
+                    findings = semgrep_output.get("results", [])
+
+                    logger.info(
+                        f"Semgrep found {len(findings)} security issues in directory"
+                    )
+
+                    threats = []
+                    for finding in findings:
+                        try:
+                            # Extract file path from Semgrep finding
+                            finding_file_path = finding.get("path", "unknown")
+                            threat = self._convert_semgrep_finding_to_threat(
+                                finding, finding_file_path
+                            )
+                            threats.append(threat)
+                        except Exception as e:
+                            logger.warning(
+                                f"Failed to convert Semgrep finding to threat: {e}"
+                            )
+                            continue
+
+                    # Apply severity filtering if specified
+                    if severity_threshold:
+                        threats = self._filter_by_severity(threats, severity_threshold)
+
+                    return threats
+
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse Semgrep JSON output: {e}")
+                    return []
+            else:
+                logger.info("Semgrep found 0 security issues in directory")
+                return []
+
+        except subprocess.TimeoutExpired:
+            raise SemgrepError(
+                f"Semgrep directory scan timed out after {timeout} seconds"
+            )
+        except Exception as e:
+            raise SemgrepError(f"Semgrep directory scan failed: {e}")
