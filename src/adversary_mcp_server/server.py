@@ -1558,7 +1558,7 @@ class AdversaryMCPServer:
         result_data = {
             "scan_metadata": {
                 "target": scan_target,
-                "timestamp": datetime.now(datetime.UTC).isoformat(),
+                "timestamp": datetime.utcnow().isoformat() + "Z",
                 "language": scan_result.language.value,
                 "file_path": scan_result.file_path,
                 "scan_type": "enhanced",
@@ -1659,7 +1659,7 @@ class AdversaryMCPServer:
         result_data = {
             "scan_metadata": {
                 "target": scan_target,
-                "timestamp": datetime.now(datetime.UTC).isoformat(),
+                "timestamp": datetime.utcnow().isoformat() + "Z",
                 "scan_type": "directory",
                 "total_threats": len(all_threats),
                 "files_scanned": len(files_scanned),
@@ -1751,7 +1751,7 @@ class AdversaryMCPServer:
         result_data = {
             "scan_metadata": {
                 "target": scan_target,
-                "timestamp": datetime.now(datetime.UTC).isoformat(),
+                "timestamp": datetime.utcnow().isoformat() + "Z",
                 "scan_type": "git_diff",
                 "total_threats": len(all_threats),
                 "files_changed": len(files_changed),
