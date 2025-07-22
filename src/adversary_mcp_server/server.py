@@ -22,7 +22,14 @@ from .diff_scanner import GitDiffScanner
 from .exploit_generator import ExploitGenerator
 from .false_positive_manager import FalsePositiveManager
 from .scan_engine import EnhancedScanResult, ScanEngine
-from .threat_engine import Category, Language, Severity, ThreatEngine, ThreatMatch
+from .threat_engine import (
+    Category,
+    Language,
+    LanguageSupport,
+    Severity,
+    ThreatEngine,
+    ThreatMatch,
+)
 
 # Set up logging
 logging.basicConfig(
@@ -67,7 +74,14 @@ class AdversaryMCPServer:
         # Initialize core components
         self.threat_engine = ThreatEngine()
         self.ast_scanner = ASTScanner(self.threat_engine)
-        self.scan_engine = ScanEngine(self.threat_engine, self.credential_manager)
+
+        # Get configuration to determine LLM analysis setting
+        config = self.credential_manager.load_config()
+        self.scan_engine = ScanEngine(
+            self.threat_engine,
+            self.credential_manager,
+            enable_llm_analysis=config.enable_llm_analysis,
+        )
         self.exploit_generator = ExploitGenerator(self.credential_manager)
         self.diff_scanner = GitDiffScanner(self.scan_engine)
         self.false_positive_manager = FalsePositiveManager()
@@ -94,8 +108,8 @@ class AdversaryMCPServer:
                             },
                             "language": {
                                 "type": "string",
-                                "description": "Programming language (python, javascript, typescript)",
-                                "enum": ["python", "javascript", "typescript"],
+                                "description": "Programming language",
+                                "enum": LanguageSupport.get_language_enum_values(),
                             },
                             "severity_threshold": {
                                 "type": "string",
@@ -314,7 +328,7 @@ class AdversaryMCPServer:
                             "target_language": {
                                 "type": "string",
                                 "description": "Target programming language",
-                                "enum": ["python", "javascript", "typescript"],
+                                "enum": LanguageSupport.get_language_enum_values(),
                             },
                             "use_llm": {
                                 "type": "boolean",
@@ -347,7 +361,7 @@ class AdversaryMCPServer:
                             "language": {
                                 "type": "string",
                                 "description": "Filter by language (optional)",
-                                "enum": ["python", "javascript", "typescript"],
+                                "enum": LanguageSupport.get_language_enum_values(),
                             },
                         },
                         "required": [],
@@ -598,8 +612,8 @@ class AdversaryMCPServer:
                 try:
                     with open(file_path, encoding="utf-8") as f:
                         file_content = f.read()
-                except Exception: # nosec B110: ignore 
-                    pass # nosec B110: ignore 
+                except Exception:  # nosec B110: ignore
+                    pass  # nosec B110: ignore
 
                 for threat in scan_result.all_threats:
                     try:
@@ -630,13 +644,7 @@ class AdversaryMCPServer:
                             file_content = f.read()
 
                         # Detect language from file extension
-                        file_ext = file_path.suffix.lower()
-                        language_map = {
-                            ".py": Language.PYTHON,
-                            ".js": Language.JAVASCRIPT,
-                            ".ts": Language.TYPESCRIPT,
-                        }
-                        language = language_map.get(file_ext, Language.PYTHON)
+                        language = self.scan_engine._detect_language(file_path)
 
                         result += self._add_llm_analysis_prompts(
                             file_content, language, str(file_path)
@@ -735,13 +743,9 @@ class AdversaryMCPServer:
                                 file_content = f.read()
 
                             # Detect language
-                            file_ext = Path(scan_result.file_path).suffix.lower()
-                            language_map = {
-                                ".py": Language.PYTHON,
-                                ".js": Language.JAVASCRIPT,
-                                ".ts": Language.TYPESCRIPT,
-                            }
-                            language = language_map.get(file_ext, Language.PYTHON)
+                            language = self.scan_engine._detect_language(
+                                Path(scan_result.file_path)
+                            )
 
                             result += f"## File {i}: {scan_result.file_path}\n\n"
                             result += self._add_llm_analysis_prompts(
@@ -862,13 +866,9 @@ class AdversaryMCPServer:
                                 )
 
                                 # Detect language
-                                file_ext = Path(file_path).suffix.lower()
-                                language_map = {
-                                    ".py": Language.PYTHON,
-                                    ".js": Language.JAVASCRIPT,
-                                    ".ts": Language.TYPESCRIPT,
-                                }
-                                language = language_map.get(file_ext, Language.PYTHON)
+                                language = self.scan_engine._detect_language(
+                                    Path(file_path)
+                                )
 
                                 result += f"## File {i}: {file_path}\n\n"
                                 result += self._add_llm_analysis_prompts(
@@ -1079,7 +1079,11 @@ class AdversaryMCPServer:
 
             # Reinitialize components with new config
             self.exploit_generator = ExploitGenerator(self.credential_manager)
-            self.scan_engine = ScanEngine(self.threat_engine, self.credential_manager)
+            self.scan_engine = ScanEngine(
+                self.threat_engine,
+                self.credential_manager,
+                enable_llm_analysis=config.enable_llm_analysis,
+            )
 
             result = "✅ Configuration updated successfully!\n\n"
             result += "**Current Settings:**\n"
@@ -1368,6 +1372,10 @@ class AdversaryMCPServer:
         result += f"**Files Scanned:** {total_files}\n"
         result += f"**Files with Issues:** {files_with_threats}\n"
         result += f"**Total Threats:** {total_threats}\n\n"
+
+        # Add scanner status information
+        result += self._format_scanner_status(scan_results)
+        result += "\n"
 
         # Summary by severity
         result += "## Summary\n"
@@ -1667,12 +1675,13 @@ class AdversaryMCPServer:
                 {
                     "file_path": scan_result.file_path,
                     "language": scan_result.language.value,
-                    "threat_count": len(scan_result.all_threats),
-                    "issues_identified": (
-                        scan_result.scan_metadata.get("rules_scan_success", False)
-                        or scan_result.scan_metadata.get("semgrep_scan_success", False)
-                        or scan_result.scan_metadata.get("llm_scan_success", False)
+                    "threat_count": (
+                        len(scan_result.all_threats)
+                        if hasattr(scan_result, "all_threats")
+                        and isinstance(scan_result.all_threats, list)
+                        else 0
                     ),
+                    "issues_identified": bool(scan_result.all_threats),
                 }
             )
 
@@ -1736,27 +1745,7 @@ class AdversaryMCPServer:
                         f.stats.get("rules_threats", 0) for f in scan_results
                     ),
                 },
-                "semgrep_scanner": {
-                    "files_processed": len(
-                        [
-                            f
-                            for f in scan_results
-                            if f.scan_metadata.get("semgrep_scan_success", False)
-                        ]
-                    ),
-                    "files_failed": len(
-                        [
-                            f
-                            for f in scan_results
-                            if not f.scan_metadata.get("semgrep_scan_success", False)
-                            and f.scan_metadata.get("semgrep_scan_reason")
-                            not in ["disabled", "not_available"]
-                        ]
-                    ),
-                    "total_threats": sum(
-                        f.stats.get("semgrep_threats", 0) for f in scan_results
-                    ),
-                },
+                "semgrep_scanner": self._get_semgrep_summary(scan_results),
                 "llm_scanner": {
                     "files_processed": len(
                         [
@@ -1783,7 +1772,12 @@ class AdversaryMCPServer:
                 "total_threats": len(all_threats),
                 "severity_counts": severity_counts,
                 "files_with_threats": len(
-                    [f for f in files_scanned if f["threat_count"] > 0]
+                    [
+                        f
+                        for f in files_scanned
+                        if isinstance(f.get("threat_count", 0), int)
+                        and int(f["threat_count"]) > 0
+                    ]
                 ),
             },
             "files": files_scanned,
@@ -1791,6 +1785,127 @@ class AdversaryMCPServer:
         }
 
         return json.dumps(result_data, indent=2)
+
+    def _get_semgrep_summary(
+        self, scan_results: list[EnhancedScanResult]
+    ) -> dict[str, Any]:
+        """Get enhanced Semgrep scanner summary with detailed status information.
+
+        Args:
+            scan_results: List of enhanced scan results
+
+        Returns:
+            Dictionary with enhanced Semgrep scanner summary
+        """
+        semgrep_summary = {
+            "files_processed": len(
+                [
+                    f
+                    for f in scan_results
+                    if f.scan_metadata.get("semgrep_scan_success", False)
+                ]
+            ),
+            "files_failed": len(
+                [
+                    f
+                    for f in scan_results
+                    if not f.scan_metadata.get("semgrep_scan_success", False)
+                    and f.scan_metadata.get("semgrep_scan_reason")
+                    not in ["disabled", "not_available"]
+                ]
+            ),
+            "total_threats": sum(
+                f.stats.get("semgrep_threats", 0) for f in scan_results
+            ),
+        }
+
+        # Get detailed Semgrep status from the first scan result (they should all be the same)
+        if scan_results:
+            first_result_metadata = scan_results[0].scan_metadata
+
+            # Add enhanced status information
+            semgrep_status = first_result_metadata.get("semgrep_status", {})
+            semgrep_summary.update(
+                {
+                    "installation_status": semgrep_status.get(
+                        "installation_status", "unknown"
+                    ),
+                    "version": semgrep_status.get("version"),
+                    "available": semgrep_status.get("available", False),
+                    "has_pro_features": semgrep_status.get("has_pro_features", False),
+                }
+            )
+
+            # Add installation guidance if Semgrep is not available
+            if not semgrep_status.get("available", False):
+                semgrep_summary.update(
+                    {
+                        "error": semgrep_status.get("error"),
+                        "installation_guidance": semgrep_status.get(
+                            "installation_guidance"
+                        ),
+                    }
+                )
+
+            # Add scan-specific information
+            scan_reason = first_result_metadata.get("semgrep_scan_reason")
+            if scan_reason:
+                semgrep_summary["scan_reason"] = scan_reason
+
+            scan_error = first_result_metadata.get("semgrep_scan_error")
+            if scan_error:
+                semgrep_summary["scan_error"] = scan_error
+
+        return semgrep_summary
+
+    def _format_scanner_status(self, scan_results: list[EnhancedScanResult]) -> str:
+        """Format scanner status information for text output.
+
+        Args:
+            scan_results: List of enhanced scan results
+
+        Returns:
+            Formatted scanner status string
+        """
+        if not scan_results:
+            return ""
+
+        status_lines = ["## Scanner Status\n"]
+
+        # Get Semgrep status from first result
+        semgrep_status = scan_results[0].scan_metadata.get("semgrep_status", {})
+
+        # Semgrep status
+        if semgrep_status.get("available", False):
+            version = semgrep_status.get("version", "unknown")
+            pro_features = (
+                " (Pro)" if semgrep_status.get("has_pro_features", False) else ""
+            )
+            status_lines.append(f"**Semgrep:** ✅ Available {version}{pro_features}")
+        else:
+            error = semgrep_status.get("error", "unknown error")
+            guidance = semgrep_status.get("installation_guidance", "")
+            status_lines.append(f"**Semgrep:** ❌ Not Available - {error}")
+            if guidance:
+                status_lines.append(f"  💡 {guidance}")
+
+        # Rules scanner status
+        rules_success = any(
+            r.scan_metadata.get("rules_scan_success", False) for r in scan_results
+        )
+        status_lines.append(
+            f"**Rules Scanner:** {'✅ Available' if rules_success else '❌ Disabled'}"
+        )
+
+        # LLM scanner status
+        llm_success = any(
+            r.scan_metadata.get("llm_scan_success", False) for r in scan_results
+        )
+        status_lines.append(
+            f"**LLM Scanner:** {'✅ Available' if llm_success else '❌ Disabled'}"
+        )
+
+        return "\n".join(status_lines)
 
     def _format_json_diff_results(
         self,

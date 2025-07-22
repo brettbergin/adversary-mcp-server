@@ -23,7 +23,7 @@ class SecurityConfig:
 
     # LLM Configuration (now client-based)
     enable_llm_analysis: bool = (
-        False  # Enable LLM-based security analysis (uses client LLM)
+        True  # Enable LLM-based security analysis (uses client LLM)
     )
 
     # Scanner Configuration
@@ -129,6 +129,10 @@ class CredentialManager:
         self.config_dir = config_dir
         self.config_file = config_dir / "config.json"
         self.keyring_service = "adversary-mcp-server"
+
+        # In-memory cache to reduce keychain access
+        self._config_cache: SecurityConfig | None = None
+        self._cache_loaded = False
 
         # Ensure config directory exists with proper permissions
         self._ensure_config_dir()
@@ -356,10 +360,16 @@ class CredentialManager:
         """
         # Try keyring first
         if self._try_keyring_storage(config):
+            # Update cache on successful storage
+            self._config_cache = config
+            self._cache_loaded = True
             return
 
         # Fall back to encrypted file
         self._store_file_config(config)
+        # Update cache on successful storage
+        self._config_cache = config
+        self._cache_loaded = True
 
     def load_config(self) -> SecurityConfig:
         """Load security configuration.
@@ -370,18 +380,31 @@ class CredentialManager:
         Raises:
             CredentialNotFoundError: If no configuration is found
         """
+        # Return cached config if available
+        if self._cache_loaded and self._config_cache is not None:
+            return self._config_cache
+
         # Try keyring first
         config = self._try_keyring_retrieval()
         if config is not None:
+            # Cache the loaded config
+            self._config_cache = config
+            self._cache_loaded = True
             return config
 
         # Try encrypted file
         config = self._load_file_config()
         if config is not None:
+            # Cache the loaded config
+            self._config_cache = config
+            self._cache_loaded = True
             return config
 
-        # Return default configuration if none found
-        return SecurityConfig()
+        # Return default configuration if none found and cache it
+        default_config = SecurityConfig()
+        self._config_cache = default_config
+        self._cache_loaded = True
+        return default_config
 
     def delete_config(self) -> None:
         """Delete stored configuration."""
@@ -391,12 +414,20 @@ class CredentialManager:
         # Try to delete file
         self._delete_file_config()
 
+        # Clear cache
+        self._config_cache = None
+        self._cache_loaded = False
+
     def has_config(self) -> bool:
         """Check if configuration exists and can be loaded.
 
         Returns:
             True if configuration exists and is valid, False otherwise
         """
+        # If we have a cached config, return True
+        if self._cache_loaded and self._config_cache is not None:
+            return True
+
         # Check keyring
         if self._try_keyring_retrieval() is not None:
             return True

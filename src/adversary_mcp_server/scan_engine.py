@@ -9,7 +9,13 @@ from .credential_manager import CredentialManager
 from .false_positive_manager import FalsePositiveManager
 from .llm_scanner import LLMScanner
 from .semgrep_scanner import SemgrepScanner
-from .threat_engine import Language, Severity, ThreatEngine, ThreatMatch
+from .threat_engine import (
+    Language,
+    LanguageSupport,
+    Severity,
+    ThreatEngine,
+    ThreatMatch,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -262,29 +268,68 @@ class ScanEngine:
 
         # Perform Semgrep scanning if enabled
         semgrep_threats = []
+        semgrep_status = self.semgrep_scanner.get_status()
+        scan_metadata["semgrep_status"] = semgrep_status
+
         if use_semgrep and self.enable_semgrep_analysis:
-            try:
-                config = self.credential_manager.load_config()
-                semgrep_threats = self.semgrep_scanner.scan_code(
-                    source_code=source_code,
-                    file_path=file_path,
-                    language=language,
-                    config=config.semgrep_config,
-                    rules=config.semgrep_rules,
-                    timeout=config.semgrep_timeout,
-                    severity_threshold=severity_threshold,
+            if not semgrep_status["available"]:
+                # Semgrep not available - provide detailed status
+                scan_metadata.update(
+                    {
+                        "semgrep_scan_success": False,
+                        "semgrep_scan_error": semgrep_status["error"],
+                        "semgrep_scan_reason": "semgrep_not_available",
+                        "semgrep_installation_status": semgrep_status[
+                            "installation_status"
+                        ],
+                        "semgrep_installation_guidance": semgrep_status[
+                            "installation_guidance"
+                        ],
+                    }
                 )
-                scan_metadata["semgrep_scan_success"] = True
-                scan_metadata["semgrep_scan_reason"] = "analysis_completed"
-            except Exception as e:
-                logger.error(f"Semgrep scan failed for {file_path}: {e}")
-                scan_metadata["semgrep_scan_success"] = False
-                scan_metadata["semgrep_scan_error"] = str(e)
-                scan_metadata["semgrep_scan_reason"] = "scan_failed"
+                logger.warning(
+                    f"Semgrep not available for file scan: {semgrep_status['error']}"
+                )
+            else:
+                try:
+                    config = self.credential_manager.load_config()
+                    semgrep_threats = self.semgrep_scanner.scan_code(
+                        source_code=source_code,
+                        file_path=file_path,
+                        language=language,
+                        config=config.semgrep_config,
+                        rules=config.semgrep_rules,
+                        timeout=config.semgrep_timeout,
+                        severity_threshold=severity_threshold,
+                    )
+                    scan_metadata.update(
+                        {
+                            "semgrep_scan_success": True,
+                            "semgrep_scan_reason": "analysis_completed",
+                            "semgrep_version": semgrep_status["version"],
+                            "semgrep_has_pro_features": semgrep_status[
+                                "has_pro_features"
+                            ],
+                        }
+                    )
+                except Exception as e:
+                    logger.error(f"Semgrep scan failed for {file_path}: {e}")
+                    scan_metadata.update(
+                        {
+                            "semgrep_scan_success": False,
+                            "semgrep_scan_error": str(e),
+                            "semgrep_scan_reason": "scan_failed",
+                            "semgrep_version": semgrep_status["version"],
+                        }
+                    )
         else:
-            scan_metadata["semgrep_scan_success"] = False
-            scan_metadata["semgrep_scan_reason"] = (
-                "disabled" if not use_semgrep else "not_available"
+            scan_metadata.update(
+                {
+                    "semgrep_scan_success": False,
+                    "semgrep_scan_reason": (
+                        "disabled" if not use_semgrep else "not_available"
+                    ),
+                }
             )
 
         # Store LLM analysis prompt if enabled
@@ -435,14 +480,8 @@ class ScanEngine:
         if not directory_path.exists():
             raise FileNotFoundError(f"Directory not found: {directory_path}")
 
-        # Find supported files
-        supported_extensions = {
-            ".py": Language.PYTHON,
-            ".js": Language.JAVASCRIPT,
-            ".ts": Language.TYPESCRIPT,
-            ".jsx": Language.JAVASCRIPT,
-            ".tsx": Language.TYPESCRIPT,
-        }
+        # Get supported file extensions from centralized language support
+        supported_extensions = LanguageSupport.get_extension_to_language_map()
 
         files_to_scan = []
         pattern = "**/*" if recursive else "*"
@@ -458,35 +497,77 @@ class ScanEngine:
 
         # Run Semgrep ONCE for entire directory (if enabled)
         semgrep_threats = []
-        semgrep_metadata: dict[str, Any] = {"semgrep_scan_success": False}
+
+        # Get detailed Semgrep status including installation information
+        semgrep_status = self.semgrep_scanner.get_status()
+        semgrep_metadata: dict[str, Any] = {
+            "semgrep_scan_success": False,
+            "semgrep_status": semgrep_status,
+        }
 
         if use_semgrep and self.enable_semgrep_analysis:
-            try:
-                config = self.credential_manager.load_config()
-                semgrep_threats = self.semgrep_scanner.scan_directory(
-                    directory_path=str(directory_path),
-                    config=config.semgrep_config,
-                    rules=config.semgrep_rules,
-                    timeout=config.semgrep_timeout
-                    * 2,  # Double timeout for directories
-                    recursive=recursive,
-                    severity_threshold=severity_threshold,
+            if not semgrep_status["available"]:
+                # Semgrep not available - provide detailed status
+                semgrep_metadata.update(
+                    {
+                        "semgrep_scan_success": False,
+                        "semgrep_scan_error": semgrep_status["error"],
+                        "semgrep_scan_reason": "semgrep_not_available",
+                        "semgrep_installation_status": semgrep_status[
+                            "installation_status"
+                        ],
+                        "semgrep_installation_guidance": semgrep_status[
+                            "installation_guidance"
+                        ],
+                    }
                 )
-                semgrep_metadata: dict[str, Any] = {
-                    "semgrep_scan_success": True,
-                    "semgrep_threats_found": len(semgrep_threats),
-                    "semgrep_scan_reason": "directory_scan_completed",
-                }
-                logger.info(
-                    f"Semgrep directory scan completed: {len(semgrep_threats)} threats found"
+                logger.warning(
+                    f"Semgrep not available for directory scan: {semgrep_status['error']}"
                 )
-            except Exception as e:
-                logger.error(f"Semgrep directory scan failed: {e}")
-                semgrep_metadata: dict[str, Any] = {
+            else:
+                try:
+                    config = self.credential_manager.load_config()
+                    semgrep_threats = self.semgrep_scanner.scan_directory(
+                        directory_path=str(directory_path),
+                        config=config.semgrep_config,
+                        rules=config.semgrep_rules,
+                        timeout=config.semgrep_timeout
+                        * 2,  # Double timeout for directories
+                        recursive=recursive,
+                        severity_threshold=severity_threshold,
+                    )
+                    semgrep_metadata.update(
+                        {
+                            "semgrep_scan_success": True,
+                            "semgrep_threats_found": len(semgrep_threats),
+                            "semgrep_scan_reason": "directory_scan_completed",
+                            "semgrep_version": semgrep_status["version"],
+                            "semgrep_has_pro_features": semgrep_status[
+                                "has_pro_features"
+                            ],
+                        }
+                    )
+                    logger.info(
+                        f"Semgrep directory scan completed: {len(semgrep_threats)} threats found"
+                    )
+                except Exception as e:
+                    logger.error(f"Semgrep directory scan failed: {e}")
+                    semgrep_metadata.update(
+                        {
+                            "semgrep_scan_success": False,
+                            "semgrep_scan_error": str(e),
+                            "semgrep_scan_reason": "directory_scan_failed",
+                            "semgrep_version": semgrep_status["version"],
+                        }
+                    )
+        else:
+            # Semgrep scanning disabled by user
+            semgrep_metadata.update(
+                {
                     "semgrep_scan_success": False,
-                    "semgrep_scan_error": str(e),
-                    "semgrep_scan_reason": "directory_scan_failed",
+                    "semgrep_scan_reason": "semgrep_disabled_by_user",
                 }
+            )
 
         # Create a lookup for Semgrep threats by file path
         semgrep_by_file = {}
@@ -562,17 +643,7 @@ class ScanEngine:
         Returns:
             Detected language
         """
-        extension = file_path.suffix.lower()
-
-        if extension == ".py":
-            return Language.PYTHON
-        elif extension in [".js", ".jsx"]:
-            return Language.JAVASCRIPT
-        elif extension in [".ts", ".tsx"]:
-            return Language.TYPESCRIPT
-        else:
-            # Default to Python
-            return Language.PYTHON
+        return LanguageSupport.detect_language(file_path)
 
     def _filter_by_severity(
         self,

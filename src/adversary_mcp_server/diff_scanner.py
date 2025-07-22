@@ -6,7 +6,7 @@ import subprocess
 from pathlib import Path
 
 from .scan_engine import EnhancedScanResult, ScanEngine
-from .threat_engine import Language, Severity
+from .threat_engine import Language, LanguageSupport, Severity
 
 logger = logging.getLogger(__name__)
 
@@ -235,19 +235,18 @@ class GitDiffScanner:
             file_path: Path to the file
 
         Returns:
-            Detected language or None if not supported
+            Detected language or None if not supported for security scanning
         """
         extension = Path(file_path).suffix.lower()
 
-        language_map = {
-            ".py": Language.PYTHON,
-            ".js": Language.JAVASCRIPT,
-            ".jsx": Language.JAVASCRIPT,
-            ".ts": Language.TYPESCRIPT,
-            ".tsx": Language.TYPESCRIPT,
-        }
+        language_map = LanguageSupport.get_extension_to_language_map()
+        detected_language = language_map.get(extension)
 
-        return language_map.get(extension)
+        # Diff scanner only scans code files, not documentation or config files
+        if detected_language == Language.GENERIC:
+            return None
+
+        return detected_language
 
     def get_diff_changes(
         self, source_branch: str, target_branch: str, working_dir: Path | None = None

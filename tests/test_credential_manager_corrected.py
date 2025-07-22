@@ -29,7 +29,7 @@ class TestSecurityConfigCorrected:
         config = SecurityConfig()
 
         # Check LLM Configuration
-        assert config.enable_llm_analysis is False
+        assert config.enable_llm_analysis is True
 
         # Check Scanner Configuration
         assert config.enable_ast_scanning is True
@@ -182,7 +182,7 @@ class TestCredentialManagerCorrected:
             # Load config should return defaults
             config = manager.load_config()
 
-            assert config.enable_llm_analysis is False
+            assert config.enable_llm_analysis is True
             assert config.severity_threshold == "medium"
             assert config.exploit_safety_mode is True
 
@@ -347,3 +347,103 @@ class TestCredentialManagerCorrected:
 
             assert loaded_config.custom_rules_path is None
             assert loaded_config.enable_llm_analysis is False
+
+    def test_config_caching(self):
+        """Test that configuration is cached in memory to reduce keychain access."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            # Initial state - no cache
+            assert manager._config_cache is None
+            assert manager._cache_loaded is False
+
+            # Create and store config
+            config = SecurityConfig(enable_llm_analysis=True, severity_threshold="high")
+            manager.store_config(config)
+
+            # Cache should be populated after storing
+            assert manager._config_cache is not None
+            assert manager._cache_loaded is True
+            assert manager._config_cache.enable_llm_analysis is True
+            assert manager._config_cache.severity_threshold == "high"
+
+    def test_load_config_uses_cache(self):
+        """Test that subsequent load_config calls use cached data."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            # Store initial config
+            config = SecurityConfig(
+                enable_llm_analysis=True, severity_threshold="critical"
+            )
+            manager.store_config(config)
+
+            # First load should populate cache
+            loaded_config1 = manager.load_config()
+            assert manager._cache_loaded is True
+
+            # Manually modify cache to test it's being used
+            manager._config_cache.severity_threshold = "low"
+
+            # Second load should use cached (modified) value
+            loaded_config2 = manager.load_config()
+            assert loaded_config2.severity_threshold == "low"
+
+    def test_delete_config_clears_cache(self):
+        """Test that deleting config clears the cache."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            # Store config and verify cache
+            config = SecurityConfig(enable_llm_analysis=True)
+            manager.store_config(config)
+            assert manager._cache_loaded is True
+            assert manager._config_cache is not None
+
+            # Delete config should clear cache
+            manager.delete_config()
+            assert manager._cache_loaded is False
+            assert manager._config_cache is None
+
+    def test_has_config_uses_cache(self):
+        """Test that has_config method uses cached data when available."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            # Initially no config
+            assert not manager.has_config()
+
+            # Store config
+            config = SecurityConfig(enable_llm_analysis=True)
+            manager.store_config(config)
+
+            # has_config should return True using cache
+            assert manager.has_config()
+
+            # Even if we manually clear stored config but keep cache
+            manager.config_file.unlink(missing_ok=True)
+            # has_config should still return True because of cache
+            assert manager.has_config()
+
+    @patch("adversary_mcp_server.credential_manager.keyring")
+    def test_cache_reduces_keyring_calls(self, mock_keyring):
+        """Test that caching reduces the number of keyring access calls."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            # Mock keyring to succeed
+            config_dict = {"enable_llm_analysis": True, "severity_threshold": "high"}
+            mock_keyring.get_password.return_value = '{"enable_llm_analysis": true, "severity_threshold": "high", "enable_ast_scanning": true, "enable_semgrep_scanning": true, "enable_bandit_scanning": true, "semgrep_config": null, "semgrep_rules": null, "semgrep_timeout": 60, "enable_exploit_generation": true, "exploit_safety_mode": true, "max_file_size_mb": 10, "max_scan_depth": 5, "timeout_seconds": 300, "custom_rules_path": null, "include_exploit_examples": true, "include_remediation_advice": true, "verbose_output": false}'
+            mock_keyring.set_password.return_value = None
+
+            # First load_config call
+            config1 = manager.load_config()
+            first_call_count = mock_keyring.get_password.call_count
+
+            # Second load_config call should use cache
+            config2 = manager.load_config()
+            second_call_count = mock_keyring.get_password.call_count
+
+            # Should have same number of calls (no additional keyring access)
+            assert second_call_count == first_call_count
+            assert config1.enable_llm_analysis == config2.enable_llm_analysis

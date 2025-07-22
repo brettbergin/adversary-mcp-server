@@ -20,7 +20,7 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
-    
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -57,10 +57,10 @@ jobs:
         # Create test directories
         mkdir -p /tmp/adversary-mcp-test
         mkdir -p /tmp/adversary-mcp-test/rules
-        
+
         # Set permissions
         chmod 755 /tmp/adversary-mcp-test
-        
+
         # Create test git repository for diff scanner tests
         mkdir -p /tmp/test-repo
         cd /tmp/test-repo
@@ -81,7 +81,7 @@ jobs:
         source .venv/bin/activate
         # Test import compatibility
         python -c "import tests.test_server_extended; print('✅ All test modules import successfully')"
-        
+
         # Test version reading functionality
         python -c "from adversary_mcp_server import __version__; print(f'✅ Package version: {__version__}')"
 
@@ -111,7 +111,7 @@ jobs:
   lint:
     name: Code Quality
     runs-on: ubuntu-latest
-    
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -156,7 +156,7 @@ jobs:
   security:
     name: Security Scan
     runs-on: ubuntu-latest
-    
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -181,14 +181,7 @@ jobs:
     - name: Install security tools
       run: |
         source .venv/bin/activate
-        pip install bandit semgrep safety
-
-    - name: Run Bandit security linter
-      run: |
-        source .venv/bin/activate
-        python -m bandit -r src/ -f json -o bandit-report.json
-        python -m bandit -r src/ --severity-level medium
-      continue-on-error: true
+        pip install semgrep safety
 
     - name: Run Semgrep security scanner
       run: |
@@ -218,7 +211,7 @@ jobs:
   build:
     name: Build Package
     runs-on: ubuntu-latest
-    
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -268,7 +261,7 @@ jobs:
     name: Integration Tests
     runs-on: ubuntu-latest
     needs: [test, lint]
-    
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -295,13 +288,13 @@ jobs:
       run: |
         mkdir -p /tmp/adversary-mcp-test
         source .venv/bin/activate
-        
+
         # Test CLI installation and basic commands
         adversary-mcp-cli --version
-        
+
         # Test demo functionality
         adversary-mcp-cli demo --no-interactive || echo "Demo completed with warnings"
-        
+
         # Test rule management
         adversary-mcp-cli rules stats
         adversary-mcp-cli list-rules --count
@@ -309,33 +302,33 @@ jobs:
     - name: Test scanning functionality
       run: |
         source .venv/bin/activate
-        
+
         # Create test files
         mkdir -p /tmp/test-project
         cd /tmp/test-project
-        
+
         # Create vulnerable test file
         cat > vulnerable.py << 'EOF'
         import os
         # SQL injection vulnerability
         query = "SELECT * FROM users WHERE id = " + user_id
-        # Command injection vulnerability  
+        # Command injection vulnerability
         os.system("rm -rf " + user_input)
         # Hardcoded secret
         API_KEY = "sk-1234567890abcdef"
         EOF
-        
+
         cat > test.js << 'EOF'
         // XSS vulnerability
         document.innerHTML = userInput;
         // Prototype pollution
         obj.__proto__.polluted = true;
         EOF
-        
+
         # Test file scanning
         adversary-mcp-cli scan vulnerable.py --severity=medium --no-exploits --no-llm
         adversary-mcp-cli scan test.js --severity=medium --no-exploits --no-llm
-        
+
         # Test directory scanning
         adversary-mcp-cli scan . --severity=high --no-exploits --no-llm --recursive
       env:
@@ -344,20 +337,20 @@ jobs:
     - name: Test git diff scanning
       run: |
         source .venv/bin/activate
-        
+
         # Create test git repository with vulnerable changes
         mkdir -p /tmp/git-test-repo
         cd /tmp/git-test-repo
         git config --global user.email "test@example.com"
         git config --global user.name "Test User"
         git init
-        
+
         # Initial safe code
         echo "print('safe code')" > app.py
         git add app.py
         git commit -m "Initial safe code"
         git checkout -b main
-        
+
         # Create feature branch with vulnerabilities
         git checkout -b feature/dangerous
         cat > app.py << 'EOF'
@@ -367,10 +360,10 @@ jobs:
         query = "SELECT * FROM users WHERE id = " + user_id
         os.system("rm -rf " + user_input)
         EOF
-        
+
         git add app.py
         git commit -m "Add dangerous features"
-        
+
         # Test diff scanning
         adversary-mcp-cli scan . --diff --source-branch=main --target-branch=feature/dangerous --severity=medium --no-exploits --no-llm
       env:
@@ -383,7 +376,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ["3.11"]
-    
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4

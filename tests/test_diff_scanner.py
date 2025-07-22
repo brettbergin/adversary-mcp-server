@@ -313,7 +313,7 @@ index 1234567..abcdefg 100644
         mock_chunk.added_lines = [(1, "some content")]
         mock_get_diff.return_value = {
             "README.md": [mock_chunk],
-            "config.yml": [mock_chunk],
+            "image.png": [mock_chunk],
         }
 
         scanner = GitDiffScanner()
