@@ -8,12 +8,7 @@ from typing import Any
 import esprima
 
 from .threat_engine import Language as LangEnum
-from .threat_engine import (
-    MatchCondition,
-    ThreatEngine,
-    ThreatMatch,
-    ThreatRule,
-)
+from .threat_engine import MatchCondition, ThreatEngine, ThreatMatch, ThreatRule
 
 
 class CodeContext:
@@ -360,13 +355,21 @@ class ASTScanner:
 
         threats = []
 
-        # File extensions to scan
+        # Use centralized language support for file extensions
+        from .threat_engine import LanguageSupport
+
+        extension_to_lang_map = LanguageSupport.get_extension_to_language_map()
+
+        # Filter to only supported languages that we can analyze with AST
+        ast_supported_languages = {
+            LangEnum.PYTHON,
+            LangEnum.JAVASCRIPT,
+            LangEnum.TYPESCRIPT,
+        }
         extensions = {
-            ".py": LangEnum.PYTHON,
-            ".js": LangEnum.JAVASCRIPT,
-            ".ts": LangEnum.TYPESCRIPT,
-            ".jsx": LangEnum.JAVASCRIPT,
-            ".tsx": LangEnum.TYPESCRIPT,
+            ext: lang
+            for ext, lang in extension_to_lang_map.items()
+            if lang in ast_supported_languages
         }
 
         # Scan files

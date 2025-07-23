@@ -11,6 +11,10 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, field_validator
 
+from .logging_config import get_logger
+
+logger = get_logger("threat_engine")
+
 
 class Severity(str, Enum):
     """Security vulnerability severity levels."""
@@ -358,7 +362,7 @@ def initialize_user_rules_directory() -> None:
             break
 
     if not package_rules_dir:
-        print("Warning: Could not find packaged rules directory")
+        logger.warning("Could not find packaged rules directory")
         return
 
     # Copy built-in rules from package to user config (if they exist and user doesn't have them or if package version is newer)
@@ -646,8 +650,8 @@ class ThreatEngine:
                     rules_loaded = True
 
             except Exception as e:
-                print(f"Warning: Failed to load built-in rules from YAML: {e}")
-                print("Falling back to hardcoded rules...")
+                logger.warning(f"Failed to load built-in rules from YAML: {e}")
+                logger.info("Falling back to hardcoded rules...")
                 rules_loaded = False
 
         # Fallback to hardcoded rules if YAML loading failed or no files found
@@ -847,12 +851,51 @@ class ThreatEngine:
         with open(output_file, "w") as f:
             yaml.dump(rules_data, f, default_flow_style=False, sort_keys=False)
 
-    def list_rules(self) -> list[dict[str, Any]]:
-        """List all loaded rules with basic information.
+    def list_rules(
+        self,
+        category: str | None = None,
+        min_severity: Severity | None = None,
+        language: Language | None = None,
+    ) -> list[dict[str, Any]]:
+        """List all loaded rules with basic information, optionally filtered.
+
+        Args:
+            category: Filter by category (optional)
+            min_severity: Filter by minimum severity (optional)
+            language: Filter by language (optional)
 
         Returns:
             List of rule summaries
         """
+        filtered_rules = list(self.rules.values())
+
+        # Apply category filter
+        if category:
+            filtered_rules = [
+                rule for rule in filtered_rules if rule.category.value == category
+            ]
+
+        # Apply severity filter
+        if min_severity:
+            severity_order = [
+                Severity.LOW,
+                Severity.MEDIUM,
+                Severity.HIGH,
+                Severity.CRITICAL,
+            ]
+            min_index = severity_order.index(min_severity)
+            filtered_rules = [
+                rule
+                for rule in filtered_rules
+                if severity_order.index(rule.severity) >= min_index
+            ]
+
+        # Apply language filter
+        if language:
+            filtered_rules = [
+                rule for rule in filtered_rules if language in rule.languages
+            ]
+
         return [
             {
                 "id": rule.id,
@@ -867,7 +910,7 @@ class ThreatEngine:
                 ),
                 "source_file": str(self.rule_source_files.get(rule.id, "Unknown")),
             }
-            for rule in self.rules.values()
+            for rule in filtered_rules
         ]
 
     def reload_rules(self) -> None:
@@ -891,7 +934,7 @@ class ThreatEngine:
                 try:
                     self.load_rules_from_file(rule_file)
                 except Exception as e:
-                    print(f"Warning: Failed to reload {rule_file}: {e}")
+                    logger.warning(f"Failed to reload {rule_file}: {e}")
 
     def import_rules_from_file(
         self, import_file: Path, target_dir: Path | None = None

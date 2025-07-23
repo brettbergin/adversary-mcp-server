@@ -25,7 +25,7 @@ import os
 os.system(user_input)  # Should be detected by rules
 """
 
-        result = self.scan_engine.scan_code(
+        result = self.scan_engine.scan_code_sync(
             source_code=test_code,
             file_path="test.py",
             language=Language.PYTHON,
@@ -47,7 +47,7 @@ import os
 os.system(user_input)  # Should be detected by rules
 """
 
-        result = self.scan_engine.scan_code(
+        result = self.scan_engine.scan_code_sync(
             source_code=test_code,
             file_path="test.py",
             language=Language.PYTHON,
@@ -69,7 +69,7 @@ import os
 os.system(user_input)
 """
 
-        result = self.scan_engine.scan_code(
+        result = self.scan_engine.scan_code_sync(
             source_code=test_code,
             file_path="test.py",
             language=Language.PYTHON,
@@ -93,7 +93,7 @@ os.system(user_input)
             test_file = Path(f.name)
 
         try:
-            result = self.scan_engine.scan_file(
+            result = self.scan_engine.scan_file_sync(
                 file_path=test_file,
                 language=Language.PYTHON,
                 use_rules=False,
@@ -119,7 +119,7 @@ os.system(user_input)
             test_file = Path(f.name)
 
         try:
-            result = self.scan_engine.scan_file(
+            result = self.scan_engine.scan_file_sync(
                 file_path=test_file,
                 language=Language.PYTHON,
                 use_rules=True,
@@ -144,7 +144,7 @@ os.system(user_input)
             test_file = Path(temp_dir) / "test.py"
             test_file.write_text(test_code)
 
-            results = self.scan_engine.scan_directory(
+            results = self.scan_engine.scan_directory_sync(
                 directory_path=Path(temp_dir),
                 use_rules=False,
                 use_semgrep=False,
@@ -168,7 +168,7 @@ os.system(user_input)
             test_file = Path(temp_dir) / "test.py"
             test_file.write_text(test_code)
 
-            results = self.scan_engine.scan_directory(
+            results = self.scan_engine.scan_directory_sync(
                 directory_path=Path(temp_dir),
                 use_rules=True,
                 use_semgrep=False,
@@ -235,7 +235,7 @@ os.system(user_input)
         # Create new scan engine with mocked AST scanner
         scan_engine = ScanEngine(self.threat_engine, self.credential_manager)
 
-        result = scan_engine.scan_code(
+        result = scan_engine.scan_code_sync(
             source_code="test code",
             file_path="test.py",
             language=Language.PYTHON,
@@ -256,7 +256,7 @@ import os
 os.system(user_input)
 """
 
-        result = self.scan_engine.scan_code(
+        result = self.scan_engine.scan_code_sync(
             source_code=test_code,
             file_path="test.py",
             language=Language.PYTHON,
@@ -278,7 +278,7 @@ os.system(user_input)
 """
 
         # Test with high threshold
-        result_high = self.scan_engine.scan_code(
+        result_high = self.scan_engine.scan_code_sync(
             source_code=test_code,
             file_path="test.py",
             language=Language.PYTHON,
@@ -289,7 +289,7 @@ os.system(user_input)
         )
 
         # Test with low threshold
-        result_low = self.scan_engine.scan_code(
+        result_low = self.scan_engine.scan_code_sync(
             source_code=test_code,
             file_path="test.py",
             language=Language.PYTHON,

@@ -1,8 +1,5 @@
 """Semgrep scanner for static code analysis and vulnerability detection."""
 
-import asyncio
-import concurrent.futures
-import logging
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -15,6 +12,7 @@ try:
 except ImportError:
     _SEMGREP_AVAILABLE = False
 
+from .logging_config import get_logger
 from .threat_engine import (
     Category,
     Language,
@@ -24,7 +22,7 @@ from .threat_engine import (
     ThreatMatch,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger("semgrep_scanner")
 
 
 class SemgrepError(Exception):
@@ -36,44 +34,17 @@ class SemgrepError(Exception):
 class SemgrepScanner:
     """Scanner that uses Semgrep for static code analysis."""
 
-    def __init__(self, threat_engine: ThreatEngine):
+    def __init__(self, threat_engine: ThreatEngine, credential_manager=None):
         """Initialize Semgrep scanner.
 
         Args:
             threat_engine: ThreatEngine instance for result formatting
+            credential_manager: CredentialManager for accessing API keys
         """
         self.threat_engine = threat_engine
+        self.credential_manager = credential_manager
         self._semgrep_status = self._check_semgrep_available()
         self._semgrep_available = self._semgrep_status.get("available", False)
-
-    def _run_semgrep_in_thread(self, semgrep_func, *args, **kwargs):
-        """Run semgrep function in a thread pool to avoid asyncio conflicts.
-
-        Args:
-            semgrep_func: The semgrep function to call
-            *args: Positional arguments for the function
-            **kwargs: Keyword arguments for the function
-
-        Returns:
-            The result of the semgrep function call
-
-        Raises:
-            Exception: If the semgrep call fails
-        """
-
-        def run_sync():
-            return semgrep_func(*args, **kwargs)
-
-        try:
-            # Check if we're in an async context
-            loop = asyncio.get_running_loop()
-            # If we have a running loop, use thread pool executor
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(run_sync)
-                return future.result()
-        except RuntimeError:
-            # No running event loop, call directly
-            return run_sync()
 
     def _check_semgrep_available(self) -> dict[str, Any]:
         """Check if Semgrep is available as a Python package.
@@ -102,8 +73,21 @@ class SemgrepScanner:
                 status["available"] = True
                 status["version"] = getattr(semgrep, "__VERSION__", "unknown")
                 status["installation_status"] = "installed_and_working"
-                status["has_pro_features"] = "SEMGREP_APP_TOKEN" in os.environ
+
+                # Check for API key from credential manager first, then fallback to env var
+                has_api_key = False
+                if self.credential_manager:
+                    api_key = self.credential_manager.get_semgrep_api_key()
+                    has_api_key = bool(api_key)
+
+                # Fallback to environment variable (for backwards compatibility)
+                if not has_api_key:
+                    has_api_key = "SEMGREP_APP_TOKEN" in os.environ
+
+                status["has_pro_features"] = has_api_key
                 logger.info(f"Semgrep Python package available: {status['version']}")
+                if has_api_key:
+                    logger.info("Semgrep Pro features available via configured API key")
 
             except Exception as e:
                 status["error"] = f"Error accessing Semgrep package: {e}"
@@ -180,6 +164,30 @@ class SemgrepScanner:
             env_info["has_token"] = "false"
 
         return env_info
+
+    def _setup_semgrep_environment(self) -> dict[str, str]:
+        """Setup environment variables for Semgrep execution.
+
+        Returns:
+            Dictionary of environment variables to set
+        """
+        import os
+
+        env_vars = {}
+
+        # Get API key from credential manager first
+        if self.credential_manager:
+            api_key = self.credential_manager.get_semgrep_api_key()
+            if api_key:
+                env_vars["SEMGREP_APP_TOKEN"] = api_key
+                logger.debug("Using Semgrep API key from credential manager")
+
+        # If no API key from credential manager, check environment (backwards compatibility)
+        if "SEMGREP_APP_TOKEN" not in env_vars and "SEMGREP_APP_TOKEN" in os.environ:
+            env_vars["SEMGREP_APP_TOKEN"] = os.environ["SEMGREP_APP_TOKEN"]
+            logger.debug("Using Semgrep API key from environment variable")
+
+        return env_vars
 
     def _map_semgrep_severity(self, severity: str) -> Severity:
         """Map Semgrep severity to our Severity enum.
@@ -314,7 +322,7 @@ class SemgrepScanner:
             source="semgrep",  # Semgrep scanner
         )
 
-    def scan_code(
+    async def scan_code(
         self,
         source_code: str,
         file_path: str,
@@ -345,77 +353,108 @@ class SemgrepScanner:
             logger.warning("Semgrep not available, skipping Semgrep scan")
             return []
 
+        tmp_file_path = None
         try:
             # Create temporary file for scanning
-            with tempfile.NamedTemporaryFile(
+            tmp_file = tempfile.NamedTemporaryFile(
                 mode="w",
                 suffix=self._get_file_extension(language),
                 delete=False,
-            ) as tmp_file:
-                tmp_file.write(source_code)
-                tmp_file_path = Path(tmp_file.name)
+            )
+            tmp_file.write(source_code)
+            tmp_file.flush()
+            tmp_file_path = Path(tmp_file.name)
+            tmp_file.close()
 
-            try:
+            # Determine config to use
+            config_path = (
+                Path(config) if config else Path(rules) if rules else Path("auto")
+            )
 
-                # Determine config to use
-                config_path = (
-                    Path(config) if config else Path(rules) if rules else Path("auto")
+            # Import and run Semgrep using Python API in a thread pool
+            import asyncio
+            import concurrent.futures
+            import os
+
+            from semgrep.run_scan import run_scan_and_return_json
+
+            # Setup environment for the thread
+            env_vars = self._setup_semgrep_environment()
+            thread_env = os.environ.copy()
+            thread_env.update(env_vars)
+
+            def run_semgrep_with_env():
+                # Set environment variables in the thread
+                original_env = {}
+                for key, value in env_vars.items():
+                    original_env[key] = os.environ.get(key)
+                    os.environ[key] = value
+
+                try:
+                    return run_scan_and_return_json(
+                        config=config_path,
+                        scanning_roots=[tmp_file_path],
+                        timeout=timeout,
+                    )
+                finally:
+                    # Restore original environment in thread
+                    for key in env_vars:
+                        if original_env[key] is None:
+                            os.environ.pop(key, None)
+                        else:
+                            os.environ[key] = original_env[key]
+
+            # Run semgrep in thread pool to avoid event loop conflict
+            loop = asyncio.get_event_loop()
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                semgrep_output = await loop.run_in_executor(
+                    executor, run_semgrep_with_env
                 )
 
-                # Import and run Semgrep using Python API in a thread-safe way
-                from semgrep.run_scan import run_scan_and_return_json
+            # Parse results
+            threats = []
+            if isinstance(semgrep_output, dict) and "results" in semgrep_output:
+                findings = semgrep_output.get("results", [])
 
-                semgrep_output = self._run_semgrep_in_thread(
-                    run_scan_and_return_json,
-                    config=config_path,
-                    scanning_roots=[tmp_file_path.parent],
-                    timeout=timeout,
-                )
+                # Filter findings to only include our temporary file
+                # In tests, be more lenient with path matching
+                filtered_findings = [
+                    f
+                    for f in findings
+                    if Path(f.get("path", "")).name == tmp_file_path.name
+                ]
 
-                # Parse results
-                threats = []
-                if isinstance(semgrep_output, dict) and "results" in semgrep_output:
-                    findings = semgrep_output.get("results", [])
+                # If no matches found (common in tests), include all findings
+                if not filtered_findings and findings:
+                    filtered_findings = findings
 
-                    # Filter findings to only include our temporary file
-                    # In tests, be more lenient with path matching
-                    filtered_findings = [
-                        f
-                        for f in findings
-                        if Path(f.get("path", "")).name == tmp_file_path.name
-                    ]
+                for finding in filtered_findings:
+                    try:
+                        threat = self._convert_semgrep_finding_to_threat(
+                            finding, file_path
+                        )
+                        threats.append(threat)
+                    except Exception as e:
+                        logger.warning(f"Failed to convert Semgrep finding: {e}")
 
-                    # If no matches found (common in tests), include all findings
-                    if not filtered_findings and findings:
-                        filtered_findings = findings
+            # Apply severity filtering if specified
+            if severity_threshold:
+                threats = self._filter_by_severity(threats, severity_threshold)
 
-                    for finding in filtered_findings:
-                        try:
-                            threat = self._convert_semgrep_finding_to_threat(
-                                finding, file_path
-                            )
-                            threats.append(threat)
-                        except Exception as e:
-                            logger.warning(f"Failed to convert Semgrep finding: {e}")
+            logger.info(f"Semgrep found {len(threats)} security issues")
+            return threats
 
-                # Apply severity filtering if specified
-                if severity_threshold:
-                    threats = self._filter_by_severity(threats, severity_threshold)
-
-                logger.info(f"Semgrep found {len(threats)} security issues")
-                return threats
-
-            finally:
-                # Clean up temporary file
+        except Exception as e:
+            raise SemgrepError(f"Semgrep scan failed: {e}")
+        finally:
+            # Clean up temporary file
+            if tmp_file_path:
                 try:
                     tmp_file_path.unlink()
                 except OSError:
                     pass
 
-        except Exception as e:
-            raise SemgrepError(f"Semgrep scan failed: {e}")
-
-    def scan_file(
+    async def scan_file(
         self,
         file_path: str,
         language: Language,
@@ -454,15 +493,43 @@ class SemgrepScanner:
             # Convert file path to Path object
             target_file = Path(file_path)
 
-            # Import and run Semgrep using Python API in a thread-safe way
+            # Import and run Semgrep using Python API in a thread pool
+            import asyncio
+            import concurrent.futures
+            import os
+
             from semgrep.run_scan import run_scan_and_return_json
 
-            semgrep_output = self._run_semgrep_in_thread(
-                run_scan_and_return_json,
-                config=config_path,
-                scanning_roots=[target_file.parent],
-                timeout=timeout,
-            )
+            # Setup environment for the thread
+            env_vars = self._setup_semgrep_environment()
+
+            def run_semgrep_with_env():
+                # Set environment variables in the thread
+                original_env = {}
+                for key, value in env_vars.items():
+                    original_env[key] = os.environ.get(key)
+                    os.environ[key] = value
+
+                try:
+                    return run_scan_and_return_json(
+                        config=config_path,
+                        scanning_roots=[target_file],
+                        timeout=timeout,
+                    )
+                finally:
+                    # Restore original environment in thread
+                    for key in env_vars:
+                        if original_env[key] is None:
+                            os.environ.pop(key, None)
+                        else:
+                            os.environ[key] = original_env[key]
+
+            # Run semgrep in thread pool to avoid event loop conflict
+            loop = asyncio.get_event_loop()
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                semgrep_output = await loop.run_in_executor(
+                    executor, run_semgrep_with_env
+                )
 
             # Parse results
             threats = []
@@ -544,7 +611,7 @@ class SemgrepScanner:
             if severity_order.index(threat.severity) >= min_index
         ]
 
-    def scan_directory(
+    async def scan_directory(
         self,
         directory_path: str,
         config: str | None = None,
@@ -585,15 +652,43 @@ class SemgrepScanner:
 
             logger.info(f"Running Semgrep directory scan on {target_dir}")
 
-            # Import and run Semgrep using Python API in a thread-safe way
+            # Import and run Semgrep using Python API in a thread pool
+            import asyncio
+            import concurrent.futures
+            import os
+
             from semgrep.run_scan import run_scan_and_return_json
 
-            semgrep_output = self._run_semgrep_in_thread(
-                run_scan_and_return_json,
-                config=config_path,
-                scanning_roots=[target_dir],
-                timeout=timeout,
-            )
+            # Setup environment for the thread
+            env_vars = self._setup_semgrep_environment()
+
+            def run_semgrep_with_env():
+                # Set environment variables in the thread
+                original_env = {}
+                for key, value in env_vars.items():
+                    original_env[key] = os.environ.get(key)
+                    os.environ[key] = value
+
+                try:
+                    return run_scan_and_return_json(
+                        config=config_path,
+                        scanning_roots=[target_dir],
+                        timeout=timeout,
+                    )
+                finally:
+                    # Restore original environment in thread
+                    for key in env_vars:
+                        if original_env[key] is None:
+                            os.environ.pop(key, None)
+                        else:
+                            os.environ[key] = original_env[key]
+
+            # Run semgrep in thread pool to avoid event loop conflict
+            loop = asyncio.get_event_loop()
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                semgrep_output = await loop.run_in_executor(
+                    executor, run_semgrep_with_env
+                )
 
             # Parse results
             threats = []

@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import logging
 import sys
 import traceback
 from pathlib import Path
@@ -21,6 +20,9 @@ from .credential_manager import CredentialManager
 from .diff_scanner import GitDiffScanner
 from .exploit_generator import ExploitGenerator
 from .false_positive_manager import FalsePositiveManager
+
+# Set up centralized logging
+from .logging_config import get_logger
 from .scan_engine import EnhancedScanResult, ScanEngine
 from .threat_engine import (
     Category,
@@ -31,11 +33,7 @@ from .threat_engine import (
     ThreatMatch,
 )
 
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger(__name__)
+logger = get_logger("server")
 
 
 class AdversaryToolError(Exception):
@@ -440,6 +438,10 @@ class AdversaryMCPServer:
                                 "type": "string",
                                 "description": "Reason for marking as false positive",
                             },
+                            "working_directory": {
+                                "type": "string",
+                                "description": "Project directory containing .adversary.json files (optional, defaults to current directory)",
+                            },
                         },
                         "required": ["finding_uuid"],
                     },
@@ -454,6 +456,10 @@ class AdversaryMCPServer:
                                 "type": "string",
                                 "description": "UUID of the finding to unmark",
                             },
+                            "working_directory": {
+                                "type": "string",
+                                "description": "Project directory containing .adversary.json files (optional, defaults to current directory)",
+                            },
                         },
                         "required": ["finding_uuid"],
                     },
@@ -463,7 +469,12 @@ class AdversaryMCPServer:
                     description="List all findings marked as false positives",
                     inputSchema={
                         "type": "object",
-                        "properties": {},
+                        "properties": {
+                            "working_directory": {
+                                "type": "string",
+                                "description": "Project directory containing .adversary.json files (optional, defaults to current directory)",
+                            },
+                        },
                         "required": [],
                     },
                 ),
@@ -475,11 +486,13 @@ class AdversaryMCPServer:
         ) -> list[types.TextContent]:
             """Call the specified tool with the given arguments."""
             try:
+                logger.info(f"=== TOOL CALL START: {name} with args: {arguments} ===")
                 if name == "adv_scan_code":
                     return await self._handle_scan_code(arguments)
                 elif name == "adv_scan_file":
                     return await self._handle_scan_file(arguments)
                 elif name == "adv_scan_folder":
+                    logger.info("=== CALLING _handle_scan_directory ===")
                     return await self._handle_scan_directory(arguments)
                 elif name == "adv_diff_scan":
                     return await self._handle_diff_scan(arguments)
@@ -527,7 +540,7 @@ class AdversaryMCPServer:
             severity_enum = Severity(severity_threshold)
 
             # Scan the code using enhanced scanner (rules-based)
-            scan_result = self.scan_engine.scan_code(
+            scan_result = await self.scan_engine.scan_code(
                 source_code=content,
                 file_path="input.code",
                 language=language,
@@ -598,7 +611,7 @@ class AdversaryMCPServer:
             severity_enum = Severity(severity_threshold)
 
             # Scan the file using enhanced scanner (rules-based)
-            scan_result = self.scan_engine.scan_file(
+            scan_result = await self.scan_engine.scan_file(
                 file_path=file_path,
                 use_llm=use_llm,
                 use_semgrep=use_semgrep,
@@ -669,6 +682,7 @@ class AdversaryMCPServer:
     ) -> list[types.TextContent]:
         """Handle directory scanning request."""
         try:
+            logger.info(f"Starting directory scan with arguments: {arguments}")
             directory_path = Path(arguments["directory_path"]).resolve()
             recursive = arguments.get("recursive", True)
             severity_threshold = arguments.get("severity_threshold", "medium")
@@ -679,14 +693,17 @@ class AdversaryMCPServer:
             output_format = arguments.get("output_format", "text")
             output_path = arguments.get("output")
 
+            logger.info(f"Directory path resolved to: {directory_path}")
+
             if not directory_path.exists():
                 raise AdversaryToolError(f"Directory not found: {directory_path}")
 
             # Convert severity threshold to enum
             severity_enum = Severity(severity_threshold)
+            logger.info(f"Starting scan_engine.scan_directory for: {directory_path}")
 
             # Scan the directory using enhanced scanner (rules-based)
-            scan_results = self.scan_engine.scan_directory(
+            scan_results = await self.scan_engine.scan_directory(
                 directory_path=directory_path,
                 recursive=recursive,
                 use_llm=use_llm,
@@ -694,6 +711,10 @@ class AdversaryMCPServer:
                 use_rules=use_rules,
                 severity_threshold=severity_enum,
                 max_files=50,  # Limit files for performance
+            )
+
+            logger.info(
+                f"scan_engine.scan_directory completed, got {len(scan_results)} results"
             )
 
             # Combine all threats from all files
@@ -796,7 +817,7 @@ class AdversaryMCPServer:
                 )
 
             # Scan the diff changes
-            scan_results = self.diff_scanner.scan_diff(
+            scan_results = await self.diff_scanner.scan_diff(
                 source_branch=source_branch,
                 target_branch=target_branch,
                 working_dir=working_dir_path,
@@ -828,7 +849,10 @@ class AdversaryMCPServer:
             # Format results based on output format
             if output_format == "json":
                 result = self._format_json_diff_results(
-                    scan_results, diff_summary, f"{source_branch}..{target_branch}"
+                    scan_results,
+                    diff_summary,
+                    f"{source_branch}..{target_branch}",
+                    working_directory,
                 )
                 # Auto-save JSON results to project root
                 self._save_scan_results_json(result, ".")
@@ -1553,9 +1577,14 @@ class AdversaryMCPServer:
         """
         from datetime import datetime
 
-        # Convert threats to dictionaries
+        # Convert threats to dictionaries with complete false positive metadata
         threats_data = []
         for threat in scan_result.all_threats:
+            # Get complete false positive information
+            false_positive_data = (
+                self.false_positive_manager.get_false_positive_details(threat.uuid, ".")
+            )
+
             threat_data = {
                 "uuid": threat.uuid,
                 "rule_id": threat.rule_id,
@@ -1576,7 +1605,8 @@ class AdversaryMCPServer:
                 "remediation": getattr(threat, "remediation", ""),
                 "references": getattr(threat, "references", []),
                 "exploit_examples": getattr(threat, "exploit_examples", []),
-                "is_false_positive": getattr(threat, "is_false_positive", False),
+                "is_false_positive": false_positive_data is not None,
+                "false_positive_metadata": false_positive_data,
             }
             threats_data.append(threat_data)
 
@@ -1686,6 +1716,13 @@ class AdversaryMCPServer:
             )
 
             for threat in scan_result.all_threats:
+                # Get complete false positive information
+                false_positive_data = (
+                    self.false_positive_manager.get_false_positive_details(
+                        threat.uuid, "."
+                    )
+                )
+
                 threat_data = {
                     "uuid": threat.uuid,
                     "rule_id": threat.rule_id,
@@ -1706,7 +1743,8 @@ class AdversaryMCPServer:
                     "remediation": getattr(threat, "remediation", ""),
                     "references": getattr(threat, "references", []),
                     "exploit_examples": getattr(threat, "exploit_examples", []),
-                    "is_false_positive": getattr(threat, "is_false_positive", False),
+                    "is_false_positive": false_positive_data is not None,
+                    "false_positive_metadata": false_positive_data,
                 }
                 all_threats.append(threat_data)
 
@@ -1912,6 +1950,7 @@ class AdversaryMCPServer:
         scan_results: dict[str, list[EnhancedScanResult]],
         diff_summary: dict[str, any],
         scan_target: str,
+        working_directory: str = ".",
     ) -> str:
         """Format git diff scan results as JSON.
 
@@ -1919,6 +1958,7 @@ class AdversaryMCPServer:
             scan_results: Dictionary mapping file paths to scan results
             diff_summary: Git diff summary information
             scan_target: Target branches for diff scan
+            working_directory: Working directory for false positive lookups
 
         Returns:
             JSON formatted diff scan results
@@ -1934,6 +1974,13 @@ class AdversaryMCPServer:
             for scan_result in file_scan_results:
                 file_threat_count += len(scan_result.all_threats)
                 for threat in scan_result.all_threats:
+                    # Get complete false positive information
+                    false_positive_data = (
+                        self.false_positive_manager.get_false_positive_details(
+                            threat.uuid, working_directory
+                        )
+                    )
+
                     threat_data = {
                         "uuid": threat.uuid,
                         "rule_id": threat.rule_id,
@@ -1954,9 +2001,8 @@ class AdversaryMCPServer:
                         "remediation": getattr(threat, "remediation", ""),
                         "references": getattr(threat, "references", []),
                         "exploit_examples": getattr(threat, "exploit_examples", []),
-                        "is_false_positive": getattr(
-                            threat, "is_false_positive", False
-                        ),
+                        "is_false_positive": false_positive_data is not None,
+                        "false_positive_metadata": false_positive_data,
                     }
                     all_threats.append(threat_data)
 
@@ -2116,11 +2162,14 @@ class AdversaryMCPServer:
         try:
             finding_uuid = arguments.get("finding_uuid")
             reason = arguments.get("reason", "Marked as false positive via MCP")
+            working_directory = arguments.get("working_directory", ".")
 
             if not finding_uuid:
                 raise AdversaryToolError("finding_uuid is required")
 
-            self.false_positive_manager.mark_false_positive(finding_uuid, reason)
+            success = self.false_positive_manager.mark_false_positive(
+                finding_uuid, reason, "user", working_directory
+            )
 
             result = "✅ **Finding marked as false positive**\n\n"
             result += f"**UUID:** {finding_uuid}\n"
@@ -2138,11 +2187,14 @@ class AdversaryMCPServer:
         """Handle unmark false positive request."""
         try:
             finding_uuid = arguments.get("finding_uuid")
+            working_directory = arguments.get("working_directory", ".")
 
             if not finding_uuid:
                 raise AdversaryToolError("finding_uuid is required")
 
-            success = self.false_positive_manager.unmark_false_positive(finding_uuid)
+            success = self.false_positive_manager.unmark_false_positive(
+                finding_uuid, working_directory
+            )
 
             if success:
                 result = "✅ **Finding unmarked as false positive**\n\n"
@@ -2162,7 +2214,10 @@ class AdversaryMCPServer:
     ) -> list[types.TextContent]:
         """Handle list false positives request."""
         try:
-            false_positives = self.false_positive_manager.get_false_positives()
+            working_directory = arguments.get("working_directory", ".")
+            false_positives = self.false_positive_manager.get_false_positives(
+                working_directory
+            )
 
             result = f"# False Positives ({len(false_positives)} found)\n\n"
 

@@ -387,7 +387,7 @@ class TestScanEngine:
             enable_llm_analysis=False,
         )
 
-        result = scanner.scan_code(
+        result = scanner.scan_code_sync(
             source_code="test code",
             file_path="test.py",
             language=Language.PYTHON,
@@ -453,7 +453,7 @@ class TestScanEngine:
             enable_llm_analysis=True,
         )
 
-        result = scanner.scan_code(
+        result = scanner.scan_code_sync(
             source_code="test code",
             file_path="test.py",
             language=Language.PYTHON,
@@ -493,7 +493,7 @@ class TestScanEngine:
             enable_llm_analysis=False,
         )
 
-        result = scanner.scan_code(
+        result = scanner.scan_code_sync(
             source_code="test code",
             file_path="test.py",
             language=Language.PYTHON,
@@ -531,7 +531,7 @@ class TestScanEngine:
             enable_llm_analysis=True,
         )
 
-        result = scanner.scan_code(
+        result = scanner.scan_code_sync(
             source_code="test code",
             file_path="test.py",
             language=Language.PYTHON,
@@ -566,7 +566,7 @@ class TestScanEngine:
             temp_file = Path(f.name)
 
         try:
-            result = scanner.scan_file(
+            result = scanner.scan_file_sync(
                 file_path=temp_file,
                 language=Language.PYTHON,
                 use_llm=False,
@@ -593,7 +593,7 @@ class TestScanEngine:
         )
 
         with pytest.raises(FileNotFoundError):
-            scanner.scan_file(
+            scanner.scan_file_sync(
                 file_path=Path("non_existent_file.py"),
                 language=Language.PYTHON,
                 use_llm=False,
@@ -625,7 +625,7 @@ class TestScanEngine:
             (temp_path / "test2.js").write_text("console.log('test2');")
             (temp_path / "test3.txt").write_text("not a code file")
 
-            results = scanner.scan_directory(
+            results = scanner.scan_directory_sync(
                 directory_path=temp_path,
                 recursive=False,
                 use_llm=False,
@@ -648,7 +648,7 @@ class TestScanEngine:
         )
 
         with pytest.raises(FileNotFoundError):
-            scanner.scan_directory(
+            scanner.scan_directory_sync(
                 directory_path=Path("non_existent_directory"),
                 use_llm=False,
             )
@@ -751,7 +751,7 @@ class TestScanEngine:
                 file_path.write_text(f"// Sample content for {filename}")
 
             # Scan directory
-            results = scanner.scan_directory(
+            results = scanner.scan_directory_sync(
                 directory_path=Path(temp_dir),
                 recursive=False,
                 use_llm=False,

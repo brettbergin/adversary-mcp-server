@@ -1,14 +1,14 @@
 """LLM-based security analyzer for detecting code vulnerabilities using AI."""
 
 import json
-import logging
 from dataclasses import dataclass
 from typing import Any
 
 from .credential_manager import CredentialManager
+from .logging_config import get_logger
 from .threat_engine import Category, Language, Severity, ThreatMatch
 
-logger = logging.getLogger(__name__)
+logger = get_logger("llm_scanner")
 
 
 class LLMAnalysisError(Exception):
@@ -252,7 +252,7 @@ class LLMScanner:
         Returns:
             System prompt string
         """
-        return """You are a senior security engineer performing static code analysis. 
+        return """You are a senior security engineer performing static code analysis.
 Your task is to analyze code for security vulnerabilities and provide detailed, actionable findings.
 
 Guidelines:

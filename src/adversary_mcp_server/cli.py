@@ -13,10 +13,11 @@ from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
 from . import get_version
-from .credential_manager import CredentialManager, SecurityConfig
+from .credential_manager import CredentialManager
 from .diff_scanner import GitDiffScanner
 from .exploit_generator import ExploitGenerator
 from .scan_engine import ScanEngine
+from .security_config import SecurityConfig
 from .threat_engine import Language, Severity, ThreatEngine, get_user_rules_directory
 
 # Conditional import for hot_reload to avoid dependency issues in tests
@@ -362,7 +363,7 @@ def scan(
             # Perform diff scan
             severity_enum = Severity(severity) if severity else None
 
-            scan_results = git_diff_scanner.scan_diff(
+            scan_results = git_diff_scanner.scan_diff_sync(
                 source_branch=source_branch,
                 target_branch=target_branch,
                 use_llm=use_llm,
@@ -455,7 +456,7 @@ def scan(
 
                 # Scan file using enhanced scanner
                 severity_enum = Severity(severity) if severity else None
-                scan_result = scan_engine.scan_file(
+                scan_result = scan_engine.scan_file_sync(
                     file_path=target_path,
                     language=Language(language),
                     use_llm=use_llm,
@@ -475,7 +476,7 @@ def scan(
 
                 # Scan directory using enhanced scanner
                 severity_enum = Severity(severity) if severity else None
-                scan_results = scan_engine.scan_directory(
+                scan_results = scan_engine.scan_directory_sync(
                     directory_path=target_path,
                     recursive=recursive,
                     use_llm=use_llm,
@@ -956,12 +957,12 @@ function calculate(expression) {
 
     # Scan Python code
     console.print("\n🔍 [bold]Scanning Python Code...[/bold]")
-    python_result = scan_engine.scan_code(python_code, "demo.py", Language.PYTHON)
+    python_result = scan_engine.scan_code_sync(python_code, "demo.py", Language.PYTHON)
     python_threats = python_result.all_threats
 
     # Scan JavaScript code
     console.print("\n🔍 [bold]Scanning JavaScript Code...[/bold]")
-    js_result = scan_engine.scan_code(js_code, "demo.js", Language.JAVASCRIPT)
+    js_result = scan_engine.scan_code_sync(js_code, "demo.js", Language.JAVASCRIPT)
     js_threats = js_result.all_threats
 
     # Display results

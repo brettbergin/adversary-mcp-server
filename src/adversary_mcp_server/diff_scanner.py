@@ -1,14 +1,14 @@
 """Git diff scanner for analyzing security vulnerabilities in code changes."""
 
-import logging
 import re
 import subprocess
 from pathlib import Path
 
+from .logging_config import get_logger
 from .scan_engine import EnhancedScanResult, ScanEngine
 from .threat_engine import Language, LanguageSupport, Severity
 
-logger = logging.getLogger(__name__)
+logger = get_logger("diff_scanner")
 
 
 class GitDiffError(Exception):
@@ -280,7 +280,7 @@ class GitDiffScanner:
         # Parse the diff output
         return self.parser.parse_diff(diff_output)
 
-    def scan_diff(
+    async def scan_diff(
         self,
         source_branch: str,
         target_branch: str,
@@ -348,7 +348,7 @@ class GitDiffScanner:
             full_added_code = "\n".join(all_added_code)
 
             try:
-                scan_result = self.scan_engine.scan_code(
+                scan_result = await self.scan_engine.scan_code(
                     source_code=full_added_code,
                     file_path=file_path,
                     language=language,
@@ -373,6 +373,31 @@ class GitDiffScanner:
                 continue
 
         return scan_results
+
+    def scan_diff_sync(
+        self,
+        source_branch: str,
+        target_branch: str,
+        working_dir: Path | None = None,
+        use_llm: bool = False,
+        use_semgrep: bool = True,
+        use_rules: bool = True,
+        severity_threshold: Severity | None = None,
+    ) -> dict[str, list[EnhancedScanResult]]:
+        """Synchronous wrapper for scan_diff for testing and CLI usage."""
+        import asyncio
+
+        return asyncio.run(
+            self.scan_diff(
+                source_branch=source_branch,
+                target_branch=target_branch,
+                working_dir=working_dir,
+                use_llm=use_llm,
+                use_semgrep=use_semgrep,
+                use_rules=use_rules,
+                severity_threshold=severity_threshold,
+            )
+        )
 
     def get_diff_summary(
         self, source_branch: str, target_branch: str, working_dir: Path | None = None

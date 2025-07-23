@@ -203,10 +203,9 @@ jobs:
       with:
         name: security-reports
         path: |
-          bandit-report.json
           semgrep-report.json
           safety-report.json
-        retention-days: 30
+        retention-days: 7
 
   build:
     name: Build Package

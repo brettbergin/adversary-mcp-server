@@ -1,6 +1,5 @@
 """Enhanced scanner that combines AST-based rules with LLM analysis for comprehensive security scanning."""
 
-import logging
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +7,7 @@ from .ast_scanner import ASTScanner
 from .credential_manager import CredentialManager
 from .false_positive_manager import FalsePositiveManager
 from .llm_scanner import LLMScanner
+from .logging_config import get_logger
 from .semgrep_scanner import SemgrepScanner
 from .threat_engine import (
     Language,
@@ -17,7 +17,7 @@ from .threat_engine import (
     ThreatMatch,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger("scan_engine")
 
 
 class EnhancedScanResult:
@@ -191,7 +191,9 @@ class ScanEngine:
         self.ast_scanner = ASTScanner(self.threat_engine)
 
         # Initialize Semgrep scanner
-        self.semgrep_scanner = SemgrepScanner(self.threat_engine)
+        self.semgrep_scanner = SemgrepScanner(
+            self.threat_engine, self.credential_manager
+        )
 
         # Check if Semgrep scanning is enabled in config
         config = self.credential_manager.load_config()
@@ -214,7 +216,80 @@ class ScanEngine:
                 )
                 self.enable_llm_analysis = False
 
-    def scan_code(
+    def scan_code_sync(
+        self,
+        source_code: str,
+        file_path: str,
+        language: Language,
+        use_llm: bool = True,
+        use_semgrep: bool = True,
+        use_rules: bool = True,
+        severity_threshold: Severity | None = None,
+    ) -> EnhancedScanResult:
+        """Synchronous wrapper for scan_code for CLI usage."""
+        import asyncio
+
+        return asyncio.run(
+            self.scan_code(
+                source_code=source_code,
+                file_path=file_path,
+                language=language,
+                use_llm=use_llm,
+                use_semgrep=use_semgrep,
+                use_rules=use_rules,
+                severity_threshold=severity_threshold,
+            )
+        )
+
+    def scan_directory_sync(
+        self,
+        directory_path: Path,
+        recursive: bool = True,
+        use_llm: bool = True,
+        use_semgrep: bool = True,
+        use_rules: bool = True,
+        severity_threshold: Severity | None = None,
+        max_files: int | None = None,
+    ) -> list[EnhancedScanResult]:
+        """Synchronous wrapper for scan_directory for CLI usage."""
+        import asyncio
+
+        return asyncio.run(
+            self.scan_directory(
+                directory_path=directory_path,
+                recursive=recursive,
+                use_llm=use_llm,
+                use_semgrep=use_semgrep,
+                use_rules=use_rules,
+                severity_threshold=severity_threshold,
+                max_files=max_files,
+            )
+        )
+
+    def scan_file_sync(
+        self,
+        file_path: Path,
+        language: Language | None = None,
+        use_llm: bool = True,
+        use_semgrep: bool = True,
+        use_rules: bool = True,
+        severity_threshold: Severity | None = None,
+    ) -> EnhancedScanResult:
+        """Synchronous wrapper for scan_file for CLI usage."""
+        import asyncio
+
+        return asyncio.run(
+            self.scan_file(
+                file_path=file_path,
+                language=language,
+                use_llm=use_llm,
+                use_semgrep=use_semgrep,
+                use_rules=use_rules,
+                severity_threshold=severity_threshold,
+            )
+        )
+
+    async def scan_code(
         self,
         source_code: str,
         file_path: str,
@@ -238,6 +313,7 @@ class ScanEngine:
         Returns:
             Enhanced scan result
         """
+        logger.info(f"=== SCAN_CODE START for {file_path} ===")
         scan_metadata = {
             "file_path": file_path,
             "language": language.value,
@@ -251,17 +327,24 @@ class ScanEngine:
         # Perform AST-based rules scanning if enabled
         rules_threats = []
         if use_rules:
-            try:
-                rules_threats = self.ast_scanner.scan_code(
-                    source_code, file_path, language
-                )
+            logger.info(f"Starting rules-based scanning for {file_path}")
+            # Skip AST scanning for generic files to avoid hangs
+            if language == Language.GENERIC:
+                logger.info(f"Skipping AST scanning for generic file: {file_path}")
                 scan_metadata["rules_scan_success"] = True
-                scan_metadata["rules_scan_reason"] = "analysis_completed"
-            except Exception as e:
-                logger.error(f"Rules-based scan failed for {file_path}: {e}")
-                scan_metadata["rules_scan_success"] = False
-                scan_metadata["rules_scan_error"] = str(e)
-                scan_metadata["rules_scan_reason"] = "scan_failed"
+                scan_metadata["rules_scan_reason"] = "skipped_generic_file"
+            else:
+                try:
+                    rules_threats = self.ast_scanner.scan_code(
+                        source_code, file_path, language
+                    )
+                    scan_metadata["rules_scan_success"] = True
+                    scan_metadata["rules_scan_reason"] = "analysis_completed"
+                except Exception as e:
+                    logger.error(f"Rules-based scan failed for {file_path}: {e}")
+                    scan_metadata["rules_scan_success"] = False
+                    scan_metadata["rules_scan_error"] = str(e)
+                    scan_metadata["rules_scan_reason"] = "scan_failed"
         else:
             scan_metadata["rules_scan_success"] = False
             scan_metadata["rules_scan_reason"] = "disabled"
@@ -293,7 +376,7 @@ class ScanEngine:
             else:
                 try:
                     config = self.credential_manager.load_config()
-                    semgrep_threats = self.semgrep_scanner.scan_code(
+                    semgrep_threats = await self.semgrep_scanner.scan_code(
                         source_code=source_code,
                         file_path=file_path,
                         language=language,
@@ -393,7 +476,7 @@ class ScanEngine:
             scan_metadata=scan_metadata,
         )
 
-    def scan_file(
+    async def scan_file(
         self,
         file_path: Path,
         language: Language | None = None,
@@ -419,10 +502,12 @@ class ScanEngine:
             raise FileNotFoundError(f"File not found: {file_path}")
 
         # Read file content
+        logger.info(f" SCAN_FILE:Reading file content: {file_path}")
         try:
             with open(file_path, encoding="utf-8") as f:
                 source_code = f.read()
         except UnicodeDecodeError:
+            logger.warning(f"Skipping binary file: {file_path}")
             # Skip binary files
             return EnhancedScanResult(
                 file_path=str(file_path),
@@ -439,11 +524,16 @@ class ScanEngine:
                 },
             )
 
+        logger.info(f"File read successfully, {len(source_code)} characters")
+
         # Detect language if not provided
         if language is None:
+            logger.info(f"Detecting language for: {file_path}")
             language = self._detect_language(file_path)
+            logger.info(f"Detected language: {language}")
 
-        return self.scan_code(
+        logger.info(f"Calling scan_code for {file_path} with language {language}")
+        return await self.scan_code(
             source_code=source_code,
             file_path=str(file_path),
             language=language,
@@ -453,7 +543,7 @@ class ScanEngine:
             severity_threshold=severity_threshold,
         )
 
-    def scan_directory(
+    async def scan_directory(
         self,
         directory_path: Path,
         recursive: bool = True,
@@ -463,7 +553,7 @@ class ScanEngine:
         severity_threshold: Severity | None = None,
         max_files: int | None = None,
     ) -> list[EnhancedScanResult]:
-        """Scan a directory using enhanced scanning with optimized Semgrep.
+        """Scan a directory using enhanced scanning with optimized semgrep usage.
 
         Args:
             directory_path: Path to the directory to scan
@@ -480,158 +570,182 @@ class ScanEngine:
         if not directory_path.exists():
             raise FileNotFoundError(f"Directory not found: {directory_path}")
 
+        logger.info(f"SCAN_FOLDER: Scanning directory: {directory_path}")
+
         # Get supported file extensions from centralized language support
         supported_extensions = LanguageSupport.get_extension_to_language_map()
 
+        # Find all files to scan
         files_to_scan = []
         pattern = "**/*" if recursive else "*"
 
         for file_path in directory_path.glob(pattern):
             if file_path.is_file() and file_path.suffix in supported_extensions:
-                files_to_scan.append(
-                    (file_path, supported_extensions[file_path.suffix])
-                )
+                files_to_scan.append(file_path)
 
                 if max_files and len(files_to_scan) >= max_files:
                     break
 
-        # Run Semgrep ONCE for entire directory (if enabled)
-        semgrep_threats = []
+        logger.info(f"Found {len(files_to_scan)} files to scan")
 
-        # Get detailed Semgrep status including installation information
-        semgrep_status = self.semgrep_scanner.get_status()
-        semgrep_metadata: dict[str, Any] = {
-            "semgrep_scan_success": False,
-            "semgrep_status": semgrep_status,
-        }
+        # Run Semgrep once for the entire directory if enabled
+        directory_semgrep_threats = {}  # Map file_path -> list[ThreatMatch]
+        semgrep_scan_metadata = {}
 
         if use_semgrep and self.enable_semgrep_analysis:
-            if not semgrep_status["available"]:
-                # Semgrep not available - provide detailed status
-                semgrep_metadata.update(
-                    {
-                        "semgrep_scan_success": False,
-                        "semgrep_scan_error": semgrep_status["error"],
-                        "semgrep_scan_reason": "semgrep_not_available",
-                        "semgrep_installation_status": semgrep_status[
-                            "installation_status"
-                        ],
-                        "semgrep_installation_guidance": semgrep_status[
-                            "installation_guidance"
-                        ],
-                    }
-                )
-                logger.warning(
-                    f"Semgrep not available for directory scan: {semgrep_status['error']}"
-                )
-            else:
+            semgrep_status = self.semgrep_scanner.get_status()
+            if semgrep_status["available"]:
                 try:
+                    logger.info("Running single Semgrep scan for entire directory")
                     config = self.credential_manager.load_config()
-                    semgrep_threats = self.semgrep_scanner.scan_directory(
+
+                    # Use semgrep's directory scanning capability
+                    all_semgrep_threats = await self.semgrep_scanner.scan_directory(
                         directory_path=str(directory_path),
                         config=config.semgrep_config,
                         rules=config.semgrep_rules,
-                        timeout=config.semgrep_timeout
-                        * 2,  # Double timeout for directories
+                        timeout=config.semgrep_timeout,
                         recursive=recursive,
                         severity_threshold=severity_threshold,
                     )
-                    semgrep_metadata.update(
-                        {
-                            "semgrep_scan_success": True,
-                            "semgrep_threats_found": len(semgrep_threats),
-                            "semgrep_scan_reason": "directory_scan_completed",
-                            "semgrep_version": semgrep_status["version"],
-                            "semgrep_has_pro_features": semgrep_status[
-                                "has_pro_features"
-                            ],
-                        }
-                    )
+
+                    # Group threats by file path
+                    for threat in all_semgrep_threats:
+                        file_path = threat.file_path
+                        if file_path not in directory_semgrep_threats:
+                            directory_semgrep_threats[file_path] = []
+                        directory_semgrep_threats[file_path].append(threat)
+
                     logger.info(
-                        f"Semgrep directory scan completed: {len(semgrep_threats)} threats found"
+                        f"Semgrep found {len(all_semgrep_threats)} threats across {len(directory_semgrep_threats)} files"
                     )
+
+                    semgrep_scan_metadata = {
+                        "semgrep_scan_success": True,
+                        "semgrep_scan_reason": "directory_analysis_completed",
+                        "semgrep_version": semgrep_status["version"],
+                        "semgrep_has_pro_features": semgrep_status["has_pro_features"],
+                        "semgrep_total_threats": len(all_semgrep_threats),
+                        "semgrep_files_with_threats": len(directory_semgrep_threats),
+                    }
+
                 except Exception as e:
-                    logger.error(f"Semgrep directory scan failed: {e}")
-                    semgrep_metadata.update(
-                        {
-                            "semgrep_scan_success": False,
-                            "semgrep_scan_error": str(e),
-                            "semgrep_scan_reason": "directory_scan_failed",
-                            "semgrep_version": semgrep_status["version"],
-                        }
-                    )
-        else:
-            # Semgrep scanning disabled by user
-            semgrep_metadata.update(
-                {
+                    logger.error(f"Directory Semgrep scan failed: {e}")
+                    semgrep_scan_metadata = {
+                        "semgrep_scan_success": False,
+                        "semgrep_scan_error": str(e),
+                        "semgrep_scan_reason": "directory_scan_failed",
+                        "semgrep_version": semgrep_status["version"],
+                    }
+            else:
+                logger.warning(
+                    f"Semgrep not available for directory scan: {semgrep_status['error']}"
+                )
+                semgrep_scan_metadata = {
                     "semgrep_scan_success": False,
-                    "semgrep_scan_reason": "semgrep_disabled_by_user",
+                    "semgrep_scan_error": semgrep_status["error"],
+                    "semgrep_scan_reason": "semgrep_not_available",
+                    "semgrep_installation_status": semgrep_status[
+                        "installation_status"
+                    ],
+                    "semgrep_installation_guidance": semgrep_status[
+                        "installation_guidance"
+                    ],
                 }
-            )
+        else:
+            semgrep_scan_metadata = {
+                "semgrep_scan_success": False,
+                "semgrep_scan_reason": (
+                    "disabled" if not use_semgrep else "not_available"
+                ),
+            }
 
-        # Create a lookup for Semgrep threats by file path
-        semgrep_by_file = {}
-        for threat in semgrep_threats:
-            file_path = threat.file_path
-            if file_path not in semgrep_by_file:
-                semgrep_by_file[file_path] = []
-            semgrep_by_file[file_path].append(threat)
-
-        # Scan files with rules engine and LLM (but skip individual Semgrep calls)
+        # Now scan each file individually for rules and LLM analysis only
         results = []
-        for file_path, language in files_to_scan:
+        for i, file_path in enumerate(files_to_scan):
             try:
-                # Scan with rules and LLM only (skip Semgrep since we already did it)
-                result = self.scan_file(
-                    file_path=file_path,
-                    language=language,
-                    use_llm=use_llm,
-                    use_semgrep=False,  # Skip individual Semgrep calls
-                    use_rules=use_rules,
-                    severity_threshold=severity_threshold,
-                )
+                logger.info(f"Scanning file {i+1}/{len(files_to_scan)}: {file_path}")
 
-                # Add Semgrep threats for this file
-                file_path_str = str(file_path)
-                file_semgrep_threats = semgrep_by_file.get(file_path_str, [])
-
-                # Create enhanced result with Semgrep threats added
-                enhanced_result = EnhancedScanResult(
-                    file_path=result.file_path,
-                    language=result.language,
-                    rules_threats=result.rules_threats,
-                    llm_threats=result.llm_threats,
-                    semgrep_threats=file_semgrep_threats,
-                    scan_metadata={
-                        **result.scan_metadata,
-                        **semgrep_metadata,
-                        "directory_scan": True,
-                        "file_semgrep_threats": len(file_semgrep_threats),
-                    },
-                )
-
-                results.append(enhanced_result)
-
-            except Exception as e:
-                logger.error(f"Failed to scan {file_path}: {e}")
-                # Create error result
-                results.append(
-                    EnhancedScanResult(
+                # Read file content
+                try:
+                    with open(file_path, encoding="utf-8") as f:
+                        source_code = f.read()
+                except UnicodeDecodeError:
+                    logger.warning(f"Skipping binary file: {file_path}")
+                    # Create error result for binary file
+                    error_result = EnhancedScanResult(
                         file_path=str(file_path),
-                        language=language,
+                        language=Language.GENERIC,
                         rules_threats=[],
                         llm_threats=[],
                         semgrep_threats=[],
                         scan_metadata={
                             "file_path": str(file_path),
-                            "error": str(e),
+                            "error": "Binary file or encoding error",
+                            "directory_scan": True,
                             "rules_scan_success": False,
                             "llm_scan_success": False,
-                            **semgrep_metadata,
+                            **semgrep_scan_metadata,
                         },
                     )
+                    results.append(error_result)
+                    continue
+
+                # Detect language
+                language = self._detect_language(file_path)
+
+                # Get semgrep threats for this file from directory scan
+                file_semgrep_threats = directory_semgrep_threats.get(str(file_path), [])
+
+                # Run rules and LLM analysis only (skip semgrep since we did it at directory level)
+                result = await self.scan_code(
+                    source_code=source_code,
+                    file_path=str(file_path),
+                    language=language,
+                    use_llm=use_llm,
+                    use_semgrep=False,  # Skip semgrep - we already have results
+                    use_rules=use_rules,
+                    severity_threshold=severity_threshold,
                 )
 
+                # Replace the empty semgrep results with directory scan results
+                result.semgrep_threats = file_semgrep_threats
+
+                # Update scan metadata to reflect directory semgrep scan
+                result.scan_metadata.update(semgrep_scan_metadata)
+                result.scan_metadata["directory_scan"] = True
+                result.scan_metadata["semgrep_source"] = "directory_scan"
+
+                # Recalculate combined threats and stats with actual semgrep data
+                result.all_threats = result._combine_threats()
+                result.stats = result._calculate_stats()
+
+                results.append(result)
+                logger.info(
+                    f"Completed scanning file {i+1}/{len(files_to_scan)}: {file_path}"
+                )
+
+            except Exception as e:
+                logger.error(f"Failed to scan {file_path}: {e}")
+                # Create error result with consistent structure
+                error_result = EnhancedScanResult(
+                    file_path=str(file_path),
+                    language=Language.GENERIC,  # Default for failed detection
+                    rules_threats=[],
+                    llm_threats=[],
+                    semgrep_threats=[],
+                    scan_metadata={
+                        "file_path": str(file_path),
+                        "error": str(e),
+                        "directory_scan": True,
+                        "rules_scan_success": False,
+                        "llm_scan_success": False,
+                        **semgrep_scan_metadata,
+                    },
+                )
+                results.append(error_result)
+
+        logger.info(f"Directory scan completed. Processed {len(results)} files")
         return results
 
     def _detect_language(self, file_path: Path) -> Language:
