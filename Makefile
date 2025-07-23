@@ -117,7 +117,7 @@ ci-lint: ## Run linting in CI environment
 ci-security: ## Run security scans in CI environment
 	python -m semgrep --config=auto src/ --json --output=semgrep-report.json
 
-upload: build ## Upload package to PyPI
+deploy: build ## Upload package to PyPI
 	uv run twine upload dist/*
 
 demo: ## Run a demo of the adversary MCP server
