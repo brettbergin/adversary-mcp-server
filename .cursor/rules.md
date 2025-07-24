@@ -48,6 +48,28 @@
 
 ## Development Workflow
 
+### Daily Development Commands
+```bash
+# Initial setup (one time)
+make dev-setup-uv
+
+# Before starting work
+make sync                    # Sync dependencies
+
+# During development  
+make test-fast              # Quick test feedback
+make format                 # Format code
+make ruff-fix              # Auto-fix linting issues
+
+# Before committing
+make check-all             # Run all checks
+make pre-commit            # Run pre-commit hooks
+
+# Build and deploy
+make build                 # Build package
+make demo                  # Test demo functionality
+```
+
 ### Git Practices
 - **Branch Naming**: Use descriptive branch names (feature/, fix/, security/)
 - **Commit Messages**: Write clear, concise commit messages
@@ -145,4 +167,20 @@
 - ❌ Blocking operations in async functions
 - ❌ Poor error propagation to client
 - ❌ Inconsistent tool interfaces
-- ❌ Resource leaks in long-running operations 
+- ❌ Resource leaks in long-running operations
+
+## Build and Deployment
+
+### Package Management
+- **Dependencies**: Use `make sync` to ensure consistent dependency versions
+- **Lock Files**: Update lock files with `make lock` when adding dependencies
+- **Clean Builds**: Use `make clean` before building releases
+
+### Quality Assurance
+- **Pre-deployment**: Always run `make check-all` before releases
+- **CI/CD Integration**: Use CI-specific targets (`make ci-test`, `make ci-lint`, `make ci-security`)
+- **Distribution**: Build packages with `make build` and deploy with `make deploy`
+
+### Documentation
+- **Help**: Use `make help` to see all available targets
+- **Examples**: Test examples with `make scan-example` and `make demo` 

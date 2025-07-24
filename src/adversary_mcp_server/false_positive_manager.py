@@ -33,7 +33,7 @@ class FalsePositiveManager:
         self.config_dir = Path.home() / ".local" / "share" / "adversary-mcp-server"
         self.config_dir.mkdir(parents=True, exist_ok=True)
         self.false_positives_file = self.config_dir / "false_positives.json"
-        
+
         # Performance optimization: Cache for false positive lookups
         self._fp_cache: dict[str, dict[str, Any] | None] = {}
         self._cache_working_dir: str | None = None
@@ -42,24 +42,26 @@ class FalsePositiveManager:
     def _invalidate_cache_if_needed(self, working_directory: str | None = None) -> None:
         """Invalidate cache if working directory changed or files were modified."""
         current_wd = working_directory or str(self.working_directory)
-        
+
         # Check if working directory changed
         if self._cache_working_dir != current_wd:
-            logger.debug(f"Cache invalidated: working directory changed from {self._cache_working_dir} to {current_wd}")
+            logger.debug(
+                f"Cache invalidated: working directory changed from {self._cache_working_dir} to {current_wd}"
+            )
             self._fp_cache.clear()
             self._cache_working_dir = current_wd
             self._cache_file_mtimes.clear()
             return
-            
+
         # Check if any .adversary.json files were modified
         adversary_files = self._find_adversary_json_files(working_directory)
         cache_invalid = False
-        
+
         for file_path in adversary_files:
             try:
                 current_mtime = file_path.stat().st_mtime
                 cached_mtime = self._cache_file_mtimes.get(file_path, 0)
-                
+
                 if current_mtime != cached_mtime:
                     logger.debug(f"Cache invalidated: {file_path} was modified")
                     cache_invalid = True
@@ -70,14 +72,14 @@ class FalsePositiveManager:
                     logger.debug(f"Cache invalidated: {file_path} was deleted")
                     cache_invalid = True
                     break
-        
+
         # Check for deleted files
         for cached_file in list(self._cache_file_mtimes.keys()):
             if cached_file not in adversary_files:
                 logger.debug(f"Cache invalidated: {cached_file} no longer exists")
                 cache_invalid = True
                 break
-                
+
         if cache_invalid:
             self._fp_cache.clear()
             self._cache_file_mtimes.clear()
@@ -86,18 +88,18 @@ class FalsePositiveManager:
         """Build cache of all false positive UUIDs and their metadata."""
         if self._fp_cache:
             return  # Cache already built and valid
-            
+
         logger.debug("Building false positive cache...")
         start_time = datetime.now()
-        
+
         # Load from .adversary.json files
         adversary_files = self._find_adversary_json_files(working_directory)
-        
+
         for file_path in adversary_files:
             try:
                 # Track file modification time for cache invalidation
                 self._cache_file_mtimes[file_path] = file_path.stat().st_mtime
-                
+
                 data = self._load_adversary_json(file_path)
                 if not data or "threats" not in data:
                     continue
@@ -106,7 +108,7 @@ class FalsePositiveManager:
                     threat_uuid = threat.get("uuid")
                     if threat_uuid and threat.get("false_positive_metadata"):
                         self._fp_cache[threat_uuid] = threat["false_positive_metadata"]
-                        
+
             except Exception as e:
                 logger.warning(f"Failed to process {file_path} for cache: {e}")
                 continue
@@ -116,7 +118,9 @@ class FalsePositiveManager:
             legacy_data = self._load_false_positives()
             for fp in legacy_data.get("false_positives", []):
                 uuid = fp.get("uuid")
-                if uuid and uuid not in self._fp_cache:  # Don't override new system data
+                if (
+                    uuid and uuid not in self._fp_cache
+                ):  # Don't override new system data
                     self._fp_cache[uuid] = {
                         "uuid": fp["uuid"],
                         "reason": fp.get("reason", ""),
@@ -127,9 +131,11 @@ class FalsePositiveManager:
                     }
         except Exception as e:
             logger.warning(f"Failed to load legacy false positives for cache: {e}")
-        
+
         build_time = (datetime.now() - start_time).total_seconds()
-        logger.info(f"False positive cache built: {len(self._fp_cache)} entries in {build_time:.3f}s")
+        logger.info(
+            f"False positive cache built: {len(self._fp_cache)} entries in {build_time:.3f}s"
+        )
 
     def _find_adversary_json_files(
         self, working_directory: str | None = None
@@ -229,7 +235,7 @@ class FalsePositiveManager:
         # Use cached lookup for performance
         self._invalidate_cache_if_needed(working_directory)
         self._build_false_positive_cache(working_directory)
-        
+
         return self._fp_cache.get(finding_uuid)
 
     def mark_false_positive(
@@ -517,7 +523,7 @@ class FalsePositiveManager:
             self._save_false_positives(data)
         except RuntimeError:
             pass  # Log but don't fail
-            
+
         # Invalidate cache since we cleared all data
         self._fp_cache.clear()
         self._cache_file_mtimes.clear()
@@ -554,7 +560,7 @@ class FalsePositiveManager:
             self._save_false_positives(existing_data)
         else:
             self._save_false_positives(imported_data)
-            
+
         # Invalidate cache since we imported new data
         self._fp_cache.clear()
         self._cache_file_mtimes.clear()
