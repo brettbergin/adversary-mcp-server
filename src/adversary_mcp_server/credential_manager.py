@@ -6,9 +6,8 @@ import os
 import socket
 import stat
 from base64 import b64decode, b64encode
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from pathlib import Path
-from typing import Any
 
 import keyring
 from cryptography.fernet import Fernet, InvalidToken
@@ -16,78 +15,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from keyring.errors import KeyringError
 
-
-@dataclass
-class SecurityConfig:
-    """Security configuration for the adversary MCP server."""
-
-    # LLM Configuration (now client-based)
-    enable_llm_analysis: bool = (
-        False  # Enable LLM-based security analysis (uses client LLM)
-    )
-
-    # Scanner Configuration
-    enable_ast_scanning: bool = True
-    enable_semgrep_scanning: bool = True
-    enable_bandit_scanning: bool = True
-
-    # Semgrep Configuration
-    semgrep_config: str | None = None  # Path to custom semgrep config
-    semgrep_rules: str | None = None  # Specific rules to use
-    semgrep_timeout: int = 60  # Timeout for semgrep scans in seconds
-
-    # Exploit Generation
-    enable_exploit_generation: bool = True
-    exploit_safety_mode: bool = True  # Limit exploit generation to safe examples
-
-    # Analysis Configuration
-    max_file_size_mb: int = 10
-    max_scan_depth: int = 5
-    timeout_seconds: int = 300
-
-    # Rule Configuration
-    custom_rules_path: str | None = None
-    severity_threshold: str = "medium"  # low, medium, high, critical
-
-    # Reporting Configuration
-    include_exploit_examples: bool = True
-    include_remediation_advice: bool = True
-    verbose_output: bool = False
-
-    def validate_llm_configuration(self) -> tuple[bool, str]:
-        """Validate LLM configuration.
-
-        Returns:
-            Tuple of (is_valid, error_message)
-        """
-        # LLM analysis now uses client-side LLM, so always valid
-        return True, ""
-
-    def is_llm_analysis_available(self) -> bool:
-        """Check if LLM analysis is available and properly configured.
-
-        Returns:
-            True if LLM analysis can be used (always true now since we use client LLM)
-        """
-        # LLM analysis now uses client-side LLM, so always available
-        return True
-
-    def get_configuration_summary(self) -> dict[str, Any]:
-        """Get a summary of the current configuration.
-
-        Returns:
-            Dictionary with configuration summary
-        """
-        return {
-            "llm_analysis_enabled": self.enable_llm_analysis,
-            "llm_analysis_available": self.is_llm_analysis_available(),
-            "llm_mode": "client_based",
-            "semgrep_scanning_enabled": self.enable_semgrep_scanning,
-            "ast_scanning_enabled": self.enable_ast_scanning,
-            "exploit_generation_enabled": self.enable_exploit_generation,
-            "exploit_safety_mode": self.exploit_safety_mode,
-            "severity_threshold": self.severity_threshold,
-        }
+from .security_config import SecurityConfig
 
 
 class CredentialError(Exception):
@@ -129,6 +57,10 @@ class CredentialManager:
         self.config_dir = config_dir
         self.config_file = config_dir / "config.json"
         self.keyring_service = "adversary-mcp-server"
+
+        # In-memory cache to reduce keychain access
+        self._config_cache: SecurityConfig | None = None
+        self._cache_loaded = False
 
         # Ensure config directory exists with proper permissions
         self._ensure_config_dir()
@@ -356,10 +288,16 @@ class CredentialManager:
         """
         # Try keyring first
         if self._try_keyring_storage(config):
+            # Update cache on successful storage
+            self._config_cache = config
+            self._cache_loaded = True
             return
 
         # Fall back to encrypted file
         self._store_file_config(config)
+        # Update cache on successful storage
+        self._config_cache = config
+        self._cache_loaded = True
 
     def load_config(self) -> SecurityConfig:
         """Load security configuration.
@@ -370,18 +308,31 @@ class CredentialManager:
         Raises:
             CredentialNotFoundError: If no configuration is found
         """
+        # Return cached config if available
+        if self._cache_loaded and self._config_cache is not None:
+            return self._config_cache
+
         # Try keyring first
         config = self._try_keyring_retrieval()
         if config is not None:
+            # Cache the loaded config
+            self._config_cache = config
+            self._cache_loaded = True
             return config
 
         # Try encrypted file
         config = self._load_file_config()
         if config is not None:
+            # Cache the loaded config
+            self._config_cache = config
+            self._cache_loaded = True
             return config
 
-        # Return default configuration if none found
-        return SecurityConfig()
+        # Return default configuration if none found and cache it
+        default_config = SecurityConfig()
+        self._config_cache = default_config
+        self._cache_loaded = True
+        return default_config
 
     def delete_config(self) -> None:
         """Delete stored configuration."""
@@ -391,12 +342,57 @@ class CredentialManager:
         # Try to delete file
         self._delete_file_config()
 
+        # Clear cache
+        self._config_cache = None
+        self._cache_loaded = False
+
+    def store_semgrep_api_key(self, api_key: str) -> None:
+        """Store Semgrep API key securely.
+
+        Args:
+            api_key: Semgrep API key to store
+
+        Raises:
+            CredentialStorageError: If storage fails
+        """
+        try:
+            keyring.set_password(self.keyring_service, "semgrep_api_key", api_key)
+        except KeyringError as e:
+            raise CredentialStorageError(f"Failed to store Semgrep API key: {e}")
+
+    def get_semgrep_api_key(self) -> str | None:
+        """Get stored Semgrep API key.
+
+        Returns:
+            API key if found, None otherwise
+        """
+        try:
+            return keyring.get_password(self.keyring_service, "semgrep_api_key")
+        except KeyringError:
+            return None
+
+    def delete_semgrep_api_key(self) -> bool:
+        """Delete stored Semgrep API key.
+
+        Returns:
+            True if deletion succeeded, False otherwise
+        """
+        try:
+            keyring.delete_password(self.keyring_service, "semgrep_api_key")
+            return True
+        except KeyringError:
+            return False
+
     def has_config(self) -> bool:
         """Check if configuration exists and can be loaded.
 
         Returns:
             True if configuration exists and is valid, False otherwise
         """
+        # If we have a cached config, return True
+        if self._cache_loaded and self._config_cache is not None:
+            return True
+
         # Check keyring
         if self._try_keyring_retrieval() is not None:
             return True

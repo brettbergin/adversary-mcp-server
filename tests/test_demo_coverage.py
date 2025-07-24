@@ -68,7 +68,7 @@ class TestDemoCommand:
         js_result = Mock()
         js_result.all_threats = [js_threat]
 
-        mock_scanner_instance.scan_code.side_effect = [
+        mock_scanner_instance.scan_code_sync.side_effect = [
             python_result,  # Python demo
             js_result,  # JavaScript demo
         ]
@@ -82,8 +82,8 @@ class TestDemoCommand:
         assert result.exit_code == 0
         mock_console.print.assert_called()
 
-        # Verify that scan_code was called for both languages
-        assert mock_scanner_instance.scan_code.call_count == 2
+        # Verify that scan_code_sync was called for both languages
+        assert mock_scanner_instance.scan_code_sync.call_count == 2
 
     @patch("adversary_mcp_server.cli.CredentialManager")
     @patch("adversary_mcp_server.cli.ThreatEngine")
@@ -101,7 +101,7 @@ class TestDemoCommand:
         mock_threat_engine.return_value = mock_engine
 
         mock_scanner_instance = Mock()
-        mock_scanner_instance.scan_code.side_effect = Exception("Scanner error")
+        mock_scanner_instance.scan_code_sync.side_effect = Exception("Scanner error")
         mock_scanner.return_value = mock_scanner_instance
 
         result = self.runner.invoke(cli, ["demo"])
@@ -136,7 +136,7 @@ class TestDemoCommand:
         # Return empty threats
         empty_result = Mock()
         empty_result.all_threats = []
-        mock_scanner_instance.scan_code.return_value = empty_result
+        mock_scanner_instance.scan_code_sync.return_value = empty_result
 
         mock_exploit_generator = Mock()
         mock_exploit_gen.return_value = mock_exploit_generator
@@ -182,7 +182,7 @@ class TestDemoCommand:
         # Create mock EnhancedScanResult
         threat_result = Mock()
         threat_result.all_threats = [threat]
-        mock_scanner_instance.scan_code.return_value = threat_result
+        mock_scanner_instance.scan_code_sync.return_value = threat_result
 
         mock_exploit_generator = Mock()
         mock_exploit_generator.generate_exploits.side_effect = Exception(

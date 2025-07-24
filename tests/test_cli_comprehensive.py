@@ -394,7 +394,7 @@ class TestCLIScanCommand:
                 line_number=1,
             )
         ]
-        mock_scan_engine_instance.scan_file.return_value = mock_scan_result
+        mock_scan_engine_instance.scan_file_sync.return_value = mock_scan_result
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write("print('hello')")
@@ -406,7 +406,7 @@ class TestCLIScanCommand:
             )
 
             assert result.exit_code == 0
-            mock_scan_engine_instance.scan_file.assert_called_once()
+            mock_scan_engine_instance.scan_file_sync.assert_called_once()
 
         finally:
             os.unlink(test_file)
@@ -432,7 +432,7 @@ class TestCLIScanCommand:
 
         mock_scan_engine_instance = Mock()
         mock_scanner.return_value = mock_scan_engine_instance
-        mock_scan_engine_instance.scan_directory.return_value = []
+        mock_scan_engine_instance.scan_directory_sync.return_value = []
 
         with tempfile.TemporaryDirectory() as temp_dir:
             # Create a test file in the directory
@@ -445,8 +445,8 @@ class TestCLIScanCommand:
             )
 
             assert result.exit_code == 0
-            # CLI calls scan_directory for directory scanning
-            mock_scan_engine_instance.scan_directory.assert_called_once()
+            # CLI calls scan_directory_sync for directory scanning
+            mock_scan_engine_instance.scan_directory_sync.assert_called_once()
 
     @patch("adversary_mcp_server.cli.CredentialManager")
     @patch("adversary_mcp_server.cli.ThreatEngine")
@@ -485,7 +485,7 @@ class TestCLIScanCommand:
                 line_number=1,
             )
         ]
-        mock_scan_engine_instance.scan_file.return_value = mock_scan_result
+        mock_scan_engine_instance.scan_file_sync.return_value = mock_scan_result
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write("print('hello')")
@@ -542,7 +542,7 @@ class TestCLIScanCommand:
                 line_number=1,
             )
         ]
-        mock_scan_engine_instance.scan_file.return_value = mock_scan_result
+        mock_scan_engine_instance.scan_file_sync.return_value = mock_scan_result
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write("print('hello')")

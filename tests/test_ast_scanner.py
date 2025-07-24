@@ -373,23 +373,23 @@ import subprocess
 class VulnerableApp:
     def __init__(self):
         self.db = sqlite3.connect('app.db')
-    
+
     def authenticate(self, username, password):
         # SQL Injection vulnerability
         query = f"SELECT * FROM users WHERE username='{username}' AND password='{password}'"
         cursor = self.db.cursor()
         cursor.execute(query)
         return cursor.fetchone()
-    
+
     def execute_system_command(self, command):
         # Command injection vulnerability
         os.system(f"ls {command}")
         subprocess.call(f"echo {command}", shell=True)
-    
+
     def load_user_data(self, data):
         # Unsafe deserialization
         return pickle.loads(data)
-    
+
     def get_file_content(self, filename):
         # Path traversal vulnerability
         with open(f"/var/www/{filename}", "r") as f:

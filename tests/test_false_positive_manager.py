@@ -224,11 +224,29 @@ class TestFalsePositiveManager:
 
         existing_data = {"false_positives": false_positives, "version": "1.0"}
 
+        # Expected result includes 'source' field for legacy data
+        expected_result = [
+            {
+                "uuid": "uuid1",
+                "reason": "Reason 1",
+                "marked_date": "2024-01-01T00:00:00",
+                "last_updated": "2024-01-01T00:00:00",
+                "source": "legacy",
+            },
+            {
+                "uuid": "uuid2",
+                "reason": "Reason 2",
+                "marked_date": "2024-01-02T00:00:00",
+                "last_updated": "2024-01-02T00:00:00",
+                "source": "legacy",
+            },
+        ]
+
         with patch.object(
             fp_manager, "_load_false_positives", return_value=existing_data
         ):
             result = fp_manager.get_false_positives()
-            assert result == false_positives
+            assert result == expected_result
 
     def test_get_false_positive_uuids(self, fp_manager):
         """Test getting set of false positive UUIDs."""

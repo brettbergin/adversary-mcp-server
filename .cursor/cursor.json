@@ -1,0 +1,210 @@
+{
+  "version": "1.0",
+  "projectName": "Adversary MCP Server",
+  "projectDescription": "MCP server for adversarial security analysis and vulnerability detection with AI-powered threat detection",
+  "projectType": "python-mcp-server",
+  "language": "python",
+  "framework": "mcp",
+
+  "workspace": {
+    "rootPath": ".",
+    "sourceDirectories": ["src/adversary_mcp_server"],
+    "testDirectories": ["tests"],
+    "configDirectories": ["rules", "scripts"],
+    "documentationDirectories": ["."],
+    "testTargetDirectories": ["examples"]
+  },
+
+  "environment": {
+    "virtualEnv": ".venv",
+    "activationScript": ".venv/bin/activate",
+    "pythonPath": ".venv/bin/python",
+    "packageManager": "uv"
+  },
+
+  "codeStyle": {
+    "indentSize": 4,
+    "indentType": "spaces",
+    "lineLength": 88,
+    "formatter": "black",
+    "linter": "ruff",
+    "typeChecker": "mypy",
+    "enforceDocstrings": true,
+    "enforceTypeHints": true
+  },
+
+  "patterns": {
+    "ignorePatterns": [
+      "*.pyc",
+      "__pycache__",
+      ".venv",
+      ".pytest_cache",
+      ".mypy_cache",
+      ".ruff_cache",
+      "htmlcov",
+      "coverage.json",
+      "uv.lock",
+      "uv-dev.lock",
+      ".adversary.json",
+      "semgrep-report.json"
+    ],
+    "testPatterns": ["test_*.py", "*_test.py"],
+    "configPatterns": ["*.yaml", "*.yml", "*.toml", "*.json"],
+    "vulnerableCodePatterns": ["examples/*.py", "examples/*.js"]
+  },
+
+  "dependencies": {
+    "runtime": ["click", "pydantic", "mcp", "rich", "openai", "semgrep"],
+    "development": ["pytest", "pytest-cov", "black", "ruff", "mypy", "isort"],
+    "security": ["bandit", "semgrep", "cryptography"]
+  },
+
+  "features": {
+    "securityAnalysis": true,
+    "threatDetection": true,
+    "vulnerabilityScanning": true,
+    "aiPoweredAnalysis": true,
+    "ruleManagement": true,
+    "mcpIntegration": true,
+    "vulnerableCodeTesting": true
+  },
+
+  "commands": {
+    "setup": {
+      "description": "Set up development environment",
+      "command": "make dev-setup-uv",
+      "category": "setup"
+    },
+    "install": {
+      "description": "Install dependencies using uv",
+      "command": "make install-uv",
+      "category": "setup"
+    },
+    "sync": {
+      "description": "Sync dependencies",
+      "command": "make sync",
+      "category": "setup"
+    },
+    "test": {
+      "description": "Run all tests with coverage",
+      "command": "source .venv/bin/activate && make test",
+      "category": "testing"
+    },
+    "testFast": {
+      "description": "Run tests without coverage for quick feedback",
+      "command": "source .venv/bin/activate && make test-fast",
+      "category": "testing"
+    },
+    "testCoverage": {
+      "description": "Run tests with HTML coverage report",
+      "command": "source .venv/bin/activate && make test-html",
+      "category": "testing"
+    },
+    "testUnit": {
+      "description": "Run only unit tests",
+      "command": "source .venv/bin/activate && make test-unit",
+      "category": "testing"
+    },
+    "testIntegration": {
+      "description": "Run only integration tests",
+      "command": "source .venv/bin/activate && make test-integration",
+      "category": "testing"
+    },
+    "testSecurity": {
+      "description": "Run only security-related tests",
+      "command": "source .venv/bin/activate && make test-security",
+      "category": "testing"
+    },
+    "lint": {
+      "description": "Run all linting tools",
+      "command": "source .venv/bin/activate && make lint",
+      "category": "quality"
+    },
+    "format": {
+      "description": "Format code with black and isort",
+      "command": "source .venv/bin/activate && make format",
+      "category": "quality"
+    },
+    "formatCheck": {
+      "description": "Check code formatting",
+      "command": "source .venv/bin/activate && make format-check",
+      "category": "quality"
+    },
+    "typeCheck": {
+      "description": "Run mypy type checking",
+      "command": "source .venv/bin/activate && make mypy",
+      "category": "quality"
+    },
+    "ruff": {
+      "description": "Run ruff linting",
+      "command": "source .venv/bin/activate && make ruff",
+      "category": "quality"
+    },
+    "ruffFix": {
+      "description": "Run ruff with auto-fix",
+      "command": "source .venv/bin/activate && make ruff-fix",
+      "category": "quality"
+    },
+    "securityScan": {
+      "description": "Run security scans on codebase",
+      "command": "source .venv/bin/activate && make security-scan",
+      "category": "security"
+    },
+    "checkAll": {
+      "description": "Run all checks (linting, tests, security)",
+      "command": "source .venv/bin/activate && make check-all",
+      "category": "validation"
+    },
+    "clean": {
+      "description": "Clean build artifacts and cache files",
+      "command": "make clean",
+      "category": "maintenance"
+    },
+    "build": {
+      "description": "Build package for distribution",
+      "command": "source .venv/bin/activate && make build",
+      "category": "build"
+    },
+    "demo": {
+      "description": "Run adversary MCP server demo",
+      "command": "source .venv/bin/activate && make demo",
+      "category": "demo"
+    },
+    "scanExample": {
+      "description": "Test security scanners on vulnerable example code",
+      "command": "source .venv/bin/activate && make scan-example",
+      "category": "testing"
+    },
+    "serve": {
+      "description": "Start MCP server",
+      "command": "source .venv/bin/activate && python -m adversary_mcp_server.server",
+      "category": "development"
+    },
+    "preCommit": {
+      "description": "Run pre-commit hooks",
+      "command": "source .venv/bin/activate && make pre-commit",
+      "category": "quality"
+    },
+    "help": {
+      "description": "Show available Makefile targets",
+      "command": "make help",
+      "category": "info"
+    }
+  },
+
+  "shortcuts": {
+    "ctrl+shift+t": "testFast",
+    "ctrl+shift+l": "lint",
+    "ctrl+shift+f": "format",
+    "ctrl+shift+s": "securityScan",
+    "ctrl+shift+c": "checkAll"
+  },
+
+  "buildTasks": {
+    "default": "checkAll",
+    "test": "test",
+    "lint": "lint",
+    "format": "format",
+    "build": "build"
+  }
+}

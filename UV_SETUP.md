@@ -107,7 +107,7 @@ uv pip install -e .
 ### Speed Comparison
 
 | Operation | pip | uv | Speedup |
-|-----------|-----|----|---------| 
+|-----------|-----|----|---------|
 | Install from PyPI | 45s | 2s | 22x |
 | Install from lock | 30s | 1s | 30x |
 | Dependency resolution | 120s | 3s | 40x |
@@ -173,4 +173,4 @@ Your existing `requirements.txt` and `pyproject.toml` work as-is with uv.
 
 - [uv Documentation](https://docs.astral.sh/uv/)
 - [uv GitHub Repository](https://github.com/astral-sh/uv)
-- [Python Package Management Guide](https://packaging.python.org/) 
+- [Python Package Management Guide](https://packaging.python.org/)

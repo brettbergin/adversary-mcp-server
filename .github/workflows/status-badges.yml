@@ -14,7 +14,7 @@ jobs:
   update-badges:
     name: Update Status Badges
     runs-on: ubuntu-latest
-    
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -34,7 +34,7 @@ jobs:
         uv venv --python 3.11
         source .venv/bin/activate
         uv pip install -e ".[dev]"
-        
+
         # Run tests and generate coverage
         python -m pytest tests/ \
           --cov=adversary_mcp_server \
@@ -47,11 +47,11 @@ jobs:
       id: stats
       run: |
         source .venv/bin/activate
-        
+
         # Get test count
         TEST_COUNT=$(python -m pytest --collect-only -q | grep -E "^[0-9]+ tests collected" | sed 's/ tests collected//' || echo "0")
         echo "test_count=$TEST_COUNT" >> $GITHUB_OUTPUT
-        
+
         # Get coverage percentage
         if [ -f coverage.json ]; then
           COVERAGE=$(python -c "import json; data=json.load(open('coverage.json')); print(f\"{data['totals']['percent_covered']:.1f}\")")
@@ -59,11 +59,11 @@ jobs:
         else
           echo "coverage=0" >> $GITHUB_OUTPUT
         fi
-        
+
         # Get package version
         VERSION=$(python -c "from adversary_mcp_server import __version__; print(__version__)")
         echo "version=$VERSION" >> $GITHUB_OUTPUT
-        
+
         # Count rules
         RULE_COUNT=$(find rules/built-in -name "*.yaml" -exec grep -l "^rules:" {} \; | xargs grep -h "^  - id:" | wc -l | tr -d ' ')
         echo "rule_count=$RULE_COUNT" >> $GITHUB_OUTPUT
@@ -80,7 +80,7 @@ jobs:
           TEST_MESSAGE="failing"
         fi
         echo "test_badge=https://img.shields.io/badge/tests-$TEST_MESSAGE-$TEST_COLOR.svg" >> $GITHUB_OUTPUT
-        
+
         # Coverage badge
         COVERAGE="${{ steps.stats.outputs.coverage }}"
         if (( $(echo "$COVERAGE >= 80" | bc -l) )); then
@@ -91,11 +91,11 @@ jobs:
           COV_COLOR="red"
         fi
         echo "coverage_badge=https://img.shields.io/badge/coverage-$COVERAGE%25-$COV_COLOR.svg" >> $GITHUB_OUTPUT
-        
+
         # Version badge
         VERSION="${{ steps.stats.outputs.version }}"
         echo "version_badge=https://img.shields.io/badge/version-v$VERSION-blue.svg" >> $GITHUB_OUTPUT
-        
+
         # Rule count badge
         RULES="${{ steps.stats.outputs.rule_count }}"
         echo "rules_badge=https://img.shields.io/badge/security%20rules-$RULES+-purple.svg" >> $GITHUB_OUTPUT
@@ -104,7 +104,7 @@ jobs:
       run: |
         # Update badges in README.md
         sed -i 's|!\[Tests\].*|[![Tests](${{ steps.badges.outputs.test_badge }})](https://github.com/brettbergin/adversary-mcp-server)|' README.md
-        sed -i 's|!\[Coverage\].*|[![Coverage](${{ steps.badges.outputs.coverage_badge }})](https://github.com/brettbergin/adversary-mcp-server)|' README.md  
+        sed -i 's|!\[Coverage\].*|[![Coverage](${{ steps.badges.outputs.coverage_badge }})](https://github.com/brettbergin/adversary-mcp-server)|' README.md
         sed -i 's|!\[Version\].*|[![Version](${{ steps.badges.outputs.version_badge }})](https://pypi.org/project/adversary-mcp-server/)|' README.md
 
     - name: Check for changes

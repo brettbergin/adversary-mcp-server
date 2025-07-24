@@ -40,7 +40,7 @@ class TestCLIUseRulesFlag:
         # Create mock scan result with no threats (rules disabled)
         mock_scan_result = Mock()
         mock_scan_result.all_threats = []
-        mock_scan_engine_instance.scan_file.return_value = mock_scan_result
+        mock_scan_engine_instance.scan_file_sync.return_value = mock_scan_result
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write("import os; os.system(user_input)")
@@ -53,8 +53,8 @@ class TestCLIUseRulesFlag:
 
             assert result.exit_code == 0
             # Verify scan_file was called with use_rules=False
-            mock_scan_engine_instance.scan_file.assert_called_once()
-            call_args = mock_scan_engine_instance.scan_file.call_args
+            mock_scan_engine_instance.scan_file_sync.assert_called_once()
+            call_args = mock_scan_engine_instance.scan_file_sync.call_args
             assert call_args.kwargs["use_rules"] is False
             assert call_args.kwargs["use_semgrep"] is False
             assert call_args.kwargs["use_llm"] is False
@@ -94,7 +94,7 @@ class TestCLIUseRulesFlag:
                 line_number=1,
             )
         ]
-        mock_scan_engine_instance.scan_file.return_value = mock_scan_result
+        mock_scan_engine_instance.scan_file_sync.return_value = mock_scan_result
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write("import os; os.system(user_input)")
@@ -107,8 +107,8 @@ class TestCLIUseRulesFlag:
 
             assert result.exit_code == 0
             # Verify scan_file was called with use_rules=True
-            mock_scan_engine_instance.scan_file.assert_called_once()
-            call_args = mock_scan_engine_instance.scan_file.call_args
+            mock_scan_engine_instance.scan_file_sync.assert_called_once()
+            call_args = mock_scan_engine_instance.scan_file_sync.call_args
             assert call_args.kwargs["use_rules"] is True
             assert call_args.kwargs["use_semgrep"] is False
             assert call_args.kwargs["use_llm"] is False
@@ -134,7 +134,7 @@ class TestCLIUseRulesFlag:
 
         mock_scan_engine_instance = Mock()
         mock_scan_engine.return_value = mock_scan_engine_instance
-        mock_scan_engine_instance.scan_directory.return_value = []
+        mock_scan_engine_instance.scan_directory_sync.return_value = []
 
         with tempfile.TemporaryDirectory() as temp_dir:
             test_file = Path(temp_dir) / "test.py"
@@ -146,8 +146,8 @@ class TestCLIUseRulesFlag:
 
             assert result.exit_code == 0
             # Verify scan_directory was called with use_rules=False
-            mock_scan_engine_instance.scan_directory.assert_called_once()
-            call_args = mock_scan_engine_instance.scan_directory.call_args
+            mock_scan_engine_instance.scan_directory_sync.assert_called_once()
+            call_args = mock_scan_engine_instance.scan_directory_sync.call_args
             assert call_args.kwargs["use_rules"] is False
 
     @patch("adversary_mcp_server.cli.CredentialManager")
@@ -168,7 +168,7 @@ class TestCLIUseRulesFlag:
 
         mock_diff_scanner_instance = Mock()
         mock_diff_scanner.return_value = mock_diff_scanner_instance
-        mock_diff_scanner_instance.scan_diff.return_value = {}
+        mock_diff_scanner_instance.scan_diff_sync.return_value = {}
 
         with tempfile.TemporaryDirectory() as temp_dir:
             result = self.runner.invoke(
@@ -188,9 +188,9 @@ class TestCLIUseRulesFlag:
             )
 
             assert result.exit_code == 0
-            # Verify scan_diff was called with use_rules=False
-            mock_diff_scanner_instance.scan_diff.assert_called_once()
-            call_args = mock_diff_scanner_instance.scan_diff.call_args
+            # Verify scan_diff_sync was called with use_rules=False
+            mock_diff_scanner_instance.scan_diff_sync.assert_called_once()
+            call_args = mock_diff_scanner_instance.scan_diff_sync.call_args
             assert call_args.kwargs["use_rules"] is False
 
     @patch("adversary_mcp_server.cli.CredentialManager")
@@ -213,7 +213,7 @@ class TestCLIUseRulesFlag:
         mock_scan_engine.return_value = mock_scan_engine_instance
         mock_scan_result = Mock()
         mock_scan_result.all_threats = []
-        mock_scan_engine_instance.scan_file.return_value = mock_scan_result
+        mock_scan_engine_instance.scan_file_sync.return_value = mock_scan_result
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write("import os; os.system(user_input)")
@@ -226,7 +226,7 @@ class TestCLIUseRulesFlag:
             )
             assert result1.exit_code == 0
 
-            call_args = mock_scan_engine_instance.scan_file.call_args
+            call_args = mock_scan_engine_instance.scan_file_sync.call_args
             assert call_args.kwargs["use_rules"] is True
             assert call_args.kwargs["use_semgrep"] is True
             assert call_args.kwargs["use_llm"] is True
@@ -240,7 +240,7 @@ class TestCLIUseRulesFlag:
             )
             assert result2.exit_code == 0
 
-            call_args = mock_scan_engine_instance.scan_file.call_args
+            call_args = mock_scan_engine_instance.scan_file_sync.call_args
             assert call_args.kwargs["use_rules"] is True
             assert call_args.kwargs["use_semgrep"] is False
             assert call_args.kwargs["use_llm"] is False
@@ -254,7 +254,7 @@ class TestCLIUseRulesFlag:
             )
             assert result3.exit_code == 0
 
-            call_args = mock_scan_engine_instance.scan_file.call_args
+            call_args = mock_scan_engine_instance.scan_file_sync.call_args
             assert call_args.kwargs["use_rules"] is False
             assert call_args.kwargs["use_semgrep"] is True
             assert call_args.kwargs["use_llm"] is False
@@ -282,7 +282,7 @@ class TestCLIUseRulesFlag:
         mock_scan_engine.return_value = mock_scan_engine_instance
         mock_scan_result = Mock()
         mock_scan_result.all_threats = []
-        mock_scan_engine_instance.scan_file.return_value = mock_scan_result
+        mock_scan_engine_instance.scan_file_sync.return_value = mock_scan_result
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write("import os; os.system(user_input)")
@@ -294,8 +294,8 @@ class TestCLIUseRulesFlag:
 
             assert result.exit_code == 0
             # Verify scan_file was called with default values (rules=True)
-            mock_scan_engine_instance.scan_file.assert_called_once()
-            call_args = mock_scan_engine_instance.scan_file.call_args
+            mock_scan_engine_instance.scan_file_sync.assert_called_once()
+            call_args = mock_scan_engine_instance.scan_file_sync.call_args
             assert call_args.kwargs["use_rules"] is True  # Default should be True
 
         finally:

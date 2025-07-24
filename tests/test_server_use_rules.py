@@ -29,7 +29,7 @@ class TestMCPServerUseRulesFlag:
             mock_result.scan_metadata = {
                 "use_rules": False,
                 "rules_scan_success": False,
-                "rules_scan_reason": "disabled",
+                "rules_scan_reason": "disabled_by_user",
             }
             mock_result.stats = {
                 "total_threats": 0,
@@ -177,7 +177,7 @@ class TestMCPServerUseRulesFlag:
                 mock_result.scan_metadata = {
                     "use_rules": False,
                     "rules_scan_success": False,
-                    "rules_scan_reason": "disabled",
+                    "rules_scan_reason": "disabled_by_user",
                 }
                 mock_result.stats = {
                     "total_threats": 0,
@@ -338,7 +338,7 @@ class TestMCPServerUseRulesFlag:
             mock_result.scan_metadata = {
                 "use_rules": False,
                 "rules_scan_success": False,
-                "rules_scan_reason": "disabled",
+                "rules_scan_reason": "disabled_by_user",
             }
             mock_result.stats = {
                 "total_threats": 0,
@@ -416,7 +416,7 @@ class TestMCPServerUseRulesFlag:
             mock_result.all_threats = []
             mock_result.scan_metadata = {
                 "use_rules": False,
-                "rules_scan_reason": "disabled",
+                "rules_scan_reason": "disabled_by_user",
             }
             mock_result.stats = {
                 "total_threats": 0,

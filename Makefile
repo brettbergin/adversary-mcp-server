@@ -63,8 +63,7 @@ ruff-fix: ## Run ruff with auto-fix
 	python -m ruff check --fix src/ tests/
 
 security-scan: ## Run security scans on the codebase
-	python -m bandit -r src/
-	python -m semgrep --config=auto src/
+	.venv/bin/semgrep --config=auto src/
 
 clean: ## Clean up build artifacts and cache files
 	rm -rf build/
@@ -116,10 +115,9 @@ ci-lint: ## Run linting in CI environment
 	python -m isort --check-only src/ tests/
 
 ci-security: ## Run security scans in CI environment
-	python -m bandit -r src/ -f json -o security-report.json
 	python -m semgrep --config=auto src/ --json --output=semgrep-report.json
 
-upload: build ## Upload package to PyPI
+deploy: build ## Upload package to PyPI
 	uv run twine upload dist/*
 
 demo: ## Run a demo of the adversary MCP server
@@ -141,4 +139,4 @@ pre-commit-update: ## Update pre-commit hook versions
 
 uninstall-pre-commit: ## Uninstall pre-commit hooks
 	pre-commit uninstall
-	@echo "Pre-commit hooks uninstalled." 
+	@echo "Pre-commit hooks uninstalled."

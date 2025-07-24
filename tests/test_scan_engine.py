@@ -4,7 +4,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, mock_open, patch
 
 import pytest
 
@@ -15,6 +15,7 @@ from adversary_mcp_server.scan_engine import EnhancedScanResult, ScanEngine
 from adversary_mcp_server.threat_engine import (
     Category,
     Language,
+    LanguageSupport,
     Severity,
     ThreatMatch,
 )
@@ -159,6 +160,119 @@ class TestEnhancedScanResult:
         assert len(result.all_threats) == 2
         assert result.all_threats[0].rule_id == "rule_1"
         assert result.all_threats[1].rule_id == "llm_rule_2"
+
+    def test_combine_threats_with_semgrep_duplicates(self):
+        """Test threat combination with Semgrep threats that duplicate rules."""
+        rules_threats = [
+            ThreatMatch(
+                rule_id="rule_1",
+                rule_name="Rule 1",
+                description="Description 1",
+                category=Category.INJECTION,
+                severity=Severity.HIGH,
+                file_path="test.py",
+                line_number=10,
+            )
+        ]
+
+        # Semgrep threat on similar line with same category (should be filtered out)
+        semgrep_threats = [
+            ThreatMatch(
+                rule_id="semgrep_rule_1",
+                rule_name="Semgrep Rule 1",
+                description="Semgrep Description 1",
+                category=Category.INJECTION,  # Same category
+                severity=Severity.MEDIUM,
+                file_path="test.py",
+                line_number=11,  # Close line (within 2 lines)
+            ),
+            ThreatMatch(
+                rule_id="semgrep_rule_2",
+                rule_name="Semgrep Rule 2",
+                description="Semgrep Description 2",
+                category=Category.XSS,  # Different category
+                severity=Severity.MEDIUM,
+                file_path="test.py",
+                line_number=30,  # Different line
+            ),
+        ]
+
+        result = EnhancedScanResult(
+            file_path="test.py",
+            language=Language.PYTHON,
+            rules_threats=rules_threats,
+            llm_threats=[],
+            semgrep_threats=semgrep_threats,
+            scan_metadata={},
+        )
+
+        # Should have 2 threats (rules threat + non-duplicate semgrep threat)
+        assert len(result.all_threats) == 2
+        assert result.all_threats[0].rule_id == "rule_1"
+        assert result.all_threats[1].rule_id == "semgrep_rule_2"
+
+    def test_combine_threats_with_semgrep_and_llm_duplicates(self):
+        """Test threat combination with both Semgrep and LLM threats that have duplicates."""
+        rules_threats = [
+            ThreatMatch(
+                rule_id="rule_1",
+                rule_name="Rule 1",
+                description="Description 1",
+                category=Category.INJECTION,
+                severity=Severity.HIGH,
+                file_path="test.py",
+                line_number=10,
+            )
+        ]
+
+        semgrep_threats = [
+            ThreatMatch(
+                rule_id="semgrep_rule_1",
+                rule_name="Semgrep Rule 1",
+                description="Semgrep Description 1",
+                category=Category.XSS,
+                severity=Severity.MEDIUM,
+                file_path="test.py",
+                line_number=20,
+            )
+        ]
+
+        # LLM threat that duplicates semgrep threat
+        llm_threats = [
+            ThreatMatch(
+                rule_id="llm_rule_1",
+                rule_name="LLM Rule 1",
+                description="LLM Description 1",
+                category=Category.XSS,  # Same category as semgrep
+                severity=Severity.LOW,
+                file_path="test.py",
+                line_number=21,  # Close line (within 2 lines)
+            ),
+            ThreatMatch(
+                rule_id="llm_rule_2",
+                rule_name="LLM Rule 2",
+                description="LLM Description 2",
+                category=Category.SECRETS,  # Different category
+                severity=Severity.MEDIUM,
+                file_path="test.py",
+                line_number=40,  # Different line
+            ),
+        ]
+
+        result = EnhancedScanResult(
+            file_path="test.py",
+            language=Language.PYTHON,
+            rules_threats=rules_threats,
+            llm_threats=llm_threats,
+            semgrep_threats=semgrep_threats,
+            scan_metadata={},
+        )
+
+        # Should have 3 threats (rules + semgrep + non-duplicate LLM)
+        assert len(result.all_threats) == 3
+        assert result.all_threats[0].rule_id == "rule_1"
+        assert result.all_threats[1].rule_id == "semgrep_rule_1"
+        assert result.all_threats[2].rule_id == "llm_rule_2"
 
     def test_calculate_stats(self):
         """Test statistics calculation."""
@@ -386,7 +500,7 @@ class TestScanEngine:
             enable_llm_analysis=False,
         )
 
-        result = scanner.scan_code(
+        result = scanner.scan_code_sync(
             source_code="test code",
             file_path="test.py",
             language=Language.PYTHON,
@@ -452,7 +566,7 @@ class TestScanEngine:
             enable_llm_analysis=True,
         )
 
-        result = scanner.scan_code(
+        result = scanner.scan_code_sync(
             source_code="test code",
             file_path="test.py",
             language=Language.PYTHON,
@@ -492,7 +606,7 @@ class TestScanEngine:
             enable_llm_analysis=False,
         )
 
-        result = scanner.scan_code(
+        result = scanner.scan_code_sync(
             source_code="test code",
             file_path="test.py",
             language=Language.PYTHON,
@@ -530,7 +644,7 @@ class TestScanEngine:
             enable_llm_analysis=True,
         )
 
-        result = scanner.scan_code(
+        result = scanner.scan_code_sync(
             source_code="test code",
             file_path="test.py",
             language=Language.PYTHON,
@@ -565,7 +679,7 @@ class TestScanEngine:
             temp_file = Path(f.name)
 
         try:
-            result = scanner.scan_file(
+            result = scanner.scan_file_sync(
                 file_path=temp_file,
                 language=Language.PYTHON,
                 use_llm=False,
@@ -592,7 +706,7 @@ class TestScanEngine:
         )
 
         with pytest.raises(FileNotFoundError):
-            scanner.scan_file(
+            scanner.scan_file_sync(
                 file_path=Path("non_existent_file.py"),
                 language=Language.PYTHON,
                 use_llm=False,
@@ -624,14 +738,14 @@ class TestScanEngine:
             (temp_path / "test2.js").write_text("console.log('test2');")
             (temp_path / "test3.txt").write_text("not a code file")
 
-            results = scanner.scan_directory(
+            results = scanner.scan_directory_sync(
                 directory_path=temp_path,
                 recursive=False,
                 use_llm=False,
             )
 
-            # Should scan 2 files (Python and JavaScript)
-            assert len(results) == 2
+            # Should scan 3 files (Python, JavaScript, and Generic)
+            assert len(results) == 3
             assert all(isinstance(result, EnhancedScanResult) for result in results)
 
     @patch("adversary_mcp_server.scan_engine.ASTScanner")
@@ -647,7 +761,7 @@ class TestScanEngine:
         )
 
         with pytest.raises(FileNotFoundError):
-            scanner.scan_directory(
+            scanner.scan_directory_sync(
                 directory_path=Path("non_existent_directory"),
                 use_llm=False,
             )
@@ -669,12 +783,112 @@ class TestScanEngine:
             ("test.jsx", Language.JAVASCRIPT),
             ("test.ts", Language.TYPESCRIPT),
             ("test.tsx", Language.TYPESCRIPT),
-            ("test.unknown", Language.PYTHON),  # Default fallback
+            ("test.html", Language.HTML),
+            ("test.htm", Language.HTML),
+            ("test.ejs", Language.HTML),
+            ("test.handlebars", Language.HTML),
+            ("test.hbs", Language.HTML),
+            ("test.vue", Language.HTML),
+            ("test.svelte", Language.HTML),
+            ("test.css", Language.CSS),
+            ("test.scss", Language.CSS),
+            ("test.sass", Language.CSS),
+            ("test.json", Language.JSON),
+            ("test.yaml", Language.YAML),
+            ("test.yml", Language.YAML),
+            ("test.xml", Language.XML),
+            ("test.svg", Language.XML),
+            ("test.php", Language.PHP),
+            ("test.sh", Language.SHELL),
+            ("test.bash", Language.SHELL),
+            ("test.dockerfile", Language.DOCKERFILE),
+            ("test.go", Language.GO),
+            ("test.rb", Language.RUBY),
+            ("test.java", Language.JAVA),
+            ("test.cs", Language.CSHARP),
+            ("test.sql", Language.SQL),
+            ("test.tf", Language.TERRAFORM),
+            ("test.tfvars", Language.TERRAFORM),
+            ("test.hcl", Language.TERRAFORM),
+            ("test.unknown", Language.GENERIC),  # Updated fallback
         ]
 
         for filename, expected_language in test_cases:
             detected_language = scanner._detect_language(Path(filename))
             assert detected_language == expected_language
+
+    @patch("adversary_mcp_server.scan_engine.ASTScanner")
+    def test_scan_directory_includes_expanded_file_types(self, mock_ast_scanner):
+        """Test that directory scanning includes new file types like .ejs, .html, etc."""
+        mock_threat_engine = Mock()
+        mock_credential_manager = Mock()
+
+        scanner = ScanEngine(
+            threat_engine=mock_threat_engine,
+            credential_manager=mock_credential_manager,
+            enable_llm_analysis=False,
+        )
+
+        # Mock AST scanner
+        mock_ast_instance = Mock()
+        mock_ast_scanner.return_value = mock_ast_instance
+        mock_ast_instance.scan_code.return_value = []
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Create test files with various extensions
+            test_files = [
+                "test.py",
+                "test.js",
+                "test.html",
+                "test.ejs",
+                "template.handlebars",
+                "styles.css",
+                "config.json",
+                "settings.yaml",
+                "data.xml",
+                "script.php",
+                "deploy.sh",
+                "app.go",
+                "service.rb",
+                "Main.java",
+                "Program.cs",
+                "query.sql",
+                "main.tf",
+                "variables.tfvars",
+                "readme.md",
+                "config.env",
+            ]
+
+            for filename in test_files:
+                file_path = Path(temp_dir) / filename
+                file_path.write_text(f"// Sample content for {filename}")
+
+            # Scan directory
+            results = scanner.scan_directory_sync(
+                directory_path=Path(temp_dir),
+                recursive=False,
+                use_llm=False,
+            )
+
+            # Should scan all supported file types (everything except maybe some generic ones)
+            scanned_files = [result.file_path for result in results]
+
+            # Check that major web file types are included
+            assert any("test.html" in path for path in scanned_files)
+            assert any("test.ejs" in path for path in scanned_files)
+            assert any("template.handlebars" in path for path in scanned_files)
+            assert any("styles.css" in path for path in scanned_files)
+            assert any("config.json" in path for path in scanned_files)
+            assert any("settings.yaml" in path for path in scanned_files)
+            assert any("data.xml" in path for path in scanned_files)
+            assert any("script.php" in path for path in scanned_files)
+            assert any("main.tf" in path for path in scanned_files)
+            assert any("variables.tfvars" in path for path in scanned_files)
+
+            # Should have more files than the old limited set
+            assert (
+                len(results) >= len(test_files) - 2
+            )  # Allow for some generic files not being scanned
 
     def test_filter_by_severity(self):
         """Test severity filtering."""
@@ -804,3 +1018,1022 @@ class TestScanEngine:
 
         # Should reinitialize LLM analyzer
         assert mock_llm_analyzer.call_count >= 2  # Initial + reload
+
+
+class TestLanguageSupport:
+    """Test centralized LanguageSupport class."""
+
+    def test_get_supported_languages(self):
+        """Test getting list of supported languages."""
+        languages = LanguageSupport.get_supported_languages()
+
+        # Should include all our expected languages
+        assert Language.PYTHON in languages
+        assert Language.JAVASCRIPT in languages
+        assert Language.TERRAFORM in languages
+        assert Language.HTML in languages
+        assert Language.GENERIC in languages
+
+        # Should be a reasonable number of languages
+        assert len(languages) >= 17  # Current count including TERRAFORM
+
+    def test_extension_to_language_mapping(self):
+        """Test file extension to language mapping."""
+        extension_map = LanguageSupport.get_extension_to_language_map()
+
+        # Test some key mappings
+        assert extension_map[".py"] == Language.PYTHON
+        assert extension_map[".js"] == Language.JAVASCRIPT
+        assert extension_map[".tf"] == Language.TERRAFORM
+        assert extension_map[".tfvars"] == Language.TERRAFORM
+        assert extension_map[".html"] == Language.HTML
+        assert extension_map[".ejs"] == Language.HTML
+
+    def test_language_to_extension_mapping(self):
+        """Test language to primary extension mapping."""
+        lang_map = LanguageSupport.get_language_to_extension_map()
+
+        # Test primary extensions
+        assert lang_map[Language.PYTHON] == ".py"
+        assert lang_map[Language.JAVASCRIPT] == ".js"
+        assert lang_map[Language.TERRAFORM] == ".tf"
+        assert lang_map[Language.HTML] == ".html"
+
+    def test_detect_language(self):
+        """Test language detection from file paths."""
+        test_cases = [
+            ("main.tf", Language.TERRAFORM),
+            ("variables.tfvars", Language.TERRAFORM),
+            ("config.hcl", Language.TERRAFORM),
+            ("template.ejs", Language.HTML),
+            ("script.py", Language.PYTHON),
+            ("Dockerfile", Language.DOCKERFILE),
+            ("unknown.xyz", Language.GENERIC),
+        ]
+
+        for file_path, expected_lang in test_cases:
+            detected = LanguageSupport.detect_language(file_path)
+            assert (
+                detected == expected_lang
+            ), f"Failed for {file_path}: expected {expected_lang}, got {detected}"
+
+    def test_get_extensions_for_language(self):
+        """Test getting all extensions for a specific language."""
+        # Test Terraform extensions
+        tf_extensions = LanguageSupport.get_extensions_for_language(Language.TERRAFORM)
+        assert ".tf" in tf_extensions
+        assert ".tfvars" in tf_extensions
+        assert ".hcl" in tf_extensions
+
+        # Test HTML extensions
+        html_extensions = LanguageSupport.get_extensions_for_language(Language.HTML)
+        assert ".html" in html_extensions
+        assert ".ejs" in html_extensions
+        assert ".vue" in html_extensions
+
+    def test_get_primary_extension(self):
+        """Test getting primary extension for languages."""
+        assert LanguageSupport.get_primary_extension(Language.TERRAFORM) == ".tf"
+        assert LanguageSupport.get_primary_extension(Language.PYTHON) == ".py"
+        assert LanguageSupport.get_primary_extension(Language.HTML) == ".html"
+
+    def test_get_language_enum_values(self):
+        """Test getting language enum values for API schemas."""
+        enum_values = LanguageSupport.get_language_enum_values()
+
+        # Should include all language string values
+        assert "terraform" in enum_values
+        assert "python" in enum_values
+        assert "javascript" in enum_values
+        assert "html" in enum_values
+        assert "generic" in enum_values
+
+        # Should be strings, not Language enums
+        assert all(isinstance(val, str) for val in enum_values)
+
+    def test_centralized_configuration_consistency(self):
+        """Test that centralized configuration is internally consistent."""
+        # All languages should have both extension mapping and primary extension
+        supported_languages = LanguageSupport.get_supported_languages()
+        extension_map = LanguageSupport.get_extension_to_language_map()
+        primary_map = LanguageSupport.get_language_to_extension_map()
+
+        for language in supported_languages:
+            # Each language should have a primary extension
+            assert language in primary_map
+
+            # Primary extension should be in the extension map
+            primary_ext = primary_map[language]
+            assert primary_ext in extension_map
+            assert extension_map[primary_ext] == language
+
+    @patch("adversary_mcp_server.scan_engine.SemgrepScanner")
+    @patch("adversary_mcp_server.scan_engine.ASTScanner")
+    @patch("adversary_mcp_server.scan_engine.LLMScanner")
+    @pytest.mark.asyncio
+    async def test_scan_file_llm_analysis_success(
+        self, mock_llm_scanner, mock_ast_scanner, mock_semgrep_scanner
+    ):
+        """Test scan_file with successful LLM analysis."""
+        mock_threat_engine = Mock()
+        mock_credential_manager = Mock()
+        mock_config = Mock()
+        mock_config.enable_semgrep_scanning = False
+        mock_credential_manager.load_config.return_value = mock_config
+
+        # Mock AST scanner
+        mock_ast_instance = Mock()
+        mock_ast_instance.scan_code.return_value = []
+        mock_ast_scanner.return_value = mock_ast_instance
+
+        # Mock Semgrep scanner
+        mock_semgrep_instance = Mock()
+        mock_semgrep_instance.is_available.return_value = False
+        mock_semgrep_scanner.return_value = mock_semgrep_instance
+
+        # Mock LLM scanner
+        from adversary_mcp_server.llm_scanner import LLMSecurityFinding
+
+        mock_llm_instance = Mock()
+        mock_llm_instance.is_available.return_value = True
+        mock_finding = LLMSecurityFinding(
+            finding_type="test",
+            severity="high",
+            description="Test finding",
+            line_number=10,
+            code_snippet="test code",
+            explanation="Test explanation",
+            recommendation="Test recommendation",
+            confidence=0.9,
+        )
+        mock_llm_instance.analyze_file = AsyncMock(return_value=[mock_finding])
+        mock_llm_scanner.return_value = mock_llm_instance
+
+        scanner = ScanEngine(
+            threat_engine=mock_threat_engine,
+            credential_manager=mock_credential_manager,
+            enable_llm_analysis=True,
+        )
+
+        # Create a temporary file
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write("print('test')")
+            temp_file = Path(f.name)
+
+        try:
+            result = await scanner.scan_file(
+                file_path=temp_file,
+                language=Language.PYTHON,
+                use_llm=True,
+                use_semgrep=False,
+                use_rules=False,
+            )
+
+            assert isinstance(result, EnhancedScanResult)
+            assert result.scan_metadata["llm_scan_success"] is True
+            assert result.scan_metadata["llm_scan_reason"] == "analysis_completed"
+            assert len(result.llm_threats) == 1
+
+        finally:
+            temp_file.unlink()
+
+    @patch("adversary_mcp_server.scan_engine.LLMScanner")
+    @patch("adversary_mcp_server.scan_engine.SemgrepScanner")
+    @patch("adversary_mcp_server.scan_engine.ASTScanner")
+    @pytest.mark.asyncio
+    async def test_scan_file_llm_analysis_exception(
+        self, mock_ast_scanner, mock_semgrep_scanner, mock_llm_scanner
+    ):
+        """Test scan_file handles LLM analysis exceptions."""
+        mock_threat_engine = Mock()
+        mock_credential_manager = Mock()
+        mock_config = Mock()
+        mock_config.enable_semgrep_scanning = False
+        mock_credential_manager.load_config.return_value = mock_config
+
+        # Mock AST scanner
+        mock_ast_instance = Mock()
+        mock_ast_instance.scan_code.return_value = []
+        mock_ast_scanner.return_value = mock_ast_instance
+
+        # Mock Semgrep scanner
+        mock_semgrep_instance = Mock()
+        mock_semgrep_instance.is_available.return_value = False
+        mock_semgrep_scanner.return_value = mock_semgrep_instance
+
+        # Mock LLM scanner to raise exception
+        mock_llm_instance = Mock()
+        mock_llm_instance.is_available.return_value = True
+        mock_llm_instance.analyze_file = AsyncMock(
+            side_effect=Exception("LLM analysis failed")
+        )
+        mock_llm_scanner.return_value = mock_llm_instance
+
+        scanner = ScanEngine(
+            threat_engine=mock_threat_engine,
+            credential_manager=mock_credential_manager,
+            enable_llm_analysis=True,
+        )
+
+        # Create a temporary file
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write("print('test')")
+            temp_file = Path(f.name)
+
+        try:
+            result = await scanner.scan_file(
+                file_path=temp_file,
+                language=Language.PYTHON,
+                use_llm=True,
+                use_semgrep=False,
+                use_rules=False,
+            )
+
+            assert isinstance(result, EnhancedScanResult)
+            assert result.scan_metadata["llm_scan_success"] is False
+            assert result.scan_metadata["llm_scan_reason"] == "analysis_failed"
+            assert "LLM analysis failed" in result.scan_metadata["llm_scan_error"]
+
+        finally:
+            temp_file.unlink()
+
+    @patch("adversary_mcp_server.scan_engine.LLMScanner")
+    @patch("adversary_mcp_server.scan_engine.SemgrepScanner")
+    @patch("adversary_mcp_server.scan_engine.ASTScanner")
+    def test_scan_file_llm_disabled_by_user(
+        self, mock_ast_scanner, mock_semgrep_scanner, mock_llm_scanner
+    ):
+        """Test scan_file with LLM disabled by user."""
+        mock_threat_engine = Mock()
+        mock_credential_manager = Mock()
+        mock_config = Mock()
+        mock_config.enable_semgrep_scanning = False
+        mock_credential_manager.load_config.return_value = mock_config
+
+        # Mock AST scanner
+        mock_ast_instance = Mock()
+        mock_ast_instance.scan_code.return_value = []
+        mock_ast_scanner.return_value = mock_ast_instance
+
+        # Mock Semgrep scanner
+        mock_semgrep_instance = Mock()
+        mock_semgrep_instance.is_available.return_value = False
+        mock_semgrep_scanner.return_value = mock_semgrep_instance
+
+        # Mock LLM scanner
+        mock_llm_instance = Mock()
+        mock_llm_instance.is_available.return_value = True
+        mock_llm_scanner.return_value = mock_llm_instance
+
+        scanner = ScanEngine(
+            threat_engine=mock_threat_engine,
+            credential_manager=mock_credential_manager,
+            enable_llm_analysis=True,
+        )
+
+        # Create a temporary file
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write("print('test')")
+            temp_file = Path(f.name)
+
+        try:
+            result = scanner.scan_file_sync(
+                file_path=temp_file,
+                language=Language.PYTHON,
+                use_llm=False,  # Disabled by user
+                use_semgrep=False,
+                use_rules=False,
+            )
+
+            assert isinstance(result, EnhancedScanResult)
+            assert result.scan_metadata["llm_scan_success"] is False
+            assert result.scan_metadata["llm_scan_reason"] == "disabled_by_user"
+
+        finally:
+            temp_file.unlink()
+
+    @patch("adversary_mcp_server.scan_engine.LLMScanner")
+    @patch("adversary_mcp_server.scan_engine.SemgrepScanner")
+    @patch("adversary_mcp_server.scan_engine.ASTScanner")
+    @pytest.mark.asyncio
+    async def test_scan_directory_llm_analysis_success(
+        self, mock_ast_scanner, mock_semgrep_scanner, mock_llm_scanner
+    ):
+        """Test scan_directory with successful LLM analysis."""
+        mock_threat_engine = Mock()
+        mock_credential_manager = Mock()
+        mock_config = Mock()
+        mock_config.enable_semgrep_scanning = False
+        mock_credential_manager.load_config.return_value = mock_config
+
+        # Mock AST scanner
+        mock_ast_instance = Mock()
+        mock_ast_instance.scan_code.return_value = []
+        mock_ast_scanner.return_value = mock_ast_instance
+
+        # Mock Semgrep scanner
+        mock_semgrep_instance = Mock()
+        mock_semgrep_instance.is_available.return_value = False
+        mock_semgrep_scanner.return_value = mock_semgrep_instance
+
+        # Mock LLM scanner
+        from adversary_mcp_server.llm_scanner import LLMSecurityFinding
+
+        mock_llm_instance = Mock()
+        mock_llm_instance.is_available.return_value = True
+        mock_finding = LLMSecurityFinding(
+            finding_type="test",
+            severity="high",
+            description="Test finding",
+            line_number=10,
+            code_snippet="test code",
+            explanation="Test explanation",
+            recommendation="Test recommendation",
+            confidence=0.9,
+        )
+        mock_llm_instance.analyze_directory = AsyncMock(return_value=[mock_finding])
+        mock_llm_scanner.return_value = mock_llm_instance
+
+        scanner = ScanEngine(
+            threat_engine=mock_threat_engine,
+            credential_manager=mock_credential_manager,
+            enable_llm_analysis=True,
+        )
+
+        # Create a temporary directory with files
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            (temp_path / "test.py").write_text("print('test')")
+            mock_finding.file_path = str(
+                temp_path / "test.py"
+            )  # Add file_path attribute
+
+            results = await scanner.scan_directory(
+                directory_path=temp_path,
+                recursive=False,
+                use_llm=True,
+                use_semgrep=False,
+                use_rules=False,
+            )
+
+            assert len(results) == 1
+            result = results[0]
+            assert result.scan_metadata["llm_scan_success"] is True
+            assert (
+                result.scan_metadata["llm_scan_reason"]
+                == "directory_analysis_completed"
+            )
+            assert len(result.llm_threats) == 1
+
+    @patch("adversary_mcp_server.scan_engine.LLMScanner")
+    @patch("adversary_mcp_server.scan_engine.SemgrepScanner")
+    @patch("adversary_mcp_server.scan_engine.ASTScanner")
+    @pytest.mark.asyncio
+    async def test_scan_directory_llm_analysis_exception(
+        self, mock_ast_scanner, mock_semgrep_scanner, mock_llm_scanner
+    ):
+        """Test scan_directory handles LLM analysis exceptions."""
+        mock_threat_engine = Mock()
+        mock_credential_manager = Mock()
+        mock_config = Mock()
+        mock_config.enable_semgrep_scanning = False
+        mock_credential_manager.load_config.return_value = mock_config
+
+        # Mock AST scanner
+        mock_ast_instance = Mock()
+        mock_ast_instance.scan_code.return_value = []
+        mock_ast_scanner.return_value = mock_ast_instance
+
+        # Mock Semgrep scanner
+        mock_semgrep_instance = Mock()
+        mock_semgrep_instance.is_available.return_value = False
+        mock_semgrep_scanner.return_value = mock_semgrep_instance
+
+        # Mock LLM scanner to raise exception
+        mock_llm_instance = Mock()
+        mock_llm_instance.is_available.return_value = True
+        mock_llm_instance.analyze_directory = AsyncMock(
+            side_effect=Exception("LLM directory analysis failed")
+        )
+        mock_llm_scanner.return_value = mock_llm_instance
+
+        scanner = ScanEngine(
+            threat_engine=mock_threat_engine,
+            credential_manager=mock_credential_manager,
+            enable_llm_analysis=True,
+        )
+
+        # Create a temporary directory with files
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            (temp_path / "test.py").write_text("print('test')")
+
+            results = await scanner.scan_directory(
+                directory_path=temp_path,
+                recursive=False,
+                use_llm=True,
+                use_semgrep=False,
+                use_rules=False,
+            )
+
+            assert len(results) == 1
+            result = results[0]
+            assert result.scan_metadata["llm_scan_success"] is False
+            assert (
+                result.scan_metadata["llm_scan_reason"] == "directory_analysis_failed"
+            )
+            assert (
+                "LLM directory analysis failed"
+                in result.scan_metadata["llm_scan_error"]
+            )
+
+    @patch("adversary_mcp_server.scan_engine.SemgrepScanner")
+    @patch("adversary_mcp_server.scan_engine.ASTScanner")
+    @pytest.mark.asyncio
+    async def test_scan_directory_semgrep_directory_scan_exception(
+        self, mock_ast_scanner, mock_semgrep_scanner
+    ):
+        """Test scan_directory handles Semgrep directory scan exceptions."""
+        mock_threat_engine = Mock()
+        mock_credential_manager = Mock()
+        mock_config = Mock()
+        mock_config.enable_semgrep_scanning = True
+        mock_config.semgrep_config = None
+        mock_config.semgrep_rules = None
+        mock_config.semgrep_timeout = 60
+        mock_credential_manager.load_config.return_value = mock_config
+
+        # Mock AST scanner
+        mock_ast_instance = Mock()
+        mock_ast_instance.scan_code.return_value = []
+        mock_ast_scanner.return_value = mock_ast_instance
+
+        # Mock Semgrep scanner to raise exception in directory scan
+        mock_semgrep_instance = Mock()
+        mock_semgrep_instance.is_available.return_value = True
+        mock_semgrep_instance.get_status.return_value = {
+            "available": True,
+            "version": "1.0.0",
+        }
+        mock_semgrep_instance.scan_directory = AsyncMock(
+            side_effect=Exception("Semgrep directory scan failed")
+        )
+        mock_semgrep_scanner.return_value = mock_semgrep_instance
+
+        scanner = ScanEngine(
+            threat_engine=mock_threat_engine,
+            credential_manager=mock_credential_manager,
+            enable_llm_analysis=False,
+        )
+
+        # Create a temporary directory with files
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            (temp_path / "test.py").write_text("print('test')")
+
+            results = await scanner.scan_directory(
+                directory_path=temp_path,
+                recursive=False,
+                use_llm=False,
+                use_semgrep=True,
+                use_rules=False,
+            )
+
+            assert len(results) == 1
+            result = results[0]
+            assert result.scan_metadata["semgrep_scan_success"] is False
+            assert (
+                result.scan_metadata["semgrep_scan_reason"] == "directory_scan_failed"
+            )
+            assert (
+                "Semgrep directory scan failed"
+                in result.scan_metadata["semgrep_scan_error"]
+            )
+
+    @patch("adversary_mcp_server.scan_engine.SemgrepScanner")
+    @patch("adversary_mcp_server.scan_engine.ASTScanner")
+    def test_scan_directory_binary_file_in_directory(
+        self, mock_ast_scanner, mock_semgrep_scanner
+    ):
+        """Test scan_directory handles binary files in directory gracefully."""
+        mock_threat_engine = Mock()
+        mock_credential_manager = Mock()
+        mock_config = Mock()
+        mock_config.enable_semgrep_scanning = False
+        mock_credential_manager.load_config.return_value = mock_config
+
+        # Mock Semgrep scanner
+        mock_semgrep_instance = Mock()
+        mock_semgrep_instance.is_available.return_value = False
+        mock_semgrep_scanner.return_value = mock_semgrep_instance
+
+        scanner = ScanEngine(
+            threat_engine=mock_threat_engine,
+            credential_manager=mock_credential_manager,
+            enable_llm_analysis=False,
+        )
+
+        # Create a temporary directory with a binary file
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+
+            # Create binary file
+            binary_file = temp_path / "binary.py"
+            with open(binary_file, "wb") as f:
+                f.write(b"\x00\x01\x02\x03\xff\xfe")
+
+            # Use patch to mock the file opening to simulate UnicodeDecodeError during directory scan
+            with patch("builtins.open", mock_open()) as mock_file:
+                # Configure the mock to raise UnicodeDecodeError when reading
+                mock_file.return_value.__enter__.return_value.read.side_effect = (
+                    UnicodeDecodeError(
+                        "utf-8", b"\x00\x01\x02\x03\xff\xfe", 0, 1, "invalid start byte"
+                    )
+                )
+
+                results = scanner.scan_directory_sync(
+                    directory_path=temp_path,
+                    recursive=False,
+                    use_llm=False,
+                    use_semgrep=False,
+                    use_rules=True,
+                )
+
+                assert len(results) == 1
+                result = results[0]
+                assert result.scan_metadata["rules_scan_success"] is False
+                assert (
+                    result.scan_metadata["rules_scan_reason"] == "binary_file_skipped"
+                )
+
+    @patch("adversary_mcp_server.scan_engine.SemgrepScanner")
+    @patch("adversary_mcp_server.scan_engine.ASTScanner")
+    def test_scan_directory_file_processing_exception(
+        self, mock_ast_scanner, mock_semgrep_scanner
+    ):
+        """Test scan_directory handles file processing exceptions."""
+        mock_threat_engine = Mock()
+        mock_credential_manager = Mock()
+        mock_config = Mock()
+        mock_config.enable_semgrep_scanning = False
+        mock_credential_manager.load_config.return_value = mock_config
+
+        # Mock AST scanner to raise exception
+        mock_ast_instance = Mock()
+        mock_ast_instance.scan_code.side_effect = Exception("File processing failed")
+        mock_ast_scanner.return_value = mock_ast_instance
+
+        # Mock Semgrep scanner
+        mock_semgrep_instance = Mock()
+        mock_semgrep_instance.is_available.return_value = False
+        mock_semgrep_scanner.return_value = mock_semgrep_instance
+
+        scanner = ScanEngine(
+            threat_engine=mock_threat_engine,
+            credential_manager=mock_credential_manager,
+            enable_llm_analysis=False,
+        )
+
+        # Create a temporary directory with files
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            (temp_path / "test.py").write_text("print('test')")
+
+            # Use a mock to simulate the _detect_language method raising an exception
+            # This will be caught at a higher level and create an error result
+            with patch.object(
+                scanner,
+                "_detect_language",
+                side_effect=Exception("File processing failed"),
+            ):
+                results = scanner.scan_directory_sync(
+                    directory_path=temp_path,
+                    recursive=False,
+                    use_llm=False,
+                    use_semgrep=False,
+                    use_rules=True,
+                )
+
+                assert len(results) == 1
+                result = results[0]
+                assert "error" in result.scan_metadata
+                assert "File processing failed" in result.scan_metadata["error"]
+
+    def test_scan_code_severity_filtering(self):
+        """Test scan_code applies severity filtering correctly."""
+        mock_threat_engine = Mock()
+        mock_credential_manager = Mock()
+
+        with patch("adversary_mcp_server.scan_engine.ASTScanner") as mock_ast_scanner:
+            # Mock AST scanner with threats of different severities
+            mock_ast_instance = Mock()
+            low_threat = ThreatMatch(
+                rule_id="rule_low",
+                rule_name="Low Rule",
+                description="Low severity",
+                category=Category.INJECTION,
+                severity=Severity.LOW,
+                file_path="test.py",
+                line_number=10,
+            )
+            high_threat = ThreatMatch(
+                rule_id="rule_high",
+                rule_name="High Rule",
+                description="High severity",
+                category=Category.XSS,
+                severity=Severity.HIGH,
+                file_path="test.py",
+                line_number=20,
+            )
+            mock_ast_instance.scan_code.return_value = [low_threat, high_threat]
+            mock_ast_scanner.return_value = mock_ast_instance
+
+            scanner = ScanEngine(
+                threat_engine=mock_threat_engine,
+                credential_manager=mock_credential_manager,
+                enable_llm_analysis=False,
+            )
+
+            # Scan with HIGH severity threshold
+            result = scanner.scan_code_sync(
+                source_code="test code",
+                file_path="test.py",
+                language=Language.PYTHON,
+                use_llm=False,
+                use_semgrep=False,
+                severity_threshold=Severity.HIGH,
+            )
+
+            # Should only have the HIGH severity threat
+            assert len(result.rules_threats) == 1
+            assert result.rules_threats[0].severity == Severity.HIGH
+
+    @patch("adversary_mcp_server.scan_engine.SemgrepScanner")
+    def test_get_scanner_stats_semgrep_unavailable(self, mock_semgrep_scanner):
+        """Test get_scanner_stats when Semgrep is unavailable."""
+        mock_threat_engine = Mock()
+        mock_threat_engine.get_rule_statistics.return_value = {"total_rules": 10}
+        mock_credential_manager = Mock()
+
+        # Mock Semgrep scanner as unavailable
+        mock_semgrep_instance = Mock()
+        mock_semgrep_instance.is_available.return_value = False
+        mock_semgrep_scanner.return_value = mock_semgrep_instance
+
+        scanner = ScanEngine(
+            threat_engine=mock_threat_engine,
+            credential_manager=mock_credential_manager,
+            enable_llm_analysis=False,
+        )
+
+        stats = scanner.get_scanner_stats()
+
+        assert stats["semgrep_scanner_available"] is False
+        assert stats["semgrep_analysis_enabled"] is False
+
+    @patch("adversary_mcp_server.scan_engine.SemgrepScanner")
+    @patch("adversary_mcp_server.scan_engine.ASTScanner")
+    def test_scan_engine_initialization_semgrep_unavailable_warning(
+        self, mock_ast_scanner, mock_semgrep_scanner
+    ):
+        """Test ScanEngine initialization with Semgrep unavailable generates warning."""
+        mock_threat_engine = Mock()
+        mock_credential_manager = Mock()
+        mock_config = Mock()
+        mock_config.enable_semgrep_scanning = True
+        mock_credential_manager.load_config.return_value = mock_config
+
+        # Mock Semgrep scanner as unavailable
+        mock_semgrep_instance = Mock()
+        mock_semgrep_instance.is_available.return_value = False
+        mock_semgrep_scanner.return_value = mock_semgrep_instance
+
+        with patch("adversary_mcp_server.scan_engine.logger") as mock_logger:
+            scanner = ScanEngine(
+                threat_engine=mock_threat_engine,
+                credential_manager=mock_credential_manager,
+                enable_llm_analysis=False,
+            )
+
+            # Should log warning about Semgrep not being available
+            mock_logger.warning.assert_called_with(
+                "Semgrep not available - install semgrep for enhanced analysis"
+            )
+            assert scanner.enable_semgrep_analysis is False
+
+    @patch("adversary_mcp_server.scan_engine.SemgrepScanner")
+    @patch("adversary_mcp_server.scan_engine.ASTScanner")
+    def test_scan_file_generic_language_skips_ast(
+        self, mock_ast_scanner, mock_semgrep_scanner
+    ):
+        """Test that scan_file skips AST scanning for generic files."""
+        mock_threat_engine = Mock()
+        mock_credential_manager = Mock()
+        mock_config = Mock()
+        mock_config.enable_semgrep_scanning = False
+        mock_credential_manager.load_config.return_value = mock_config
+
+        # Mock Semgrep scanner
+        mock_semgrep_instance = Mock()
+        mock_semgrep_instance.is_available.return_value = False
+        mock_semgrep_scanner.return_value = mock_semgrep_instance
+
+        scanner = ScanEngine(
+            threat_engine=mock_threat_engine,
+            credential_manager=mock_credential_manager,
+            enable_llm_analysis=False,
+        )
+
+        # Create a temporary file with generic extension
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".unknown", delete=False
+        ) as f:
+            f.write("some generic content")
+            temp_file = Path(f.name)
+
+        try:
+            result = scanner.scan_file_sync(
+                file_path=temp_file,
+                language=Language.GENERIC,
+                use_llm=False,
+                use_semgrep=False,
+                use_rules=True,
+            )
+
+            assert isinstance(result, EnhancedScanResult)
+            assert result.scan_metadata["rules_scan_success"] is True
+            assert result.scan_metadata["rules_scan_reason"] == "skipped_generic_file"
+
+            # AST scanner should not be called for generic files
+            mock_ast_scanner.return_value.scan_code.assert_not_called()
+
+        finally:
+            temp_file.unlink()
+
+    @patch("adversary_mcp_server.scan_engine.SemgrepScanner")
+    @patch("adversary_mcp_server.scan_engine.ASTScanner")
+    def test_scan_file_binary_file_handling(
+        self, mock_ast_scanner, mock_semgrep_scanner
+    ):
+        """Test that scan_file handles binary files gracefully."""
+        mock_threat_engine = Mock()
+        mock_credential_manager = Mock()
+        mock_config = Mock()
+        mock_config.enable_semgrep_scanning = False
+        mock_credential_manager.load_config.return_value = mock_config
+
+        # Mock Semgrep scanner
+        mock_semgrep_instance = Mock()
+        mock_semgrep_instance.is_available.return_value = False
+        mock_semgrep_scanner.return_value = mock_semgrep_instance
+
+        scanner = ScanEngine(
+            threat_engine=mock_threat_engine,
+            credential_manager=mock_credential_manager,
+            enable_llm_analysis=False,
+        )
+
+        # Create a temporary binary file
+        with tempfile.NamedTemporaryFile(mode="wb", suffix=".py", delete=False) as f:
+            f.write(b"\x00\x01\x02\x03\xff\xfe")  # More obvious binary content
+            temp_file = Path(f.name)
+
+        try:
+            # Use patch to mock the file opening to simulate UnicodeDecodeError
+            with patch(
+                "builtins.open", mock_open(read_data=b"\x00\x01\x02\x03\xff\xfe")
+            ) as mock_file:
+                # Configure the mock to raise UnicodeDecodeError when reading
+                mock_file.return_value.__enter__.return_value.read.side_effect = (
+                    UnicodeDecodeError(
+                        "utf-8", b"\x00\x01\x02\x03\xff\xfe", 0, 1, "invalid start byte"
+                    )
+                )
+
+                result = scanner.scan_file_sync(
+                    file_path=temp_file,
+                    language=Language.PYTHON,
+                    use_llm=False,
+                    use_semgrep=False,
+                    use_rules=True,
+                )
+
+                assert isinstance(result, EnhancedScanResult)
+                assert result.scan_metadata["rules_scan_success"] is False
+                assert (
+                    result.scan_metadata["rules_scan_reason"] == "binary_file_skipped"
+                )
+
+        finally:
+            temp_file.unlink()
+
+    @patch("adversary_mcp_server.scan_engine.SemgrepScanner")
+    @patch("adversary_mcp_server.scan_engine.ASTScanner")
+    def test_scan_file_ast_scanner_exception(
+        self, mock_ast_scanner, mock_semgrep_scanner
+    ):
+        """Test scan_file handles AST scanner exceptions."""
+        mock_threat_engine = Mock()
+        mock_credential_manager = Mock()
+        mock_config = Mock()
+        mock_config.enable_semgrep_scanning = False
+        mock_credential_manager.load_config.return_value = mock_config
+
+        # Mock AST scanner to raise exception
+        mock_ast_instance = Mock()
+        mock_ast_instance.scan_code.side_effect = Exception("AST scan failed")
+        mock_ast_scanner.return_value = mock_ast_instance
+
+        # Mock Semgrep scanner
+        mock_semgrep_instance = Mock()
+        mock_semgrep_instance.is_available.return_value = False
+        mock_semgrep_scanner.return_value = mock_semgrep_instance
+
+        scanner = ScanEngine(
+            threat_engine=mock_threat_engine,
+            credential_manager=mock_credential_manager,
+            enable_llm_analysis=False,
+        )
+
+        # Create a temporary file
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write("print('test')")
+            temp_file = Path(f.name)
+
+        try:
+            result = scanner.scan_file_sync(
+                file_path=temp_file,
+                language=Language.PYTHON,
+                use_llm=False,
+                use_semgrep=False,
+                use_rules=True,
+            )
+
+            assert isinstance(result, EnhancedScanResult)
+            assert result.scan_metadata["rules_scan_success"] is False
+            assert result.scan_metadata["rules_scan_reason"] == "scan_failed"
+            assert "AST scan failed" in result.scan_metadata["rules_scan_error"]
+
+        finally:
+            temp_file.unlink()
+
+    @patch("adversary_mcp_server.scan_engine.SemgrepScanner")
+    @patch("adversary_mcp_server.scan_engine.ASTScanner")
+    def test_scan_file_rules_disabled(self, mock_ast_scanner, mock_semgrep_scanner):
+        """Test scan_file with rules disabled."""
+        mock_threat_engine = Mock()
+        mock_credential_manager = Mock()
+        mock_config = Mock()
+        mock_config.enable_semgrep_scanning = False
+        mock_credential_manager.load_config.return_value = mock_config
+
+        # Mock Semgrep scanner
+        mock_semgrep_instance = Mock()
+        mock_semgrep_instance.is_available.return_value = False
+        mock_semgrep_scanner.return_value = mock_semgrep_instance
+
+        scanner = ScanEngine(
+            threat_engine=mock_threat_engine,
+            credential_manager=mock_credential_manager,
+            enable_llm_analysis=False,
+        )
+
+        # Create a temporary file
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write("print('test')")
+            temp_file = Path(f.name)
+
+        try:
+            result = scanner.scan_file_sync(
+                file_path=temp_file,
+                language=Language.PYTHON,
+                use_llm=False,
+                use_semgrep=False,
+                use_rules=False,  # Disabled
+            )
+
+            assert isinstance(result, EnhancedScanResult)
+            assert result.scan_metadata["rules_scan_success"] is False
+            assert result.scan_metadata["rules_scan_reason"] == "disabled_by_user"
+
+            # AST scanner should not be called
+            mock_ast_scanner.return_value.scan_code.assert_not_called()
+
+        finally:
+            temp_file.unlink()
+
+    @patch("adversary_mcp_server.scan_engine.SemgrepScanner")
+    @patch("adversary_mcp_server.scan_engine.ASTScanner")
+    def test_scan_file_semgrep_unavailable(
+        self, mock_ast_scanner, mock_semgrep_scanner
+    ):
+        """Test scan_file with Semgrep unavailable."""
+        mock_threat_engine = Mock()
+        mock_credential_manager = Mock()
+        mock_config = Mock()
+        mock_config.enable_semgrep_scanning = True
+        mock_credential_manager.load_config.return_value = mock_config
+
+        # Mock AST scanner
+        mock_ast_instance = Mock()
+        mock_ast_instance.scan_code.return_value = []
+        mock_ast_scanner.return_value = mock_ast_instance
+
+        # Mock Semgrep scanner as unavailable
+        mock_semgrep_instance = Mock()
+        mock_semgrep_instance.is_available.return_value = False
+        mock_semgrep_instance.get_status.return_value = {
+            "available": False,
+            "error": "Semgrep not found",
+            "installation_status": "not_installed",
+            "installation_guidance": "Run: pip install semgrep",
+        }
+        mock_semgrep_scanner.return_value = mock_semgrep_instance
+
+        scanner = ScanEngine(
+            threat_engine=mock_threat_engine,
+            credential_manager=mock_credential_manager,
+            enable_llm_analysis=False,
+        )
+
+        # Create a temporary file
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write("print('test')")
+            temp_file = Path(f.name)
+
+        try:
+            result = scanner.scan_file_sync(
+                file_path=temp_file,
+                language=Language.PYTHON,
+                use_llm=False,
+                use_semgrep=True,
+                use_rules=False,
+            )
+
+            assert isinstance(result, EnhancedScanResult)
+            assert result.scan_metadata["semgrep_scan_success"] is False
+            assert result.scan_metadata["semgrep_scan_reason"] == "not_available"
+
+        finally:
+            temp_file.unlink()
+
+    @patch("adversary_mcp_server.scan_engine.SemgrepScanner")
+    @patch("adversary_mcp_server.scan_engine.ASTScanner")
+    @pytest.mark.asyncio
+    async def test_scan_file_semgrep_scan_exception(
+        self, mock_ast_scanner, mock_semgrep_scanner
+    ):
+        """Test scan_file handles Semgrep scan exceptions."""
+        mock_threat_engine = Mock()
+        mock_credential_manager = Mock()
+        mock_config = Mock()
+        mock_config.enable_semgrep_scanning = True
+        mock_config.semgrep_config = None
+        mock_config.semgrep_rules = None
+        mock_config.semgrep_timeout = 60
+        mock_credential_manager.load_config.return_value = mock_config
+
+        # Mock AST scanner
+        mock_ast_instance = Mock()
+        mock_ast_instance.scan_code.return_value = []
+        mock_ast_scanner.return_value = mock_ast_instance
+
+        # Mock Semgrep scanner to raise exception
+        mock_semgrep_instance = Mock()
+        mock_semgrep_instance.is_available.return_value = True
+        mock_semgrep_instance.get_status.return_value = {
+            "available": True,
+            "version": "1.0.0",
+        }
+        mock_semgrep_instance.scan_file = AsyncMock(
+            side_effect=Exception("Semgrep scan failed")
+        )
+        mock_semgrep_scanner.return_value = mock_semgrep_instance
+
+        scanner = ScanEngine(
+            threat_engine=mock_threat_engine,
+            credential_manager=mock_credential_manager,
+            enable_llm_analysis=False,
+        )
+
+        # Create a temporary file
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write("print('test')")
+            temp_file = Path(f.name)
+
+        try:
+            result = await scanner.scan_file(
+                file_path=temp_file,
+                language=Language.PYTHON,
+                use_llm=False,
+                use_semgrep=True,
+                use_rules=False,
+            )
+
+            assert isinstance(result, EnhancedScanResult)
+            assert result.scan_metadata["semgrep_scan_success"] is False
+            assert result.scan_metadata["semgrep_scan_reason"] == "scan_failed"
+            assert "Semgrep scan failed" in result.scan_metadata["semgrep_scan_error"]
+
+        finally:
+            temp_file.unlink()

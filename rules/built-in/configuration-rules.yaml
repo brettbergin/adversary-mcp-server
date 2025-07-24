@@ -8,7 +8,7 @@ rules:
     category: "configuration"
     severity: "medium"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "DEBUG\\s*=\\s*True"
@@ -16,12 +16,12 @@ rules:
         value: "debug:\\s*true"
       - type: "pattern"
         value: "NODE_ENV.*development"
-    
+
     exploit_templates:
       - type: "payload"
         template: "Debug information disclosure"
         description: "Stack traces and sensitive data"
-    
+
     remediation: "Disable debug mode in production"
     references:
       - "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/"
@@ -34,7 +34,7 @@ rules:
     category: "authentication"
     severity: "high"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "password.*admin"
@@ -44,12 +44,12 @@ rules:
         case_sensitive: false
       - type: "pattern"
         value: "password.*123"
-    
+
     exploit_templates:
       - type: "payload"
         template: "admin:admin login"
         description: "Default credential access"
-    
+
     remediation: "Use strong, unique credentials"
     references:
       - "https://owasp.org/Top10/A07_2021-Identification_and_Authentication_Failures/"
@@ -62,7 +62,7 @@ rules:
     category: "configuration"
     severity: "medium"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "sslmode\\s*=\\s*disable"
@@ -70,12 +70,12 @@ rules:
         value: "ssl\\s*=\\s*false"
       - type: "pattern"
         value: "encrypt\\s*=\\s*false"
-    
+
     exploit_templates:
       - type: "payload"
         template: "Database traffic interception"
         description: "Man-in-the-middle attack"
-    
+
     remediation: "Enable SSL/TLS for database connections"
     references:
       - "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/"
@@ -88,18 +88,18 @@ rules:
     category: "configuration"
     severity: "medium"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "Access-Control-Allow-Origin.*\\*"
       - type: "pattern"
         value: "cors.*origin.*\\*"
-    
+
     exploit_templates:
       - type: "payload"
         template: "Cross-origin data theft"
         description: "CORS bypass attack"
-    
+
     remediation: "Use specific origins in CORS configuration"
     references:
       - "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/"
@@ -112,7 +112,7 @@ rules:
     category: "configuration"
     severity: "medium"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "@app\\.route"
@@ -120,12 +120,12 @@ rules:
         value: "app\\.get\\("
       - type: "pattern"
         value: "app\\.post\\("
-    
+
     exploit_templates:
       - type: "payload"
         template: "Brute force attack"
         description: "API abuse"
-    
+
     remediation: "Implement rate limiting"
     references:
       - "https://owasp.org/Top10/A07_2021-Identification_and_Authentication_Failures/"
@@ -138,7 +138,7 @@ rules:
     category: "configuration"
     severity: "medium"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "log.*password"
@@ -146,12 +146,12 @@ rules:
         value: "log.*secret"
       - type: "pattern"
         value: "console\\.log.*password"
-    
+
     exploit_templates:
       - type: "payload"
         template: "Log file password exposure"
         description: "Credential disclosure"
-    
+
     remediation: "Avoid logging sensitive data"
     references:
       - "https://owasp.org/Top10/A09_2021-Security_Logging_and_Monitoring_Failures/"
@@ -164,18 +164,18 @@ rules:
     category: "configuration"
     severity: "medium"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "chmod.*777"
       - type: "pattern"
         value: "chmod.*666"
-    
+
     exploit_templates:
       - type: "payload"
         template: "Unauthorized file access"
         description: "File permission abuse"
-    
+
     remediation: "Use principle of least privilege"
     references:
       - "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/"
@@ -188,7 +188,7 @@ rules:
     category: "configuration"
     severity: "high"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "/admin"
@@ -196,12 +196,12 @@ rules:
         value: "/dashboard"
       - type: "pattern"
         value: "/management"
-    
+
     exploit_templates:
       - type: "payload"
         template: "Unauthorized admin access"
         description: "Admin interface exposure"
-    
+
     remediation: "Restrict admin interface access"
     references:
       - "https://owasp.org/Top10/A01_2021-Broken_Access_Control/"
@@ -214,7 +214,7 @@ rules:
     category: "configuration"
     severity: "medium"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "SESSION_COOKIE_SECURE\\s*=\\s*False"
@@ -222,12 +222,12 @@ rules:
         value: "secure:\\s*false"
       - type: "pattern"
         value: "httpOnly:\\s*false"
-    
+
     exploit_templates:
       - type: "payload"
         template: "Session hijacking"
         description: "Cookie theft"
-    
+
     remediation: "Configure secure session settings"
     references:
       - "https://owasp.org/Top10/A07_2021-Identification_and_Authentication_Failures/"
@@ -240,18 +240,18 @@ rules:
     category: "configuration"
     severity: "medium"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "app\\.run\\("
       - type: "pattern"
         value: "app\\.listen\\("
-    
+
     exploit_templates:
       - type: "payload"
         template: "Security header bypass"
         description: "Various client-side attacks"
-    
+
     remediation: "Configure security headers: HSTS, CSP, X-Frame-Options"
     references:
       - "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/"
@@ -264,7 +264,7 @@ rules:
     category: "configuration"
     severity: "high"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "ssl_version.*SSLv2"
@@ -272,12 +272,12 @@ rules:
         value: "ssl_version.*SSLv3"
       - type: "pattern"
         value: "ssl_version.*TLSv1"
-    
+
     exploit_templates:
       - type: "payload"
         template: "SSL/TLS downgrade attack"
         description: "Protocol downgrade"
-    
+
     remediation: "Use TLS 1.2 or higher"
     references:
       - "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/"
@@ -290,7 +290,7 @@ rules:
     category: "configuration"
     severity: "medium"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "process\\.env"
@@ -298,12 +298,12 @@ rules:
         value: "os\\.environ"
       - type: "pattern"
         value: "getenv\\("
-    
+
     exploit_templates:
       - type: "payload"
         template: "Environment variable disclosure"
         description: "Sensitive data exposure"
-    
+
     remediation: "Secure environment variable handling"
     references:
       - "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/"
@@ -316,18 +316,18 @@ rules:
     category: "configuration"
     severity: "medium"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "set_cookie\\("
       - type: "pattern"
         value: "cookie\\("
-    
+
     exploit_templates:
       - type: "payload"
         template: "Cookie theft via XSS"
         description: "Session hijacking"
-    
+
     remediation: "Set httpOnly, secure, and sameSite attributes"
     references:
       - "https://owasp.org/Top10/A07_2021-Identification_and_Authentication_Failures/"
@@ -340,7 +340,7 @@ rules:
     category: "configuration"
     severity: "high"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "jwt.*secret.*test"
@@ -348,12 +348,12 @@ rules:
         value: "jwt.*secret.*123"
       - type: "pattern"
         value: "algorithm.*none"
-    
+
     exploit_templates:
       - type: "payload"
         template: "JWT signature bypass"
         description: "Token manipulation"
-    
+
     remediation: "Use strong JWT secrets and algorithms"
     references:
       - "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/"
@@ -366,7 +366,7 @@ rules:
     category: "configuration"
     severity: "high"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "public-read"
@@ -374,14 +374,14 @@ rules:
         value: "public-read-write"
       - type: "pattern"
         value: "AllUsers"
-    
+
     exploit_templates:
       - type: "payload"
         template: "Public bucket data exposure"
         description: "Unauthorized data access"
-    
+
     remediation: "Restrict bucket access to authorized users"
     references:
       - "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/"
     cwe_id: "CWE-284"
-    owasp_category: "A05:2021 - Security Misconfiguration" 
+    owasp_category: "A05:2021 - Security Misconfiguration"

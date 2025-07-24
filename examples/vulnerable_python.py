@@ -37,22 +37,22 @@ def vulnerable_sql_query(username, password):
 def vulnerable_command_execution(user_input):
     """Command injection vulnerability - os.system with user input."""
     # VULNERABILITY: Command injection
-    os.system("echo " + user_input)
+    os.system("echo " + user_input)  # noqa: S605
 
     # Another command injection variant
-    subprocess.call("ls " + user_input, shell=True)
+    subprocess.call("ls " + user_input, shell=True)  # noqa: S602
 
 
 def vulnerable_deserialization(serialized_data):
     """Unsafe deserialization vulnerability."""
     # VULNERABILITY: Unsafe pickle deserialization
-    return pickle.loads(serialized_data)
+    return pickle.loads(serialized_data)  # noqa: S301
 
 
 def vulnerable_file_access(filename):
     """Path traversal vulnerability."""
     # VULNERABILITY: Path traversal - no input validation
-    with open("/var/www/uploads/" + filename, "r") as f:
+    with open("/var/www/uploads/" + filename) as f:
         return f.read()
 
 
@@ -88,10 +88,10 @@ def weak_crypto():
     """Weak cryptographic practices."""
     # VULNERABILITY: Weak hashing algorithm
     password = "user_password"
-    weak_hash = hashlib.md5(password.encode()).hexdigest()
+    weak_hash = hashlib.md5(password.encode()).hexdigest()  # noqa: S324
 
     # VULNERABILITY: Predictable random numbers for security
-    session_token = str(random.randint(1000, 9999))
+    session_token = str(random.randint(1000, 9999))  # noqa: S311
 
     return weak_hash, session_token
 
@@ -99,14 +99,14 @@ def weak_crypto():
 def eval_vulnerability(user_code):
     """Code injection via eval."""
     # VULNERABILITY: Code injection
-    result = eval(user_code)
+    result = eval(user_code)  # noqa: S307
     return result
 
 
 def exec_vulnerability(user_script):
     """Code injection via exec."""
     # VULNERABILITY: Code injection
-    exec(user_script)
+    exec(user_script)  # noqa: S102
 
 
 if __name__ == "__main__":
@@ -123,4 +123,4 @@ if __name__ == "__main__":
     secrets = hardcoded_secrets()
     print(f"Found secrets: {secrets}")
 
-    app.run(debug=True)  # VULNERABILITY: Debug mode in production
+    app.run(debug=True)  # noqa: S201

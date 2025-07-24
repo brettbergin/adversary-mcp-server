@@ -1,14 +1,14 @@
 """LLM-based security analyzer for detecting code vulnerabilities using AI."""
 
 import json
-import logging
 from dataclasses import dataclass
 from typing import Any
 
 from .credential_manager import CredentialManager
+from .logging_config import get_logger
 from .threat_engine import Category, Language, Severity, ThreatMatch
 
-logger = logging.getLogger(__name__)
+logger = get_logger("llm_scanner")
 
 
 class LLMAnalysisError(Exception):
@@ -41,6 +41,10 @@ class LLMSecurityFinding:
         Returns:
             ThreatMatch object
         """
+        logger.debug(
+            f"Converting LLMSecurityFinding to ThreatMatch: {self.finding_type} ({self.severity})"
+        )
+
         # Map severity string to enum
         severity_map = {
             "low": Severity.LOW,
@@ -102,10 +106,16 @@ class LLMSecurityFinding:
 
         # Get category, defaulting to MISC if not found
         category = category_map.get(self.finding_type.lower(), Category.MISC)
+        if self.finding_type.lower() not in category_map:
+            logger.debug(
+                f"Unknown finding type '{self.finding_type}', mapping to MISC category"
+            )
 
         severity = severity_map.get(self.severity.lower(), Severity.MEDIUM)
+        if self.severity.lower() not in severity_map:
+            logger.debug(f"Unknown severity '{self.severity}', mapping to MEDIUM")
 
-        return ThreatMatch(
+        threat_match = ThreatMatch(
             rule_id=f"llm_{self.finding_type}",
             rule_name=self.finding_type.replace("_", " ").title(),
             description=self.description,
@@ -120,6 +130,11 @@ class LLMSecurityFinding:
             source="llm",  # LLM scanner
         )
 
+        logger.debug(
+            f"Successfully created ThreatMatch: {threat_match.rule_id} at line {threat_match.line_number}"
+        )
+        return threat_match
+
 
 @dataclass
 class LLMAnalysisPrompt:
@@ -133,13 +148,16 @@ class LLMAnalysisPrompt:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
-        return {
+        logger.debug(f"Converting LLMAnalysisPrompt to dict for {self.file_path}")
+        result = {
             "system_prompt": self.system_prompt,
             "user_prompt": self.user_prompt,
             "file_path": self.file_path,
             "language": self.language.value,
             "max_findings": self.max_findings,
         }
+        logger.debug(f"LLMAnalysisPrompt dict created with keys: {list(result.keys())}")
+        return result
 
 
 class LLMScanner:
@@ -151,8 +169,16 @@ class LLMScanner:
         Args:
             credential_manager: Credential manager for configuration
         """
+        logger.info("Initializing LLMScanner")
         self.credential_manager = credential_manager
-        self.config = credential_manager.load_config()
+        try:
+            self.config = credential_manager.load_config()
+            logger.debug(
+                f"LLMScanner configuration loaded successfully: {type(self.config)}"
+            )
+        except Exception as e:
+            logger.error(f"Failed to load configuration in LLMScanner: {e}")
+            raise
 
     def is_available(self) -> bool:
         """Check if LLM analysis is available.
@@ -160,6 +186,9 @@ class LLMScanner:
         Returns:
             True if LLM analysis is available (always true now since we use client LLM)
         """
+        logger.debug(
+            "LLMScanner.is_available() called - returning True (client-based LLM)"
+        )
         return True
 
     def create_analysis_prompt(
@@ -180,16 +209,32 @@ class LLMScanner:
         Returns:
             LLMAnalysisPrompt object
         """
-        system_prompt = self._get_system_prompt()
-        user_prompt = self._create_user_prompt(source_code, language, max_findings)
-
-        return LLMAnalysisPrompt(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            file_path=file_path,
-            language=language,
-            max_findings=max_findings,
+        logger.info(f"Creating analysis prompt for {file_path} ({language.value})")
+        logger.debug(
+            f"Source code length: {len(source_code)} characters, max_findings: {max_findings}"
         )
+
+        try:
+            system_prompt = self._get_system_prompt()
+            logger.debug(
+                f"System prompt created, length: {len(system_prompt)} characters"
+            )
+
+            user_prompt = self._create_user_prompt(source_code, language, max_findings)
+            logger.debug(f"User prompt created, length: {len(user_prompt)} characters")
+
+            prompt = LLMAnalysisPrompt(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                file_path=file_path,
+                language=language,
+                max_findings=max_findings,
+            )
+            logger.info(f"Successfully created analysis prompt for {file_path}")
+            return prompt
+        except Exception as e:
+            logger.error(f"Failed to create analysis prompt for {file_path}: {e}")
+            raise
 
     def parse_analysis_response(
         self, response_text: str, file_path: str
@@ -203,21 +248,38 @@ class LLMScanner:
         Returns:
             List of LLMSecurityFinding objects
         """
+        logger.info(f"Parsing LLM analysis response for {file_path}")
+        logger.debug(f"Response text length: {len(response_text)} characters")
+
+        if not response_text or not response_text.strip():
+            logger.warning(f"Empty or whitespace-only response for {file_path}")
+            return []
+
         try:
             # Try to parse as JSON first
+            logger.debug("Attempting to parse response as JSON")
             data = json.loads(response_text)
+            logger.debug(
+                f"Successfully parsed JSON, data keys: {list(data.keys()) if isinstance(data, dict) else type(data)}"
+            )
 
             findings = []
-            for finding_data in data.get("findings", []):
+            raw_findings = data.get("findings", [])
+            logger.info(f"Found {len(raw_findings)} raw findings in response")
+
+            for i, finding_data in enumerate(raw_findings):
+                logger.debug(f"Processing finding {i+1}/{len(raw_findings)}")
                 try:
                     # Validate and convert line number
                     line_number = int(finding_data.get("line_number", 1))
                     if line_number < 1:
+                        logger.debug(f"Invalid line number {line_number}, setting to 1")
                         line_number = 1
 
                     # Validate confidence
                     confidence = float(finding_data.get("confidence", 0.5))
                     if not (0.0 <= confidence <= 1.0):
+                        logger.debug(f"Invalid confidence {confidence}, setting to 0.5")
                         confidence = 0.5
 
                     finding = LLMSecurityFinding(
@@ -233,17 +295,30 @@ class LLMScanner:
                         owasp_category=finding_data.get("owasp_category"),
                     )
                     findings.append(finding)
+                    logger.debug(
+                        f"Successfully created finding: {finding.finding_type} ({finding.severity})"
+                    )
                 except Exception as e:
-                    logger.warning(f"Failed to parse finding: {e}")
+                    logger.warning(f"Failed to parse finding {i+1}: {e}")
+                    logger.debug(f"Failed finding data: {finding_data}")
                     continue
 
+            logger.info(
+                f"Successfully parsed {len(findings)} valid findings from {len(raw_findings)} raw findings"
+            )
             return findings
 
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse LLM response as JSON: {e}")
+            logger.error(f"Failed to parse LLM response as JSON for {file_path}: {e}")
+            logger.debug(
+                f"Response text preview (first 500 chars): {response_text[:500]}"
+            )
             raise LLMAnalysisError(f"Invalid JSON response from LLM: {e}")
         except Exception as e:
-            logger.error(f"Error parsing LLM response: {e}")
+            logger.error(f"Error parsing LLM response for {file_path}: {e}")
+            logger.debug(
+                f"Response text preview (first 500 chars): {response_text[:500]}"
+            )
             raise LLMAnalysisError(f"Error parsing LLM response: {e}")
 
     def _get_system_prompt(self) -> str:
@@ -252,7 +327,8 @@ class LLMScanner:
         Returns:
             System prompt string
         """
-        return """You are a senior security engineer performing static code analysis. 
+        logger.debug("Generating system prompt for LLM analysis")
+        return """You are a senior security engineer performing static code analysis.
 Your task is to analyze code for security vulnerabilities and provide detailed, actionable findings.
 
 Guidelines:
@@ -298,11 +374,23 @@ Vulnerability types to look for:
         Returns:
             Formatted prompt string
         """
+        logger.debug(
+            f"Creating user prompt for {language.value} code, max_findings: {max_findings}"
+        )
+
         # Truncate very long code to fit in token limits
         max_code_length = 8000  # Leave room for prompt and response
+        original_length = len(source_code)
         if len(source_code) > max_code_length:
+            logger.debug(
+                f"Truncating code from {original_length} to {max_code_length} characters"
+            )
             source_code = (
                 source_code[:max_code_length] + "\n... [truncated for analysis]"
+            )
+        else:
+            logger.debug(
+                f"Code length {original_length} is within limit, no truncation needed"
             )
 
         prompt = f"""Analyze the following {language.value} code for security vulnerabilities:
@@ -341,6 +429,7 @@ Response format:
   ]
 }}"""
 
+        logger.debug(f"Generated user prompt, final length: {len(prompt)} characters")
         return prompt
 
     def analyze_code(
@@ -364,6 +453,68 @@ Response format:
         Returns:
             Empty list (client-based LLM doesn't do analysis here)
         """
+        logger.info(f"analyze_code called for {file_path} ({language.value})")
+        logger.debug(
+            "Client-based LLM approach - returning empty list (analysis done by client)"
+        )
+        # In client-based approach, we don't perform actual analysis
+        # The client gets prompts via create_analysis_prompt() and processes them
+        return []
+
+    async def analyze_file(
+        self,
+        file_path,
+        language: Language,
+        max_findings: int = 20,
+    ) -> list[LLMSecurityFinding]:
+        """Analyze a single file for security vulnerabilities.
+
+        For client-based LLM integration, this method returns empty list
+        since actual analysis is done by the client's LLM.
+
+        Args:
+            file_path: Path to the file to analyze
+            language: Programming language
+            max_findings: Maximum number of findings to return
+
+        Returns:
+            Empty list (client-based LLM doesn't do analysis here)
+        """
+        logger.info(f"analyze_file called for {file_path} ({language.value})")
+        logger.debug(
+            "Client-based LLM approach - returning empty list (analysis done by client)"
+        )
+        # In client-based approach, we don't perform actual analysis
+        # The client gets prompts via create_analysis_prompt() and processes them
+        return []
+
+    async def analyze_directory(
+        self,
+        directory_path,
+        recursive: bool = True,
+        max_files: int | None = None,
+        max_findings_per_file: int = 20,
+    ) -> list[LLMSecurityFinding]:
+        """Analyze an entire directory for security vulnerabilities.
+
+        For client-based LLM integration, this method returns empty list
+        since actual analysis is done by the client's LLM.
+
+        Args:
+            directory_path: Path to the directory to analyze
+            recursive: Whether to scan subdirectories
+            max_files: Maximum number of files to analyze
+            max_findings_per_file: Maximum number of findings per file
+
+        Returns:
+            Empty list (client-based LLM doesn't do analysis here)
+        """
+        logger.info(
+            f"analyze_directory called for {directory_path} (recursive={recursive})"
+        )
+        logger.debug(
+            "Client-based LLM approach - returning empty list (analysis done by client)"
+        )
         # In client-based approach, we don't perform actual analysis
         # The client gets prompts via create_analysis_prompt() and processes them
         return []
@@ -382,10 +533,20 @@ Response format:
         Returns:
             List of findings lists (one per sample)
         """
+        logger.info(f"batch_analyze_code called with {len(code_samples)} samples")
+        logger.debug(
+            "Client-based LLM approach - returning empty results for all samples"
+        )
+
         results = []
-        for code, file_path, language in code_samples:
+        for i, (code, file_path, language) in enumerate(code_samples):
+            logger.debug(
+                f"Processing sample {i+1}/{len(code_samples)}: {file_path} ({language.value})"
+            )
             # For client-based approach, return empty results
             results.append([])
+
+        logger.info(f"Completed batch analysis for {len(code_samples)} samples")
         return results
 
     def get_analysis_stats(self) -> dict[str, Any]:
@@ -394,7 +555,8 @@ Response format:
         Returns:
             Dictionary with analysis stats
         """
-        return {
+        logger.debug("get_analysis_stats called")
+        stats = {
             "total_analyses": 0,
             "successful_analyses": 0,
             "failed_analyses": 0,
@@ -402,3 +564,5 @@ Response format:
             "supported_languages": ["python", "javascript", "typescript"],
             "client_based": True,
         }
+        logger.debug(f"Returning stats: {stats}")
+        return stats
