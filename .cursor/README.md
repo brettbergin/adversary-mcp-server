@@ -69,4 +69,4 @@ Update these files when:
 - Introducing new security patterns or rules
 - Changing tool configurations or dependencies
 
-The configuration is designed to evolve with the project while maintaining consistency in development practices. 
+The configuration is designed to evolve with the project while maintaining consistency in development practices.

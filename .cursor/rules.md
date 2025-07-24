@@ -56,7 +56,7 @@ make dev-setup-uv
 # Before starting work
 make sync                    # Sync dependencies
 
-# During development  
+# During development
 make test-fast              # Quick test feedback
 make format                 # Format code
 make ruff-fix              # Auto-fix linting issues
@@ -183,4 +183,39 @@ make demo                  # Test demo functionality
 
 ### Documentation
 - **Help**: Use `make help` to see all available targets
-- **Examples**: Test examples with `make scan-example` and `make demo` 
+- **Examples**: Test examples with `make scan-example` and `make demo`
+
+## Vulnerable Test Code Management
+
+### Examples Directory Standards
+- **Purpose**: Contains intentionally vulnerable code for testing security scanners
+- **Safety**: Never deploy or run vulnerable example code in production environments
+- **Documentation**: Each vulnerability should be clearly commented for educational purposes
+- **Coverage**: Maintain examples for all major vulnerability categories we detect
+- **Validation**: Regularly test that our scanners detect all known vulnerabilities in examples
+
+### Adding New Vulnerable Examples
+- **Realistic Code**: Create examples that resemble real-world vulnerable patterns
+- **Multiple Languages**: Include examples in Python, JavaScript, and other supported languages
+- **Clear Comments**: Explain why each code pattern is vulnerable
+- **Test Integration**: Ensure `make scan-example` detects the new vulnerabilities
+- **Educational Value**: Examples should help developers understand security issues
+
+### Scanner Validation Workflow
+```bash
+# Test scanners against examples
+make scan-example              # Run security scan on vulnerable examples
+make test-security            # Run security-focused tests
+
+# Validate detection accuracy
+# - Check that all known vulnerabilities are detected
+# - Verify no false positives on safe code patterns
+# - Test scanner effectiveness across different languages
+```
+
+### Vulnerable Code Anti-Patterns
+- ❌ Adding vulnerable code outside the examples/ directory
+- ❌ Running vulnerable example code in production contexts
+- ❌ Creating examples without educational comments
+- ❌ Failing to test that scanners detect new vulnerable examples
+- ❌ Including sensitive or real credentials in example code

@@ -1,6 +1,6 @@
 /**
  * Example vulnerable JavaScript code for demonstration purposes.
- * 
+ *
  * This file contains intentional security vulnerabilities for educational purposes.
  * DO NOT use these patterns in production code.
  */
@@ -146,7 +146,7 @@ function serveFile(filename) {
     if (typeof require !== 'undefined') {
         const fs = require('fs');
         const path = require('path');
-        
+
         // No path validation - allows ../../../etc/passwd
         const filepath = path.join('./uploads', filename);
         return fs.readFileSync(filepath, 'utf8');
@@ -156,16 +156,16 @@ function serveFile(filename) {
 // Example usage (for demonstration only)
 if (typeof window !== 'undefined') {
     console.log('Vulnerable JavaScript loaded - for educational purposes only');
-    
+
     // DOM-based vulnerabilities
     document.addEventListener('DOMContentLoaded', function() {
         // Simulate user input that could be malicious
         updateUserProfile('<script>alert("XSS")</script>');
-        
+
         // Code injection
         processUserExpression('alert("Code injection")');
-        
+
         // Generate weak session token
         console.log('Weak token:', generateSessionToken());
     });
-} 
+}

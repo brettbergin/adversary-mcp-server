@@ -8,7 +8,7 @@ rules:
     category: "injection"
     severity: "high"
     languages: ["python"]
-    
+
     conditions:
       - type: "pattern"
         value: "cursor\\.execute\\(.*\\+.*\\)"
@@ -16,12 +16,12 @@ rules:
         value: "cursor\\.execute\\(.*%.*\\)"
       - type: "pattern"
         value: ".*=.*['\"].*\\+.*['\"].*"
-    
+
     exploit_templates:
       - type: "payload"
         template: "' OR '1'='1' --"
         description: "Basic SQL injection payload"
-    
+
     remediation: "Use parameterized queries or prepared statements"
     references:
       - "https://owasp.org/Top10/A03_2021-Injection/"
@@ -34,16 +34,16 @@ rules:
     category: "injection"
     severity: "critical"
     languages: ["python"]
-    
+
     conditions:
       - type: "function_call"
         value: ["os.system", "subprocess.call", "subprocess.run", "os.popen"]
-    
+
     exploit_templates:
       - type: "payload"
         template: "; cat /etc/passwd"
         description: "Command injection to read sensitive files"
-    
+
     remediation: "Use subprocess with shell=False and validate input"
     references:
       - "https://owasp.org/Top10/A03_2021-Injection/"
@@ -55,16 +55,16 @@ rules:
     category: "deserialization"
     severity: "critical"
     languages: ["python"]
-    
+
     conditions:
       - type: "function_call"
         value: ["pickle.loads", "pickle.load", "cPickle.loads", "cPickle.load"]
-    
+
     exploit_templates:
       - type: "python"
         template: "import pickle; pickle.loads(b'cos\\nsystem\\n(S\\'whoami\\'\\ntR.')"
         description: "Pickle payload for command execution"
-    
+
     remediation: "Use safe serialization formats like JSON"
     references:
       - "https://docs.python.org/3/library/pickle.html#restriction"
@@ -76,7 +76,7 @@ rules:
     category: "path_traversal"
     severity: "high"
     languages: ["python"]
-    
+
     conditions:
       - type: "pattern"
         value: "open\\(.*\\+.*\\)"
@@ -84,12 +84,12 @@ rules:
         value: "open\\(.*%.*\\)"
       - type: "pattern"
         value: "os\\.path\\.join\\(.*\\+.*\\)"
-    
+
     exploit_templates:
       - type: "payload"
         template: "../../../etc/passwd"
         description: "Path traversal to access sensitive files"
-    
+
     remediation: "Validate and sanitize file paths, use os.path.abspath() and check against allowed directories"
     references:
       - "https://owasp.org/Top10/A01_2021-Broken_Access_Control/"
@@ -102,18 +102,18 @@ rules:
     category: "cryptography"
     severity: "medium"
     languages: ["python"]
-    
+
     conditions:
       - type: "function_call"
         value: ["hashlib.md5", "hashlib.sha1", "Crypto.Hash.MD5", "Crypto.Hash.SHA1"]
       - type: "pattern"
         value: "Cipher\\.DES|\\bDES\\.new\\b|\\bRC4\\.new\\b|Cipher\\.RC4|hashlib\\.md5|hashlib\\.sha1|Crypto\\.Hash\\.MD5|Crypto\\.Hash\\.SHA1"
-    
+
     exploit_templates:
       - type: "python"
         template: "import hashlib; hashlib.md5(b'password').hexdigest()"
         description: "Weak hash function usage"
-    
+
     remediation: "Use strong cryptographic algorithms like SHA-256 or SHA-3"
     references:
       - "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/"
@@ -126,7 +126,7 @@ rules:
     category: "secrets"
     severity: "high"
     languages: ["python"]
-    
+
     conditions:
       - type: "pattern"
         value: "password\\s*=\\s*['\"][^'\"]{3,}['\"]"
@@ -137,12 +137,12 @@ rules:
       - type: "pattern"
         value: "secret\\s*=\\s*['\"][^'\"]{8,}['\"]"
         case_sensitive: false
-    
+
     exploit_templates:
       - type: "payload"
         template: "password = \"admin123\""
         description: "Hardcoded password example"
-    
+
     remediation: "Use environment variables or secure configuration management"
     references:
       - "https://owasp.org/Top10/A07_2021-Identification_and_Authentication_Failures/"
@@ -155,18 +155,18 @@ rules:
     category: "xxe"
     severity: "high"
     languages: ["python"]
-    
+
     conditions:
       - type: "function_call"
         value: ["xml.etree.ElementTree.parse", "xml.etree.ElementTree.fromstring", "lxml.etree.parse"]
       - type: "pattern"
         value: "XMLParser\\(.*resolve_entities\\s*=\\s*True.*\\)"
-    
+
     exploit_templates:
       - type: "payload"
         template: "<!DOCTYPE foo [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]><foo>&xxe;</foo>"
         description: "XXE payload to read local files"
-    
+
     remediation: "Disable external entity processing in XML parsers"
     references:
       - "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/"
@@ -179,18 +179,18 @@ rules:
     category: "injection"
     severity: "medium"
     languages: ["python"]
-    
+
     conditions:
       - type: "pattern"
         value: "ldap.*search.*\\+.*"
       - type: "pattern"
         value: "ldap.*search.*%.*"
-    
+
     exploit_templates:
       - type: "payload"
         template: "*)(&(objectClass=user)(uid=admin"
         description: "LDAP injection payload"
-    
+
     remediation: "Use parameterized LDAP queries and input validation"
     references:
       - "https://owasp.org/Top10/A03_2021-Injection/"
@@ -203,18 +203,18 @@ rules:
     category: "deserialization"
     severity: "critical"
     languages: ["python"]
-    
+
     conditions:
       - type: "function_call"
         value: ["yaml.load", "yaml.unsafe_load"]
       - type: "pattern"
         value: "yaml\\.load\\(.*Loader\\s*=\\s*yaml\\.Loader.*\\)"
-    
+
     exploit_templates:
       - type: "python"
         template: "!!python/object/apply:os.system ['whoami']"
         description: "YAML payload for command execution"
-    
+
     remediation: "Use yaml.safe_load() instead of yaml.load()"
     references:
       - "https://owasp.org/Top10/A08_2021-Software_and_Data_Integrity_Failures/"
@@ -227,18 +227,18 @@ rules:
     category: "injection"
     severity: "high"
     languages: ["python"]
-    
+
     conditions:
       - type: "pattern"
         value: "subprocess\\..*shell\\s*=\\s*True"
       - type: "pattern"
         value: "subprocess\\..*shell=True"
-    
+
     exploit_templates:
       - type: "python"
         template: "subprocess.run(user_input, shell=True)"
         description: "Command injection via shell=True"
-    
+
     remediation: "Use subprocess with shell=False and pass arguments as a list"
     references:
       - "https://owasp.org/Top10/A03_2021-Injection/"
@@ -251,18 +251,18 @@ rules:
     category: "configuration"
     severity: "medium"
     languages: ["python"]
-    
+
     conditions:
       - type: "pattern"
         value: "app\\.run\\(.*debug\\s*=\\s*True.*\\)"
       - type: "pattern"
         value: "app\\.debug\\s*=\\s*True"
-    
+
     exploit_templates:
       - type: "payload"
         template: "Access to debug console and stack traces"
         description: "Information disclosure via debug mode"
-    
+
     remediation: "Disable debug mode in production environments"
     references:
       - "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/"
@@ -275,18 +275,18 @@ rules:
     category: "cryptography"
     severity: "medium"
     languages: ["python"]
-    
+
     conditions:
       - type: "function_call"
         value: ["random.random", "random.randint", "random.choice"]
       - type: "pattern"
         value: "import random"
-    
+
     exploit_templates:
       - type: "python"
         template: "import random; token = random.randint(1000, 9999)"
         description: "Predictable random number generation"
-    
+
     remediation: "Use secrets module for cryptographically secure random numbers"
     references:
       - "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/"
@@ -299,7 +299,7 @@ rules:
     category: "injection"
     severity: "high"
     languages: ["python"]
-    
+
     conditions:
       - type: "pattern"
         value: "cursor\\.execute\\(.*\\+.*\\)"
@@ -307,12 +307,12 @@ rules:
         value: "raw\\(.*\\+.*\\)"
       - type: "pattern"
         value: "extra\\(.*\\+.*\\)"
-    
+
     exploit_templates:
       - type: "payload"
         template: "' UNION SELECT username, password FROM users--"
         description: "SQL injection in Django raw queries"
-    
+
     remediation: "Use parameterized queries or Django ORM"
     references:
       - "https://owasp.org/Top10/A03_2021-Injection/"
@@ -325,7 +325,7 @@ rules:
     category: "cryptography"
     severity: "high"
     languages: ["python"]
-    
+
     conditions:
       - type: "pattern"
         value: "ssl_verify\\s*=\\s*False"
@@ -333,12 +333,12 @@ rules:
         value: "verify\\s*=\\s*False"
       - type: "pattern"
         value: "ssl\\.CERT_NONE"
-    
+
     exploit_templates:
       - type: "python"
         template: "requests.get(url, verify=False)"
         description: "Disabling SSL certificate verification"
-    
+
     remediation: "Enable SSL certificate verification"
     references:
       - "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/"
@@ -351,7 +351,7 @@ rules:
     category: "cryptography"
     severity: "medium"
     languages: ["python"]
-    
+
     conditions:
       - type: "pattern"
         value: "password\\s*==\\s*.*"
@@ -359,12 +359,12 @@ rules:
         value: "token\\s*==\\s*.*"
       - type: "pattern"
         value: "secret\\s*==\\s*.*"
-    
+
     exploit_templates:
       - type: "python"
         template: "if password == stored_password:"
         description: "Timing attack vulnerable comparison"
-    
+
     remediation: "Use hmac.compare_digest() for secure string comparison"
     references:
       - "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/"
@@ -377,7 +377,7 @@ rules:
     category: "injection"
     severity: "high"
     languages: ["python"]
-    
+
     conditions:
       - type: "pattern"
         value: "Template\\(.*\\+.*\\)"
@@ -385,12 +385,12 @@ rules:
         value: "render_template_string\\(.*\\+.*\\)"
       - type: "pattern"
         value: "jinja2\\.Template\\(.*\\+.*\\)"
-    
+
     exploit_templates:
       - type: "payload"
         template: "{{ ''.__class__.__mro__[2].__subclasses__()[40]('/etc/passwd').read() }}"
         description: "Jinja2 template injection payload"
-    
+
     remediation: "Use template sandboxing and avoid user input in templates"
     references:
       - "https://owasp.org/Top10/A03_2021-Injection/"
@@ -403,18 +403,18 @@ rules:
     category: "redirect"
     severity: "medium"
     languages: ["python"]
-    
+
     conditions:
       - type: "pattern"
         value: "redirect\\(.*request\\..*\\)"
       - type: "pattern"
         value: "HttpResponseRedirect\\(.*request\\..*\\)"
-    
+
     exploit_templates:
       - type: "payload"
         template: "http://evil.com"
         description: "Redirect to malicious site"
-    
+
     remediation: "Validate redirect URLs against whitelist"
     references:
       - "https://owasp.org/Top10/A01_2021-Broken_Access_Control/"
@@ -427,18 +427,18 @@ rules:
     category: "configuration"
     severity: "high"
     languages: ["python"]
-    
+
     conditions:
       - type: "pattern"
         value: "Access-Control-Allow-Origin.*\\*"
       - type: "pattern"
         value: "Access-Control-Allow-Credentials.*true"
-    
+
     exploit_templates:
       - type: "payload"
         template: "Access-Control-Allow-Origin: *"
         description: "CORS misconfiguration"
-    
+
     remediation: "Use specific origins instead of wildcard with credentials"
     references:
       - "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/"
@@ -451,7 +451,7 @@ rules:
     category: "access_control"
     severity: "medium"
     languages: ["python"]
-    
+
     conditions:
       - type: "pattern"
         value: "\\*\\*request\\.POST"
@@ -459,12 +459,12 @@ rules:
         value: "\\*\\*request\\.json"
       - type: "pattern"
         value: "\\*\\*request\\.form"
-    
+
     exploit_templates:
       - type: "payload"
         template: "{'is_admin': True}"
         description: "Privilege escalation via mass assignment"
-    
+
     remediation: "Use explicit field whitelisting"
     references:
       - "https://owasp.org/Top10/A01_2021-Broken_Access_Control/"
@@ -477,20 +477,20 @@ rules:
     category: "path_traversal"
     severity: "high"
     languages: ["python"]
-    
+
     conditions:
       - type: "pattern"
         value: "zipfile\\.extract\\("
       - type: "pattern"
         value: "tarfile\\.extract\\("
-    
+
     exploit_templates:
       - type: "payload"
         template: "../../../etc/passwd"
         description: "Path traversal via malicious archive"
-    
+
     remediation: "Validate extracted file paths"
     references:
       - "https://owasp.org/Top10/A01_2021-Broken_Access_Control/"
     cwe_id: "CWE-22"
-    owasp_category: "A01:2021 - Broken Access Control" 
+    owasp_category: "A01:2021 - Broken Access Control"

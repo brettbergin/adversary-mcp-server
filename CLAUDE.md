@@ -65,7 +65,7 @@ This is a security analysis MCP (Model Context Protocol) server that provides vu
 
 Rules are organized in `rules/built-in/` by language and category:
 - `python-rules.yaml` - Python-specific vulnerabilities (25+ rules)
-- `javascript-rules.yaml` - JavaScript vulnerabilities (30+ rules) 
+- `javascript-rules.yaml` - JavaScript vulnerabilities (30+ rules)
 - `typescript-rules.yaml` - TypeScript-specific issues
 - `web-security-rules.yaml` - Web application security (18+ rules)
 - `api-security-rules.yaml` - API security patterns (15+ rules)
@@ -102,7 +102,7 @@ Each rule includes:
 ### Testing Strategy
 
 - **Unit Tests**: Individual component testing with mocks
-- **Integration Tests**: Full workflow testing with real files  
+- **Integration Tests**: Full workflow testing with real files
 - **Security Tests**: Validate rule accuracy and exploit safety
 - **Coverage**: Maintain 80%+ test coverage requirement
 - **Markers**: Tests marked as `unit`, `integration`, `security`, `slow`

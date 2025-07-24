@@ -305,4 +305,55 @@ Focus on:
 6. Resource cleanup and DoS prevention
 
 Provide specific code improvements with security justification.
-``` 
+```
+
+## Vulnerable Test Code Analysis
+
+### Analyzing Example Vulnerabilities
+```
+Review this vulnerable test code from the examples/ directory:
+
+{code}
+
+For each vulnerability present:
+1. Identify the specific vulnerability type and pattern
+2. Explain why this code is vulnerable
+3. Describe the potential attack vectors
+4. Suggest how our security scanners should detect this
+5. Verify that our rules/patterns would catch this vulnerability
+6. Recommend improvements to detection logic if needed
+
+Focus on ensuring our scanners can reliably detect these test cases.
+```
+
+### Creating Vulnerable Test Cases
+```
+Create a new vulnerable test case for {vulnerability_type} that should be added to our examples/ directory.
+
+Requirements:
+1. Code should contain realistic {vulnerability_type} vulnerability
+2. Include both vulnerable and context code for realistic testing
+3. Add comments explaining the vulnerability for educational purposes
+4. Ensure the vulnerability would be detected by our scanners
+5. Include multiple variations/patterns if applicable
+6. Test with different programming languages if relevant
+
+The code should serve as a good test case for validating our security scanners.
+```
+
+### Scanner Validation Against Examples
+```
+Test our security scanners against the vulnerable example code:
+
+1. Run all scanner types (rules, LLM, semgrep) on examples/ directory
+2. Verify detection accuracy for each known vulnerability
+3. Identify any false negatives (missed vulnerabilities)
+4. Check for false positives (incorrect detections)
+5. Compare scanner effectiveness across different vulnerability types
+6. Recommend scanner tuning or rule improvements
+
+Expected vulnerabilities in examples/:
+- {list_known_vulnerabilities}
+
+Provide analysis of scanner performance and improvement recommendations.
+```

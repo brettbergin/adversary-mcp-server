@@ -8,7 +8,7 @@ rules:
     category: "xss"
     severity: "high"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "response.*request\\."
@@ -16,12 +16,12 @@ rules:
         value: "echo.*\\$_GET"
       - type: "pattern"
         value: "print.*request\\."
-    
+
     exploit_templates:
       - type: "payload"
         template: "<script>alert('XSS')</script>"
         description: "Reflected XSS payload"
-    
+
     remediation: "Sanitize and encode user input before output"
     references:
       - "https://owasp.org/Top10/A03_2021-Injection/"
@@ -34,7 +34,7 @@ rules:
     category: "xss"
     severity: "critical"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "save.*request\\."
@@ -42,12 +42,12 @@ rules:
         value: "store.*input"
       - type: "pattern"
         value: "insert.*\\$_POST"
-    
+
     exploit_templates:
       - type: "payload"
         template: "<img src=x onerror=alert('Stored XSS')>"
         description: "Stored XSS payload"
-    
+
     remediation: "Sanitize input before storage and output"
     references:
       - "https://owasp.org/Top10/A03_2021-Injection/"
@@ -60,7 +60,7 @@ rules:
     category: "csrf"
     severity: "medium"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "@app\\.route.*POST"
@@ -68,12 +68,12 @@ rules:
         value: "app\\.post\\("
       - type: "pattern"
         value: "router\\.post\\("
-    
+
     exploit_templates:
       - type: "payload"
         template: "<form method='POST' action='/transfer'><input name='amount' value='1000'></form>"
         description: "CSRF attack form"
-    
+
     remediation: "Implement CSRF tokens"
     references:
       - "https://owasp.org/Top10/A01_2021-Broken_Access_Control/"
@@ -86,18 +86,18 @@ rules:
     category: "clickjacking"
     severity: "medium"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "render_template\\("
       - type: "pattern"
         value: "response\\.send\\("
-    
+
     exploit_templates:
       - type: "payload"
         template: "<iframe src='victim.com'></iframe>"
         description: "Clickjacking attack"
-    
+
     remediation: "Set X-Frame-Options or CSP frame-ancestors"
     references:
       - "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/"
@@ -110,18 +110,18 @@ rules:
     category: "headers"
     severity: "low"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "response\\."
       - type: "pattern"
         value: "res\\."
-    
+
     exploit_templates:
       - type: "payload"
         template: "MIME type confusion attack"
         description: "Content type sniffing"
-    
+
     remediation: "Set explicit Content-Type headers"
     references:
       - "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/"
@@ -134,18 +134,18 @@ rules:
     category: "headers"
     severity: "medium"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "response\\."
       - type: "pattern"
         value: "res\\."
-    
+
     exploit_templates:
       - type: "payload"
         template: "Various header-based attacks"
         description: "Security header bypass"
-    
+
     remediation: "Add security headers: HSTS, CSP, X-Content-Type-Options"
     references:
       - "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/"
@@ -158,18 +158,18 @@ rules:
     category: "session"
     severity: "medium"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "login.*session"
       - type: "pattern"
         value: "authenticate.*session"
-    
+
     exploit_templates:
       - type: "payload"
         template: "Fixed session ID attack"
         description: "Session fixation attack"
-    
+
     remediation: "Regenerate session ID after authentication"
     references:
       - "https://owasp.org/Top10/A07_2021-Identification_and_Authentication_Failures/"
@@ -182,18 +182,18 @@ rules:
     category: "session"
     severity: "medium"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "set_cookie\\("
       - type: "pattern"
         value: "cookie\\("
-    
+
     exploit_templates:
       - type: "payload"
         template: "Session hijacking via insecure cookie"
         description: "Cookie theft"
-    
+
     remediation: "Set httpOnly, secure, and sameSite attributes"
     references:
       - "https://owasp.org/Top10/A07_2021-Identification_and_Authentication_Failures/"
@@ -206,18 +206,18 @@ rules:
     category: "path_traversal"
     severity: "high"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "send_file\\(.*request\\."
       - type: "pattern"
         value: "sendFile\\(.*req\\."
-    
+
     exploit_templates:
       - type: "payload"
         template: "../../../../etc/passwd"
         description: "Directory traversal attack"
-    
+
     remediation: "Validate and sanitize file paths"
     references:
       - "https://owasp.org/Top10/A01_2021-Broken_Access_Control/"
@@ -230,18 +230,18 @@ rules:
     category: "file_upload"
     severity: "high"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "upload\\("
       - type: "pattern"
         value: "save\\(.*file"
-    
+
     exploit_templates:
       - type: "payload"
         template: "shell.php upload"
         description: "Malicious file upload"
-    
+
     remediation: "Validate file types, size, and content"
     references:
       - "https://owasp.org/Top10/A01_2021-Broken_Access_Control/"
@@ -254,18 +254,18 @@ rules:
     category: "injection"
     severity: "medium"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "header\\(.*request\\."
       - type: "pattern"
         value: "setHeader\\(.*req\\."
-    
+
     exploit_templates:
       - type: "payload"
         template: "\\r\\nSet-Cookie: evil=value"
         description: "Header injection"
-    
+
     remediation: "Validate and sanitize header values"
     references:
       - "https://owasp.org/Top10/A03_2021-Injection/"
@@ -278,7 +278,7 @@ rules:
     category: "disclosure"
     severity: "medium"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "debug.*True"
@@ -286,12 +286,12 @@ rules:
         value: "stacktrace"
       - type: "pattern"
         value: "error.*traceback"
-    
+
     exploit_templates:
       - type: "payload"
         template: "Stack trace information leak"
         description: "Information disclosure"
-    
+
     remediation: "Disable debug mode and handle errors properly"
     references:
       - "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/"
@@ -304,18 +304,18 @@ rules:
     category: "xxe"
     severity: "high"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "parse.*xml"
       - type: "pattern"
         value: "XMLParser"
-    
+
     exploit_templates:
       - type: "payload"
         template: "<!DOCTYPE foo [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]>"
         description: "XXE file disclosure"
-    
+
     remediation: "Disable external entity processing"
     references:
       - "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/"
@@ -328,18 +328,18 @@ rules:
     category: "injection"
     severity: "medium"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "ldap.*search.*request\\."
       - type: "pattern"
         value: "ldap.*query.*input"
-    
+
     exploit_templates:
       - type: "payload"
         template: "*)(&(uid=admin)(password=*))"
         description: "LDAP injection bypass"
-    
+
     remediation: "Use parameterized LDAP queries"
     references:
       - "https://owasp.org/Top10/A03_2021-Injection/"
@@ -352,7 +352,7 @@ rules:
     category: "ssrf"
     severity: "high"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "requests\\.get\\(.*request\\."
@@ -360,12 +360,12 @@ rules:
         value: "fetch\\(.*req\\."
       - type: "pattern"
         value: "urllib.*request\\."
-    
+
     exploit_templates:
       - type: "payload"
         template: "http://localhost:8080/admin"
         description: "SSRF to internal services"
-    
+
     remediation: "Validate and whitelist URLs"
     references:
       - "https://owasp.org/Top10/A10_2021-Server-Side_Request_Forgery/"
@@ -378,20 +378,20 @@ rules:
     category: "injection"
     severity: "medium"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "request\\.headers\\['host'\\]"
       - type: "pattern"
         value: "req\\.get\\('host'\\)"
-    
+
     exploit_templates:
       - type: "payload"
         template: "Host: evil.com"
         description: "Host header injection"
-    
+
     remediation: "Validate Host header against whitelist"
     references:
       - "https://owasp.org/Top10/A03_2021-Injection/"
     cwe_id: "CWE-20"
-    owasp_category: "A03:2021 - Injection" 
+    owasp_category: "A03:2021 - Injection"

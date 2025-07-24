@@ -3,9 +3,7 @@
 import time
 from pathlib import Path
 
-from watchdog.events import (
-    FileSystemEventHandler,
-)
+from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
 from .threat_engine import ThreatEngine, get_user_rules_directory

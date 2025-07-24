@@ -45,7 +45,7 @@ By participating in this project, you agree to abide by our Code of Conduct:
    source .venv/bin/activate  # Linux/Mac
    # or .venv\Scripts\activate  # Windows
    uv pip install -e ".[dev]"
-   
+
    # OR using traditional pip
    python -m venv .venv
    source .venv/bin/activate
@@ -154,24 +154,24 @@ make test-security    # Security-related tests
    ```python
    import pytest
    from unittest.mock import Mock, patch
-   
+
    from adversary_mcp_server.module import ClassToTest
-   
+
    class TestClassToTest:
        """Test cases for ClassToTest."""
-       
+
        def setup_method(self):
            """Setup test fixtures."""
            self.instance = ClassToTest()
-       
+
        def test_method_should_return_expected_value(self):
            """Test that method returns expected value."""
            # Arrange
            expected = "expected_value"
-           
+
            # Act
            result = self.instance.method()
-           
+
            # Assert
            assert result == expected
    ```
@@ -188,12 +188,12 @@ make test-security    # Security-related tests
    def test_unit_functionality():
        """Unit test."""
        pass
-   
+
    @pytest.mark.integration
    def test_integration_functionality():
        """Integration test."""
        pass
-   
+
    @pytest.mark.security
    def test_security_feature():
        """Security-related test."""
@@ -244,16 +244,16 @@ def scan_code(
     use_llm: bool = False,
 ) -> EnhancedScanResult:
     """Scan source code for security vulnerabilities.
-    
+
     Args:
         source_code: The source code to scan
         file_path: Path to the source file
         language: Programming language of the code
         use_llm: Whether to enable LLM analysis
-        
+
     Returns:
         Enhanced scan result with threat information
-        
+
     Raises:
         ScanEngineError: If scanning fails
         ValueError: If invalid parameters provided
@@ -394,14 +394,14 @@ The project uses semantic versioning (semver):
        category: injection
        severity: high
        languages: [python, javascript]
-       
+
        conditions:
          - type: pattern
            value: "dangerous_pattern.*"
-       
+
        remediation: |
          Fix the issue by doing Y instead of X.
-       
+
        references:
          - https://owasp.org/...
    ```

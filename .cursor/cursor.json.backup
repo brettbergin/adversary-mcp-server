@@ -11,8 +11,7 @@
     "sourceDirectories": ["src/adversary_mcp_server"],
     "testDirectories": ["tests"],
     "configDirectories": ["rules", "scripts"],
-    "documentationDirectories": ["."],
-    "testTargetDirectories": ["examples"]
+    "documentationDirectories": [".", "examples"]
   },
 
   "environment": {
@@ -49,8 +48,7 @@
       "semgrep-report.json"
     ],
     "testPatterns": ["test_*.py", "*_test.py"],
-    "configPatterns": ["*.yaml", "*.yml", "*.toml", "*.json"],
-    "vulnerableCodePatterns": ["examples/*.py", "examples/*.js"]
+    "configPatterns": ["*.yaml", "*.yml", "*.toml", "*.json"]
   },
 
   "dependencies": {
@@ -65,8 +63,7 @@
     "vulnerabilityScanning": true,
     "aiPoweredAnalysis": true,
     "ruleManagement": true,
-    "mcpIntegration": true,
-    "vulnerableCodeTesting": true
+    "mcpIntegration": true
   },
 
   "commands": {
@@ -171,9 +168,9 @@
       "category": "demo"
     },
     "scanExample": {
-      "description": "Test security scanners on vulnerable example code",
+      "description": "Run security scan on example files",
       "command": "source .venv/bin/activate && make scan-example",
-      "category": "testing"
+      "category": "demo"
     },
     "serve": {
       "description": "Start MCP server",

@@ -8,7 +8,7 @@ rules:
     category: "authentication"
     severity: "high"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "@app\\.route.*POST"
@@ -16,12 +16,12 @@ rules:
         value: "@app\\.route.*PUT"
       - type: "pattern"
         value: "@app\\.route.*DELETE"
-    
+
     exploit_templates:
       - type: "payload"
         template: "Unauthenticated API access"
         description: "Direct API manipulation"
-    
+
     remediation: "Implement authentication for all API endpoints"
     references:
       - "https://owasp.org/Top10/A01_2021-Broken_Access_Control/"
@@ -34,18 +34,18 @@ rules:
     category: "authorization"
     severity: "high"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "def.*user_id"
       - type: "pattern"
         value: "function.*userId"
-    
+
     exploit_templates:
       - type: "payload"
         template: "Horizontal privilege escalation"
         description: "Access to other users' data"
-    
+
     remediation: "Implement proper authorization checks"
     references:
       - "https://owasp.org/Top10/A01_2021-Broken_Access_Control/"
@@ -58,18 +58,18 @@ rules:
     category: "injection"
     severity: "medium"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "request\\.args\\.get\\("
       - type: "pattern"
         value: "req\\.query\\."
-    
+
     exploit_templates:
       - type: "payload"
         template: "?param=value1&param=value2"
         description: "Parameter pollution attack"
-    
+
     remediation: "Validate parameter uniqueness"
     references:
       - "https://owasp.org/Top10/A03_2021-Injection/"
@@ -82,18 +82,18 @@ rules:
     category: "access_control"
     severity: "medium"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "\\*\\*request\\.json"
       - type: "pattern"
         value: "\\*\\*req\\.body"
-    
+
     exploit_templates:
       - type: "payload"
         template: "{\"is_admin\": true}"
         description: "Privilege escalation"
-    
+
     remediation: "Use explicit field whitelisting"
     references:
       - "https://owasp.org/Top10/A01_2021-Broken_Access_Control/"
@@ -106,18 +106,18 @@ rules:
     category: "disclosure"
     severity: "medium"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "jsonify\\(user\\)"
       - type: "pattern"
         value: "res\\.json\\(user\\)"
-    
+
     exploit_templates:
       - type: "payload"
         template: "Sensitive data in API response"
         description: "Data over-exposure"
-    
+
     remediation: "Return only necessary data fields"
     references:
       - "https://owasp.org/Top10/A03_2021-Injection/"
@@ -130,18 +130,18 @@ rules:
     category: "access_control"
     severity: "high"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "/users/<int:user_id>"
       - type: "pattern"
         value: "/api/users/:id"
-    
+
     exploit_templates:
       - type: "payload"
         template: "GET /api/users/123"
         description: "Direct object access"
-    
+
     remediation: "Implement proper authorization checks"
     references:
       - "https://owasp.org/Top10/A01_2021-Broken_Access_Control/"
@@ -154,18 +154,18 @@ rules:
     category: "configuration"
     severity: "medium"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "@app\\.route"
       - type: "pattern"
         value: "app\\.get\\("
-    
+
     exploit_templates:
       - type: "payload"
         template: "Automated API abuse"
         description: "Brute force attacks"
-    
+
     remediation: "Implement rate limiting"
     references:
       - "https://owasp.org/Top10/A04_2021-Insecure_Design/"
@@ -178,18 +178,18 @@ rules:
     category: "configuration"
     severity: "low"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "/api/v1/"
       - type: "pattern"
         value: "/api/v2/"
-    
+
     exploit_templates:
       - type: "payload"
         template: "Old API version exploitation"
         description: "Legacy endpoint abuse"
-    
+
     remediation: "Properly manage API versions"
     references:
       - "https://owasp.org/Top10/A09_2021-Security_Logging_and_Monitoring_Failures/"
@@ -202,18 +202,18 @@ rules:
     category: "injection"
     severity: "high"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "json\\.loads\\(request\\."
       - type: "pattern"
         value: "JSON\\.parse\\(req\\."
-    
+
     exploit_templates:
       - type: "payload"
         template: "{\"__proto__\": {\"isAdmin\": true}}"
         description: "JSON injection attack"
-    
+
     remediation: "Validate JSON input structure"
     references:
       - "https://owasp.org/Top10/A03_2021-Injection/"
@@ -226,18 +226,18 @@ rules:
     category: "ssrf"
     severity: "medium"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "requests\\.get\\(url\\)"
       - type: "pattern"
         value: "fetch\\(url\\)"
-    
+
     exploit_templates:
       - type: "payload"
         template: "SSRF via API consumption"
         description: "Server-side request forgery"
-    
+
     remediation: "Validate and whitelist external API endpoints"
     references:
       - "https://owasp.org/Top10/A10_2021-Server-Side_Request_Forgery/"
@@ -250,18 +250,18 @@ rules:
     category: "configuration"
     severity: "medium"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "cors.*true"
       - type: "pattern"
         value: "debug.*true"
-    
+
     exploit_templates:
       - type: "payload"
         template: "Security misconfiguration exploitation"
         description: "Configuration bypass"
-    
+
     remediation: "Review and harden API configuration"
     references:
       - "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/"
@@ -274,18 +274,18 @@ rules:
     category: "disclosure"
     severity: "low"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "introspection.*true"
       - type: "pattern"
         value: "GraphQL.*introspection"
-    
+
     exploit_templates:
       - type: "payload"
         template: "GraphQL schema enumeration"
         description: "API structure disclosure"
-    
+
     remediation: "Disable GraphQL introspection in production"
     references:
       - "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/"
@@ -298,18 +298,18 @@ rules:
     category: "dos"
     severity: "medium"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "GraphQL"
       - type: "pattern"
         value: "graphql"
-    
+
     exploit_templates:
       - type: "payload"
         template: "Deep nested GraphQL query"
         description: "DoS via query complexity"
-    
+
     remediation: "Implement query depth and complexity limits"
     references:
       - "https://owasp.org/Top10/A04_2021-Insecure_Design/"
@@ -322,18 +322,18 @@ rules:
     category: "authentication"
     severity: "high"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "jwt\\.decode\\("
       - type: "pattern"
         value: "verify.*false"
-    
+
     exploit_templates:
       - type: "payload"
         template: "JWT algorithm confusion attack"
         description: "Token signature bypass"
-    
+
     remediation: "Explicitly specify JWT algorithms"
     references:
       - "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/"
@@ -346,20 +346,20 @@ rules:
     category: "dos"
     severity: "medium"
     languages: ["python", "javascript", "typescript"]
-    
+
     conditions:
       - type: "pattern"
         value: "xml\\.etree"
       - type: "pattern"
         value: "parseString\\("
-    
+
     exploit_templates:
       - type: "payload"
         template: "XML entity expansion DoS"
         description: "Billion laughs attack"
-    
+
     remediation: "Disable XML entity expansion"
     references:
       - "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/"
     cwe_id: "CWE-776"
-    owasp_category: "A05:2021 - Security Misconfiguration" 
+    owasp_category: "A05:2021 - Security Misconfiguration"

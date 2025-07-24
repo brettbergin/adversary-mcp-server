@@ -8,11 +8,11 @@ body:
     attributes:
       value: |
         ⚠️ **SECURITY NOTICE** ⚠️
-        
-        If this is a sensitive security vulnerability that could be exploited, please use GitHub's 
-        [private vulnerability reporting](https://github.com/brettbergin/adversary-mcp-server/security/advisories/new) 
+
+        If this is a sensitive security vulnerability that could be exploited, please use GitHub's
+        [private vulnerability reporting](https://github.com/brettbergin/adversary-mcp-server/security/advisories/new)
         instead of this public issue template.
-        
+
         Use this template for:
         - Non-sensitive security improvements
         - Security feature requests
@@ -35,7 +35,7 @@ body:
     attributes:
       label: Issue Description
       description: |
-        Describe the security issue or concern. If this is a vulnerability, 
+        Describe the security issue or concern. If this is a vulnerability,
         explain the potential impact and attack vectors.
     validations:
       required: true
@@ -92,11 +92,11 @@ body:
       description: |
         Environment where the security issue was discovered.
       value: |
-        - OS: 
-        - Python Version: 
-        - Package Version: 
-        - Configuration: 
-        - Scanning Target: 
+        - OS:
+        - Python Version:
+        - Package Version:
+        - Configuration:
+        - Scanning Target:
     validations:
       required: true
 
@@ -126,7 +126,7 @@ body:
     attributes:
       value: |
         ---
-        
-        **Remember**: For sensitive security vulnerabilities, please use 
-        [private vulnerability reporting](https://github.com/brettbergin/adversary-mcp-server/security/advisories/new) 
+
+        **Remember**: For sensitive security vulnerabilities, please use
+        [private vulnerability reporting](https://github.com/brettbergin/adversary-mcp-server/security/advisories/new)
         to help us address the issue responsibly before public disclosure.

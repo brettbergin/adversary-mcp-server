@@ -93,8 +93,6 @@ adversary-mcp-server/
 │   └── templates/                     # Rule templates
 ├── tests/                             # Comprehensive test suite
 ├── examples/                          # Vulnerable test code for scanner validation
-│   ├── vulnerable_python.py          # Python code with security vulnerabilities
-│   └── vulnerable_javascript.js      # JavaScript code with security vulnerabilities
 └── scripts/                           # Utility scripts
 ```
 

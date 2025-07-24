@@ -101,7 +101,7 @@ class EnhancedScanResult:
     llm_threats: list[ThreatMatch]      # LLM scanner results
     semgrep_threats: list[ThreatMatch]  # Semgrep scanner results
     scan_metadata: dict[str, Any]       # Execution metadata
-    
+
     @property
     def all_threats(self) -> list[ThreatMatch]:
         """Aggregated threats from all scanners"""
@@ -336,7 +336,7 @@ class NewScanner:
     async def scan_code(self, code: str, language: Language) -> list[ThreatMatch]:
         """Scanner interface implementation"""
         pass
-    
+
     async def scan_file(self, file_path: Path) -> list[ThreatMatch]:
         """File scanning implementation"""
         pass
@@ -400,4 +400,4 @@ class CustomFormatter:
 └─────────────────────────────────────────────┘
 ```
 
-This architecture provides a solid foundation for extensible, performant security analysis while maintaining clean separation of concerns and strong integration capabilities. 
+This architecture provides a solid foundation for extensible, performant security analysis while maintaining clean separation of concerns and strong integration capabilities.
