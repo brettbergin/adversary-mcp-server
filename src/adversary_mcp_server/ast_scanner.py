@@ -7,8 +7,11 @@ from typing import Any
 
 import esprima
 
+from .logging_config import get_logger
 from .threat_engine import Language as LangEnum
 from .threat_engine import MatchCondition, ThreatEngine, ThreatMatch, ThreatRule
+
+logger = get_logger("ast_scanner")
 
 
 class CodeContext:
@@ -22,13 +25,18 @@ class CodeContext:
             source_code: The source code content
             language: Programming language
         """
+        logger.debug(f"Initializing CodeContext for {file_path} ({language.value})")
         self.file_path = file_path
         self.source_code = source_code
         self.language = language
         self.lines = source_code.split("\n")
+        logger.debug(f"Source code split into {len(self.lines)} lines")
 
         # Parse the code based on language
         self.ast_tree = self._parse_code()
+        logger.debug(
+            f"AST parsing completed, tree: {type(self.ast_tree) if self.ast_tree else 'None'}"
+        )
 
     def _parse_code(self) -> Any:
         """Parse the source code into an AST.
@@ -36,21 +44,30 @@ class CodeContext:
         Returns:
             AST representation of the code
         """
+        logger.debug(f"Parsing {self.language.value} code into AST")
+
         if self.language == LangEnum.PYTHON:
             try:
-                return ast.parse(self.source_code)
-            except SyntaxError:
+                ast_tree = ast.parse(self.source_code)
+                logger.debug("Successfully parsed Python code into AST")
+                return ast_tree
+            except SyntaxError as e:
+                logger.debug(f"Python syntax error during parsing: {e}")
                 # Return None for syntax errors, scanner will handle gracefully
                 return None
 
         elif self.language in [LangEnum.JAVASCRIPT, LangEnum.TYPESCRIPT]:
             try:
                 # Use esprima for JavaScript/TypeScript parsing
-                return esprima.parseScript(self.source_code, tolerant=True)
-            except Exception:
+                ast_tree = esprima.parseScript(self.source_code, tolerant=True)
+                logger.debug(f"Successfully parsed {self.language.value} code into AST")
+                return ast_tree
+            except Exception as e:
+                logger.debug(f"{self.language.value} parsing error: {e}")
                 # Return None for parsing errors
                 return None
 
+        logger.debug(f"No parser available for language {self.language.value}")
         return None
 
     def get_line_content(self, line_number: int) -> str:
@@ -92,6 +109,7 @@ class PythonAnalyzer:
 
     def __init__(self):
         """Initialize the Python analyzer."""
+        logger.debug("Initializing PythonAnalyzer")
         self.function_calls: set[str] = set()
         self.imports: set[str] = set()
         self.variables: set[str] = set()
@@ -105,22 +123,32 @@ class PythonAnalyzer:
         Returns:
             Dictionary containing analysis results
         """
+        logger.debug(f"Starting Python analysis for {context.file_path}")
+
         if context.ast_tree is None:
+            logger.debug("No AST tree available, returning empty analysis")
             return {}
 
         # Reset analysis state
         self.function_calls.clear()
         self.imports.clear()
         self.variables.clear()
+        logger.debug("Cleared analysis state")
 
         # Walk the AST
         self._walk_ast(context.ast_tree)
 
-        return {
+        result = {
             "function_calls": list(self.function_calls),
             "imports": list(self.imports),
             "variables": list(self.variables),
         }
+
+        logger.debug(
+            f"Python analysis completed: {len(result['function_calls'])} function calls, "
+            f"{len(result['imports'])} imports, {len(result['variables'])} variables"
+        )
+        return result
 
     def _walk_ast(self, node: ast.AST) -> None:
         """Walk the AST and collect information."""
@@ -167,6 +195,7 @@ class JavaScriptAnalyzer:
 
     def __init__(self):
         """Initialize the JavaScript analyzer."""
+        logger.debug("Initializing JavaScriptAnalyzer")
         self.function_calls: set[str] = set()
         self.variables: set[str] = set()
         self.properties: set[str] = set()
@@ -180,22 +209,32 @@ class JavaScriptAnalyzer:
         Returns:
             Dictionary containing analysis results
         """
+        logger.debug(f"Starting JavaScript/TypeScript analysis for {context.file_path}")
+
         if context.ast_tree is None:
+            logger.debug("No AST tree available, returning empty analysis")
             return {}
 
         # Reset analysis state
         self.function_calls.clear()
         self.variables.clear()
         self.properties.clear()
+        logger.debug("Cleared analysis state")
 
         # Walk the AST
         self._walk_ast(context.ast_tree)
 
-        return {
+        result = {
             "function_calls": list(self.function_calls),
             "variables": list(self.variables),
             "properties": list(self.properties),
         }
+
+        logger.debug(
+            f"JavaScript/TypeScript analysis completed: {len(result['function_calls'])} function calls, "
+            f"{len(result['variables'])} variables, {len(result['properties'])} properties"
+        )
+        return result
 
     def _walk_ast(self, node: Any) -> None:
         """Walk the JavaScript AST and collect information."""
@@ -275,9 +314,11 @@ class ASTScanner:
         Args:
             threat_engine: Threat detection engine with rules
         """
+        logger.info("Initializing ASTScanner")
         self.threat_engine = threat_engine
         self.python_analyzer = PythonAnalyzer()
         self.js_analyzer = JavaScriptAnalyzer()
+        logger.debug("ASTScanner initialization completed")
 
     def scan_file(
         self, file_path: Path, language: LangEnum | None = None
@@ -291,20 +332,30 @@ class ASTScanner:
         Returns:
             List of detected threats
         """
+        logger.info(f"Starting AST scan of file: {file_path}")
+
         if not file_path.exists():
+            logger.error(f"File not found: {file_path}")
             raise FileNotFoundError(f"File not found: {file_path}")
 
         # Read file content
         try:
             with open(file_path, encoding="utf-8") as f:
                 source_code = f.read()
-        except UnicodeDecodeError:
+            logger.debug(
+                f"Successfully read file content: {len(source_code)} characters"
+            )
+        except UnicodeDecodeError as e:
+            logger.debug(f"Skipping binary file {file_path}: {e}")
             # Skip binary files
             return []
 
         # Detect language if not provided
         if language is None:
             language = self._detect_language(file_path)
+            logger.debug(f"Auto-detected language: {language.value}")
+        else:
+            logger.debug(f"Using provided language: {language.value}")
 
         return self.scan_code(source_code, str(file_path), language)
 

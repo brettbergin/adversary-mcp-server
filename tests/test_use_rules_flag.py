@@ -38,7 +38,7 @@ os.system(user_input)  # Should be detected by rules
         assert len(result.all_threats) == 0
         assert result.scan_metadata["use_rules"] is False
         assert result.scan_metadata["rules_scan_success"] is False
-        assert result.scan_metadata["rules_scan_reason"] == "disabled"
+        assert result.scan_metadata["rules_scan_reason"] == "disabled_by_user"
 
     def test_scan_code_with_rules_enabled(self):
         """Test scan_code with use_rules=True."""

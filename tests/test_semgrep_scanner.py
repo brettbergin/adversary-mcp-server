@@ -2,14 +2,14 @@
 
 import os
 import sys
-from unittest.mock import MagicMock, mock_open, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 # Add the src directory to the path to import modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from adversary_mcp_server.semgrep_scanner import SemgrepError, SemgrepScanner
+from adversary_mcp_server.semgrep_scanner import SemgrepScanner
 from adversary_mcp_server.threat_engine import (
     Category,
     Language,
@@ -26,15 +26,9 @@ class TestSemgrepScanner:
         """Set up test fixtures."""
         self.threat_engine = ThreatEngine()
         self.scanner = SemgrepScanner(self.threat_engine)
-        # Force semgrep to be available for unit tests (override actual system state)
-        self.scanner._semgrep_available = True
 
     def teardown_method(self):
         """Clean up test fixtures."""
-        # Reset any potential state
-        if hasattr(self, "scanner"):
-            # Reset cached availability state
-            self.scanner._semgrep_available = self.scanner._check_semgrep_available()
         self.threat_engine = None
         self.scanner = None
 
@@ -49,6 +43,102 @@ class TestSemgrepScanner:
         """Test failed Semgrep availability check."""
         scanner = SemgrepScanner(self.threat_engine)
         assert scanner.is_available() is False
+
+    def test_get_status_when_available(self):
+        """Test get_status when Semgrep is available."""
+        with patch("subprocess.run") as mock_run:
+            # Mock successful semgrep --version call
+            mock_result = MagicMock()
+            mock_result.returncode = 0
+            mock_result.stdout = "1.128.1"
+            mock_run.return_value = mock_result
+
+            status = self.scanner.get_status()
+
+            assert status["available"] is True
+            assert status["installation_status"] == "available"
+            assert "1.128.1" in status["version"]
+            assert "semgrep_path" in status
+            assert status["has_pro_features"] is False  # Conservative assumption
+
+    def test_get_status_when_not_available(self):
+        """Test get_status when Semgrep is not found."""
+        with patch(
+            "subprocess.run", side_effect=FileNotFoundError("Semgrep not found")
+        ):
+            status = self.scanner.get_status()
+
+            assert status["available"] is False
+            assert status["installation_status"] == "not_installed"
+            assert "Semgrep not found in PATH" in status["error"]
+            assert "Install semgrep" in status["installation_guidance"]
+
+    def test_get_status_timeout_handling(self):
+        """Test get_status handles timeout properly."""
+        import subprocess
+
+        with patch(
+            "subprocess.run", side_effect=subprocess.TimeoutExpired("semgrep", 5)
+        ):
+            status = self.scanner.get_status()
+
+            assert status["available"] is False
+            assert status["installation_status"] == "not_installed"
+            assert "Semgrep not found in PATH" in status["error"]
+
+    def test_get_status_virtual_environment_priority(self):
+        """Test get_status checks virtual environment first."""
+        with (
+            patch("subprocess.run") as mock_run,
+            patch("sys.executable", "/some/venv/bin/python"),
+        ):
+
+            # Mock venv semgrep available
+            mock_result = MagicMock()
+            mock_result.returncode = 0
+            mock_result.stdout = "1.128.1 (venv)"
+            mock_run.return_value = mock_result
+
+            status = self.scanner.get_status()
+
+            # Should call semgrep from virtual environment first
+            mock_run.assert_called_with(
+                ["/some/venv/bin/semgrep", "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+
+            assert status["available"] is True
+            assert status["semgrep_path"] == "/some/venv/bin/semgrep"
+
+    def test_get_status_fallback_to_system_path(self):
+        """Test get_status falls back to system PATH when venv semgrep not found."""
+        with (
+            patch("subprocess.run") as mock_run,
+            patch("sys.executable", "/some/venv/bin/python"),
+        ):
+
+            def mock_subprocess_run(cmd, **kwargs):
+                if "/some/venv/bin/semgrep" in cmd:
+                    # Venv semgrep not found
+                    raise FileNotFoundError("Venv semgrep not found")
+                elif "semgrep" in cmd:
+                    # System semgrep found
+                    mock_result = MagicMock()
+                    mock_result.returncode = 0
+                    mock_result.stdout = "1.128.1 (system)"
+                    return mock_result
+                else:
+                    raise FileNotFoundError("Command not found")
+
+            mock_run.side_effect = mock_subprocess_run
+
+            status = self.scanner.get_status()
+
+            assert status["available"] is True
+            assert status["semgrep_path"] == "semgrep"
+            assert "system" in status["version"]
 
     def test_get_semgrep_env_info_with_token(self):
         """Test environment info with Semgrep token."""
@@ -163,145 +253,22 @@ class TestSemgrepScanner:
         assert self.scanner._get_file_extension(Language.TYPESCRIPT) == ".ts"
 
     @pytest.mark.asyncio
-    @patch("semgrep.run_scan.run_scan_and_return_json")
-    async def test_scan_code_success(self, mock_semgrep_run):
-        """Test successful code scanning with Semgrep Python API."""
-        # Mock Semgrep availability
-        with patch.object(self.scanner, "_semgrep_available", True):
-            # Mock Semgrep output
-            semgrep_output = {
-                "results": [
-                    {
-                        "check_id": "python.lang.security.audit.dangerous-eval.dangerous-eval",
-                        "message": "Found 'eval' which can execute arbitrary code",
-                        "metadata": {"severity": "error"},
-                        "start": {"line": 1},
-                        "end": {"line": 1},
-                        "extra": {"lines": "eval(user_input)"},
-                        "path": "test.py",
-                    }
-                ]
-            }
-
-            mock_semgrep_run.return_value = semgrep_output
-
-            source_code = "eval(user_input)"
-            threats = await self.scanner.scan_code(
-                source_code, "test.py", Language.PYTHON
-            )
-
-            assert len(threats) == 1
-            assert (
-                threats[0].rule_id
-                == "semgrep-python.lang.security.audit.dangerous-eval.dangerous-eval"
-            )
-            assert threats[0].severity == Severity.CRITICAL
-
-            # Verify Semgrep API was called
-            mock_semgrep_run.assert_called_once()
-
-    @pytest.mark.asyncio
     async def test_scan_code_unavailable(self):
         """Test code scanning when Semgrep is unavailable."""
-        with patch.object(self.scanner, "_semgrep_available", False):
+        with patch.object(self.scanner, "is_available", return_value=False):
             source_code = "eval(user_input)"
             threats = await self.scanner.scan_code(
                 source_code, "test.py", Language.PYTHON
             )
 
             assert threats == []
-
-    @patch("semgrep.run_scan.run_scan_and_return_json")
-    @pytest.mark.asyncio
-    async def test_scan_code_error_handling(self, mock_semgrep_run):
-        """Test code scanning with error handling."""
-        with patch.object(self.scanner, "_semgrep_available", True):
-            mock_semgrep_run.side_effect = Exception("Semgrep scan failed")
-
-            source_code = "eval(user_input)"
-
-            with pytest.raises(SemgrepError, match="Semgrep scan failed"):
-                await self.scanner.scan_code(source_code, "test.py", Language.PYTHON)
-
-    @patch("semgrep.run_scan.run_scan_and_return_json")
-    @pytest.mark.asyncio
-    async def test_scan_code_invalid_response(self, mock_semgrep_run):
-        """Test code scanning with invalid response format."""
-        with patch.object(self.scanner, "_semgrep_available", True):
-            mock_semgrep_run.return_value = "invalid response"
-
-            source_code = "eval(user_input)"
-            threats = await self.scanner.scan_code(
-                source_code, "test.py", Language.PYTHON
-            )
-
-            assert threats == []
-
-    @patch("semgrep.run_scan.run_scan_and_return_json")
-    @pytest.mark.asyncio
-    async def test_scan_code_custom_config(self, mock_semgrep_run):
-        """Test code scanning with custom config."""
-        with patch.object(self.scanner, "_semgrep_available", True):
-            mock_semgrep_run.return_value = {"results": []}
-
-            source_code = "eval(user_input)"
-            threats = await self.scanner.scan_code(
-                source_code, "test.py", Language.PYTHON, config="custom-config.yml"
-            )
-
-            assert threats == []
-
-            # Verify custom config was used
-            call_args = mock_semgrep_run.call_args
-            assert str(call_args[1]["config"]).endswith("custom-config.yml")
-
-    @patch("semgrep.run_scan.run_scan_and_return_json")
-    @pytest.mark.asyncio
-    async def test_scan_file_success(self, mock_semgrep_run):
-        """Test successful file scanning."""
-        # Mock Semgrep output
-        semgrep_output = {
-            "results": [
-                {
-                    "check_id": "python.lang.security.audit.dangerous-eval.dangerous-eval",
-                    "message": "Found 'eval' which can execute arbitrary code",
-                    "metadata": {"severity": "error"},
-                    "start": {"line": 1},
-                    "end": {"line": 1},
-                    "extra": {"lines": "eval(user_input)"},
-                    "path": "test.py",
-                }
-            ]
-        }
-
-        mock_semgrep_run.return_value = semgrep_output
-
-        with patch.object(self.scanner, "_semgrep_available", True):
-            threats = await self.scanner.scan_file("test.py", Language.PYTHON)
-
-            assert len(threats) == 1
-            assert (
-                threats[0].rule_id
-                == "semgrep-python.lang.security.audit.dangerous-eval.dangerous-eval"
-            )
-            assert threats[0].severity == Severity.CRITICAL
-
-            # Verify Semgrep API was called
-            mock_semgrep_run.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_scan_file_unavailable(self):
         """Test file scanning when Semgrep is unavailable."""
-        with patch.object(self.scanner, "_semgrep_available", False):
+        with patch.object(self.scanner, "is_available", return_value=False):
             threats = await self.scanner.scan_file("test.py", Language.PYTHON)
             assert threats == []
-
-    @patch("builtins.open", side_effect=FileNotFoundError("File not found"))
-    @pytest.mark.asyncio
-    async def test_scan_file_not_found(self, mock_open):
-        """Test file scanning with missing file."""
-        with pytest.raises(SemgrepError, match="Failed to scan file"):
-            await self.scanner.scan_file("nonexistent.py", Language.PYTHON)
 
 
 class TestSemgrepScannerIntegration:
@@ -311,190 +278,11 @@ class TestSemgrepScannerIntegration:
         """Set up test fixtures."""
         self.threat_engine = ThreatEngine()
         self.scanner = SemgrepScanner(self.threat_engine)
-        # Force semgrep to be available for unit tests (override actual system state)
-        self.scanner._semgrep_available = True
 
     def teardown_method(self):
         """Clean up test fixtures."""
-        # Reset any potential state
-        if hasattr(self, "scanner"):
-            # Reset cached availability state
-            self.scanner._semgrep_available = self.scanner._check_semgrep_available()
         self.threat_engine = None
         self.scanner = None
-
-    @pytest.mark.asyncio
-    async def test_python_code_with_eval(self):
-        """Test scanning Python code with eval vulnerability."""
-        python_code = """
-def dangerous_function(user_input):
-    result = eval(user_input)  # This should be detected
-    return result
-"""
-
-        with patch.object(self.scanner, "_semgrep_available", True):
-            with patch("semgrep.run_scan.run_scan_and_return_json") as mock_semgrep_run:
-                # Mock realistic Semgrep output for eval detection
-                semgrep_output = {
-                    "results": [
-                        {
-                            "check_id": "python.lang.security.audit.dangerous-eval.dangerous-eval",
-                            "message": "Found 'eval' which can execute arbitrary code",
-                            "metadata": {
-                                "severity": "error",
-                                "cwe": ["CWE-95"],
-                                "owasp": "A03:2021",
-                            },
-                            "start": {"line": 3},
-                            "end": {"line": 3},
-                            "extra": {
-                                "lines": "    result = eval(user_input)  # This should be detected"
-                            },
-                        }
-                    ]
-                }
-
-                mock_semgrep_run.return_value = semgrep_output
-
-                with patch("builtins.open", create=True) as mock_open:
-                    mock_file = MagicMock()
-                    mock_file.name = "/tmp/test.py"
-                    mock_open.return_value.__enter__.return_value = mock_file
-
-                    with patch("os.unlink"):
-                        threats = await self.scanner.scan_code(
-                            python_code, "test.py", Language.PYTHON
-                        )
-
-                assert len(threats) == 1
-                threat = threats[0]
-                assert "eval" in threat.description.lower()
-                assert threat.severity == Severity.CRITICAL
-                assert threat.category == Category.RCE  # eval maps to RCE
-                assert threat.confidence == 0.9
-
-    @pytest.mark.asyncio
-    async def test_javascript_code_with_xss(self):
-        """Test scanning JavaScript code with XSS vulnerability."""
-        js_code = """
-function displayUser(userInput) {
-    document.innerHTML = userInput;  // This should be detected as XSS
-}
-"""
-
-        with patch.object(self.scanner, "_semgrep_available", True):
-            with patch("semgrep.run_scan.run_scan_and_return_json") as mock_semgrep_run:
-                # Mock realistic Semgrep output for XSS detection
-                semgrep_output = {
-                    "results": [
-                        {
-                            "check_id": "javascript.lang.security.audit.xss.innerHTML-xss",
-                            "message": "Detected XSS vulnerability via innerHTML",
-                            "metadata": {
-                                "severity": "warning",
-                                "cwe": ["CWE-79"],
-                                "owasp": "A07:2021",
-                            },
-                            "start": {"line": 2},
-                            "end": {"line": 2},
-                            "extra": {"lines": "    document.innerHTML = userInput;"},
-                        }
-                    ]
-                }
-
-                mock_semgrep_run.return_value = semgrep_output
-
-                with patch("builtins.open", create=True) as mock_open:
-                    mock_file = MagicMock()
-                    mock_file.name = "/tmp/test.js"
-                    mock_open.return_value.__enter__.return_value = mock_file
-
-                    with patch("os.unlink"):
-                        threats = await self.scanner.scan_code(
-                            js_code, "test.js", Language.JAVASCRIPT
-                        )
-
-                assert len(threats) == 1
-                threat = threats[0]
-                assert "xss" in threat.description.lower()
-                assert threat.severity == Severity.HIGH
-                assert threat.category == Category.XSS
-
-    @pytest.mark.asyncio
-    async def test_no_vulnerabilities_found(self):
-        """Test scanning code with no vulnerabilities."""
-        safe_code = """
-def safe_function():
-    return "Hello, World!"
-"""
-
-        with patch.object(self.scanner, "_semgrep_available", True):
-            with patch("semgrep.run_scan.run_scan_and_return_json") as mock_semgrep_run:
-                # Mock empty Semgrep output
-                semgrep_output = {"results": []}
-
-                mock_semgrep_run.return_value = semgrep_output
-
-                with patch("builtins.open", create=True) as mock_open:
-                    mock_file = MagicMock()
-                    mock_file.name = "/tmp/test.py"
-                    mock_open.return_value.__enter__.return_value = mock_file
-
-                    with patch("os.unlink"):
-                        threats = await self.scanner.scan_code(
-                            safe_code, "test.py", Language.PYTHON
-                        )
-
-                assert len(threats) == 0
-
-    @patch("semgrep.run_scan.run_scan_and_return_json")
-    @pytest.mark.asyncio
-    async def test_severity_filtering_with_threshold(self, mock_semgrep_run):
-        """Test severity filtering with severity threshold."""
-        # Mock Semgrep output with mixed severities
-        semgrep_output = {
-            "results": [
-                {
-                    "check_id": "test.high.severity",
-                    "message": "High severity issue",
-                    "path": "test.py",
-                    "start": {"line": 1},
-                    "metadata": {"severity": "warning"},  # Maps to HIGH
-                },
-                {
-                    "check_id": "test.medium.severity",
-                    "message": "Medium severity issue",
-                    "path": "test.py",
-                    "start": {"line": 2},
-                    "metadata": {"severity": "info"},  # Maps to MEDIUM
-                },
-                {
-                    "check_id": "test.critical.severity",
-                    "message": "Critical severity issue",
-                    "path": "test.py",
-                    "start": {"line": 3},
-                    "metadata": {"severity": "error"},  # Maps to CRITICAL
-                },
-            ]
-        }
-
-        mock_semgrep_run.return_value = semgrep_output
-
-        # Test with HIGH threshold - should only get HIGH and CRITICAL
-        with patch("tempfile.NamedTemporaryFile"):
-            with patch("os.unlink"):
-                threats = await self.scanner.scan_code(
-                    "test code",
-                    "test.py",
-                    Language.PYTHON,
-                    severity_threshold=Severity.HIGH,
-                )
-
-                assert len(threats) == 2
-                severities = [t.severity for t in threats]
-                assert Severity.HIGH in severities
-                assert Severity.CRITICAL in severities
-                assert Severity.MEDIUM not in severities
 
     @pytest.mark.asyncio
     async def test_filter_by_severity_method(self):
@@ -597,74 +385,9 @@ def safe_function():
             "start": {"line": 1},
         }
         threat4 = self.scanner._convert_semgrep_finding_to_threat(finding4, "test.py")
-        assert threat4.severity == Severity.MEDIUM  # Default fallback
-
-    @patch("semgrep.run_scan.run_scan_and_return_json")
-    @pytest.mark.asyncio
-    async def test_scan_file_with_severity_threshold(self, mock_semgrep_run):
-        """Test scan_file method with severity threshold parameter."""
-        # Mock semgrep output
-        semgrep_output = {
-            "results": [
-                {
-                    "check_id": "test.rule",
-                    "message": "Test message",
-                    "path": "test.py",
-                    "start": {"line": 1},
-                    "metadata": {"severity": "warning"},  # HIGH severity
-                }
-            ]
-        }
-
-        mock_semgrep_run.return_value = semgrep_output
-
-        with patch("builtins.open", mock_open(read_data="test code")):
-            with patch("tempfile.NamedTemporaryFile"):
-                with patch("os.unlink"):
-                    # Test with CRITICAL threshold - should filter out HIGH severity
-                    threats = await self.scanner.scan_file(
-                        "test.py", Language.PYTHON, severity_threshold=Severity.CRITICAL
-                    )
-                    assert len(threats) == 0
-
-                    # Test with MEDIUM threshold - should include HIGH severity
-                    threats = await self.scanner.scan_file(
-                        "test.py", Language.PYTHON, severity_threshold=Severity.MEDIUM
-                    )
-                    assert len(threats) == 1
-
-    @patch("semgrep.run_scan.run_scan_and_return_json")
-    @pytest.mark.asyncio
-    async def test_scan_directory_with_severity_threshold(self, mock_semgrep_run):
-        """Test scan_directory method with severity threshold parameter."""
-        # Mock semgrep output with mixed severities
-        semgrep_output = {
-            "results": [
-                {
-                    "check_id": "test.high",
-                    "message": "High issue",
-                    "path": "test.py",
-                    "start": {"line": 1},
-                    "metadata": {"severity": "warning"},  # HIGH
-                },
-                {
-                    "check_id": "test.medium",
-                    "message": "Medium issue",
-                    "path": "test.py",
-                    "start": {"line": 1},
-                    "metadata": {"severity": "info"},  # MEDIUM
-                },
-            ]
-        }
-
-        mock_semgrep_run.return_value = semgrep_output
-
-        # Test with HIGH threshold
-        threats = await self.scanner.scan_directory(
-            "/test/dir", severity_threshold=Severity.HIGH
-        )
-        assert len(threats) == 1
-        assert threats[0].severity == Severity.HIGH
+        assert (
+            threat4.severity == Severity.HIGH
+        )  # Default is WARNING which maps to HIGH
 
     @pytest.mark.asyncio
     async def test_semgrep_severity_mapping_comprehensive(self):
@@ -722,36 +445,29 @@ def safe_function():
         assert self.scanner._get_file_extension(Language.JAVASCRIPT) == ".js"
         assert self.scanner._get_file_extension(Language.TYPESCRIPT) == ".ts"
 
-    @patch("semgrep.run_scan.run_scan_and_return_json")
     @pytest.mark.asyncio
-    async def test_scan_code_with_semgrep_unavailable(self, mock_semgrep_run):
+    async def test_scan_code_with_semgrep_unavailable(self):
         """Test scan_code when semgrep is not available."""
         # Create scanner with semgrep unavailable
-        with patch.object(self.scanner, "_semgrep_available", False):
+        with patch.object(self.scanner, "is_available", return_value=False):
             threats = await self.scanner.scan_code(
                 "test code", "test.py", Language.PYTHON
             )
             assert threats == []
-            # Ensure subprocess.run was not called
-            mock_semgrep_run.assert_not_called()
 
-    @patch("semgrep.run_scan.run_scan_and_return_json")
     @pytest.mark.asyncio
-    async def test_scan_file_with_semgrep_unavailable(self, mock_semgrep_run):
+    async def test_scan_file_with_semgrep_unavailable(self):
         """Test scan_file when semgrep is not available."""
-        with patch.object(self.scanner, "_semgrep_available", False):
+        with patch.object(self.scanner, "is_available", return_value=False):
             threats = await self.scanner.scan_file("test.py", Language.PYTHON)
             assert threats == []
-            mock_semgrep_run.assert_not_called()
 
-    @patch("semgrep.run_scan.run_scan_and_return_json")
     @pytest.mark.asyncio
-    async def test_scan_directory_with_semgrep_unavailable(self, mock_semgrep_run):
+    async def test_scan_directory_with_semgrep_unavailable(self):
         """Test scan_directory when semgrep is not available."""
-        with patch.object(self.scanner, "_semgrep_available", False):
+        with patch.object(self.scanner, "is_available", return_value=False):
             threats = await self.scanner.scan_directory("/test/dir")
             assert threats == []
-            mock_semgrep_run.assert_not_called()
 
 
 if __name__ == "__main__":

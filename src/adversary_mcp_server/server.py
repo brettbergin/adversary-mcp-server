@@ -66,26 +66,49 @@ class AdversaryMCPServer:
 
     def __init__(self) -> None:
         """Initialize the Adversary MCP server."""
+        logger.info("=== Initializing Adversary MCP Server ===")
         self.server: Server = Server("adversary-mcp-server")
         self.credential_manager = CredentialManager()
+        logger.debug("Created credential manager")
 
         # Initialize core components
+        logger.info("Initializing threat engine...")
         self.threat_engine = ThreatEngine()
+        logger.info(
+            f"Threat engine initialized with {len(self.threat_engine.rules)} rules"
+        )
+
+        logger.debug("Initializing AST scanner...")
         self.ast_scanner = ASTScanner(self.threat_engine)
 
         # Get configuration to determine LLM analysis setting
+        logger.debug("Loading configuration...")
         config = self.credential_manager.load_config()
+        logger.info(
+            f"Configuration loaded - LLM analysis: {config.enable_llm_analysis}"
+        )
+
+        logger.info("Initializing scan engine...")
         self.scan_engine = ScanEngine(
             self.threat_engine,
             self.credential_manager,
             enable_llm_analysis=config.enable_llm_analysis,
         )
+        logger.debug("Scan engine initialized")
+
+        logger.debug("Initializing exploit generator...")
         self.exploit_generator = ExploitGenerator(self.credential_manager)
+
+        logger.debug("Initializing diff scanner...")
         self.diff_scanner = GitDiffScanner(self.scan_engine)
+
+        logger.debug("Initializing false positive manager...")
         self.false_positive_manager = FalsePositiveManager()
 
         # Set up server handlers
+        logger.debug("Setting up server handlers...")
         self._setup_handlers()
+        logger.info("=== Adversary MCP Server initialization complete ===")
 
     def _setup_handlers(self) -> None:
         """Set up server request handlers."""
@@ -486,45 +509,80 @@ class AdversaryMCPServer:
         ) -> list[types.TextContent]:
             """Call the specified tool with the given arguments."""
             try:
-                logger.info(f"=== TOOL CALL START: {name} with args: {arguments} ===")
+                logger.info(f"=== TOOL CALL START: {name} ===")
+                logger.debug(f"Tool arguments: {arguments}")
+
                 if name == "adv_scan_code":
+                    logger.info("Handling scan_code request")
                     return await self._handle_scan_code(arguments)
+
                 elif name == "adv_scan_file":
+                    logger.info("Handling scan_file request")
                     return await self._handle_scan_file(arguments)
+
                 elif name == "adv_scan_folder":
-                    logger.info("=== CALLING _handle_scan_directory ===")
+                    logger.info("Handling scan_folder request")
                     return await self._handle_scan_directory(arguments)
+
                 elif name == "adv_diff_scan":
+                    logger.info("Handling diff_scan request")
                     return await self._handle_diff_scan(arguments)
+
                 elif name == "adv_generate_exploit":
+                    logger.info("Handling generate_exploit request")
                     return await self._handle_generate_exploit(arguments)
+
                 elif name == "adv_list_rules":
+                    logger.info("Handling list_rules request")
                     return await self._handle_list_rules(arguments)
+
                 elif name == "adv_get_rule_details":
+                    logger.info("Handling get_rule_details request")
                     return await self._handle_get_rule_details(arguments)
+
                 elif name == "adv_configure_settings":
+                    logger.info("Handling configure_settings request")
                     return await self._handle_configure_settings(arguments)
+
                 elif name == "adv_get_status":
+                    logger.info("Handling get_status request")
                     return await self._handle_get_status()
+
                 elif name == "adv_get_version":
+                    logger.info("Handling get_version request")
                     return await self._handle_get_version()
+
                 elif name == "adv_mark_false_positive":
+                    logger.info("Handling mark_false_positive request")
                     return await self._handle_mark_false_positive(arguments)
+
                 elif name == "adv_unmark_false_positive":
+                    logger.info("Handling unmark_false_positive request")
                     return await self._handle_unmark_false_positive(arguments)
+
                 elif name == "adv_list_false_positives":
+                    logger.info("Handling list_false_positives request")
                     return await self._handle_list_false_positives(arguments)
+
                 else:
+                    logger.error(f"Unknown tool requested: {name}")
                     raise AdversaryToolError(f"Unknown tool: {name}")
+
             except Exception as e:
-                logger.error(f"Error calling tool {name}: {e}")
+                logger.error(f"Tool {name} execution failed: {e}")
+                logger.debug("Tool {name} error details", exc_info=True)
                 raise AdversaryToolError(f"Tool {name} failed: {str(e)}")
+
+            finally:
+                logger.info(f"=== TOOL CALL END: {name} ===")
 
     async def _handle_scan_code(
         self, arguments: dict[str, Any]
     ) -> list[types.TextContent]:
         """Handle code scanning request."""
         try:
+            logger.info("Starting code scan")
+
             content = arguments["content"]
             language_str = arguments["language"]
             severity_threshold = arguments.get("severity_threshold", "medium")
@@ -535,11 +593,20 @@ class AdversaryMCPServer:
             output_format = arguments.get("output_format", "text")
             output_path = arguments.get("output")
 
+            logger.debug(
+                f"Code scan parameters - Language: {language_str}, "
+                f"Severity: {severity_threshold}, LLM: {use_llm}, "
+                f"Semgrep: {use_semgrep}, Rules: {use_rules}"
+            )
+
             # Convert language string to enum
             language = Language(language_str)
             severity_enum = Severity(severity_threshold)
 
+            logger.info(f"Scanning {len(content)} characters of {language.value} code")
+
             # Scan the code using enhanced scanner (rules-based)
+            logger.debug("Calling scan_engine.scan_code...")
             scan_result = await self.scan_engine.scan_code(
                 source_code=content,
                 file_path="input.code",
@@ -549,45 +616,66 @@ class AdversaryMCPServer:
                 use_rules=use_rules,
                 severity_threshold=severity_enum,
             )
+            logger.info(
+                f"Code scan completed - found {len(scan_result.all_threats)} threats"
+            )
 
             # Generate exploits if requested
             if include_exploits:
+                logger.info("Generating exploits for discovered threats...")
+                exploit_count = 0
                 for threat in scan_result.all_threats:
                     try:
                         exploits = self.exploit_generator.generate_exploits(
                             threat, content, False  # Don't use LLM directly
                         )
                         threat.exploit_examples = exploits
+                        if exploits:
+                            exploit_count += len(exploits)
                     except Exception as e:
                         logger.warning(
                             f"Failed to generate exploits for {threat.rule_id}: {e}"
                         )
+                logger.info(f"Generated {exploit_count} total exploit examples")
+            else:
+                logger.debug("Exploit generation skipped")
 
             # Format results based on output format
             if output_format == "json":
+                logger.debug("Formatting results as JSON")
                 result = self._format_json_scan_results(scan_result, "code")
                 # Save JSON results to custom path or default location
                 save_path = output_path if output_path else "."
-                self._save_scan_results_json(result, save_path)
+                saved_path = self._save_scan_results_json(result, save_path)
+                if saved_path:
+                    logger.info(f"JSON results saved to: {saved_path}")
+                else:
+                    logger.warning("Failed to save JSON results")
             else:
+                logger.debug("Formatting results as text")
                 # Format results with enhanced information
                 result = self._format_enhanced_scan_results(scan_result, "code")
 
                 # Add LLM prompts if requested
                 if use_llm:
+                    logger.debug("Adding LLM analysis prompts to results")
                     result += self._add_llm_analysis_prompts(
                         content, language, "input.code"
                     )
 
                     # Add LLM exploit prompts for each threat found
                     if include_exploits and scan_result.all_threats:
+                        logger.debug("Adding LLM exploit prompts to results")
                         result += self._add_llm_exploit_prompts(
                             scan_result.all_threats, content
                         )
 
+            logger.info("Code scan completed successfully")
             return [types.TextContent(type="text", text=result)]
 
         except Exception as e:
+            logger.error(f"Code scanning failed: {e}")
+            logger.debug("Code scan error details", exc_info=True)
             raise AdversaryToolError(f"Code scanning failed: {e}")
 
     async def _handle_scan_file(
@@ -595,6 +683,8 @@ class AdversaryMCPServer:
     ) -> list[types.TextContent]:
         """Handle file scanning request."""
         try:
+            logger.info("Starting file scan")
+
             file_path = Path(arguments["file_path"]).resolve()
             severity_threshold = arguments.get("severity_threshold", "medium")
             include_exploits = arguments.get("include_exploits", True)
@@ -604,13 +694,21 @@ class AdversaryMCPServer:
             output_format = arguments.get("output_format", "text")
             output_path = arguments.get("output")
 
+            logger.info(f"Scanning file: {file_path}")
+            logger.debug(
+                f"File scan parameters - Severity: {severity_threshold}, "
+                f"LLM: {use_llm}, Semgrep: {use_semgrep}, Rules: {use_rules}"
+            )
+
             if not file_path.exists():
+                logger.error(f"File not found: {file_path}")
                 raise AdversaryToolError(f"File not found: {file_path}")
 
             # Convert severity threshold to enum
             severity_enum = Severity(severity_threshold)
 
             # Scan the file using enhanced scanner (rules-based)
+            logger.debug("Calling scan_engine.scan_file...")
             scan_result = await self.scan_engine.scan_file(
                 file_path=file_path,
                 use_llm=use_llm,
@@ -618,39 +716,57 @@ class AdversaryMCPServer:
                 use_rules=use_rules,
                 severity_threshold=severity_enum,
             )
+            logger.info(
+                f"File scan completed - found {len(scan_result.all_threats)} threats"
+            )
 
             # Generate exploits if requested
             if include_exploits:
+                logger.info("Generating exploits for discovered threats...")
                 file_content = ""
                 try:
                     with open(file_path, encoding="utf-8") as f:
                         file_content = f.read()
-                except Exception:  # nosec B110: ignore
-                    pass  # nosec B110: ignore
+                    logger.debug(f"Read {len(file_content)} characters from file")
+                except Exception as e:
+                    logger.warning(f"Could not read file content for exploits: {e}")
 
+                exploit_count = 0
                 for threat in scan_result.all_threats:
                     try:
                         exploits = self.exploit_generator.generate_exploits(
                             threat, file_content, False  # Don't use LLM directly
                         )
                         threat.exploit_examples = exploits
+                        if exploits:
+                            exploit_count += len(exploits)
                     except Exception as e:
                         logger.warning(
                             f"Failed to generate exploits for {threat.rule_id}: {e}"
                         )
+                logger.info(f"Generated {exploit_count} total exploit examples")
+            else:
+                logger.debug("Exploit generation skipped")
 
             # Format results based on output format
             if output_format == "json":
+                logger.debug("Formatting results as JSON")
                 result = self._format_json_scan_results(scan_result, str(file_path))
                 # Save JSON results to custom path or default location
                 save_path = output_path if output_path else "."
-                self._save_scan_results_json(result, save_path)
+                saved_path = self._save_scan_results_json(result, save_path)
+                if saved_path:
+                    logger.info(f"JSON results saved to: {saved_path}")
+                else:
+                    logger.warning("Failed to save JSON results")
             else:
+                logger.debug("Formatting results as text")
                 # Format results with enhanced information
                 result = self._format_enhanced_scan_results(scan_result, str(file_path))
 
                 # Add LLM prompts if requested
                 if use_llm:
+                    logger.debug("Adding LLM analysis prompts to results")
                     # Read file content for LLM analysis
                     try:
                         with open(file_path, encoding="utf-8") as f:
@@ -665,16 +781,21 @@ class AdversaryMCPServer:
 
                         # Add LLM exploit prompts for each threat found
                         if include_exploits and scan_result.all_threats:
+                            logger.debug("Adding LLM exploit prompts to results")
                             result += self._add_llm_exploit_prompts(
                                 scan_result.all_threats, file_content
                             )
 
                     except Exception as e:
+                        logger.warning(f"Could not read file for LLM analysis: {e}")
                         result += f"\n\n⚠️ **LLM Analysis:** Could not read file for LLM analysis: {e}\n"
 
+            logger.info("File scan completed successfully")
             return [types.TextContent(type="text", text=result)]
 
         except Exception as e:
+            logger.error(f"File scanning failed: {e}")
+            logger.debug("File scan error details", exc_info=True)
             raise AdversaryToolError(f"File scanning failed: {e}")
 
     async def _handle_scan_directory(
@@ -682,7 +803,7 @@ class AdversaryMCPServer:
     ) -> list[types.TextContent]:
         """Handle directory scanning request."""
         try:
-            logger.info(f"Starting directory scan with arguments: {arguments}")
+            logger.info("Starting directory scan")
             directory_path = Path(arguments["directory_path"]).resolve()
             recursive = arguments.get("recursive", True)
             severity_threshold = arguments.get("severity_threshold", "medium")
@@ -693,16 +814,22 @@ class AdversaryMCPServer:
             output_format = arguments.get("output_format", "text")
             output_path = arguments.get("output")
 
-            logger.info(f"Directory path resolved to: {directory_path}")
+            logger.info(f"Scanning directory: {directory_path}")
+            logger.debug(
+                f"Directory scan parameters - Recursive: {recursive}, "
+                f"Severity: {severity_threshold}, LLM: {use_llm}, "
+                f"Semgrep: {use_semgrep}, Rules: {use_rules}"
+            )
 
             if not directory_path.exists():
+                logger.error(f"Directory not found: {directory_path}")
                 raise AdversaryToolError(f"Directory not found: {directory_path}")
 
             # Convert severity threshold to enum
             severity_enum = Severity(severity_threshold)
-            logger.info(f"Starting scan_engine.scan_directory for: {directory_path}")
 
             # Scan the directory using enhanced scanner (rules-based)
+            logger.debug("Calling scan_engine.scan_directory...")
             scan_results = await self.scan_engine.scan_directory(
                 directory_path=directory_path,
                 recursive=recursive,
@@ -714,7 +841,7 @@ class AdversaryMCPServer:
             )
 
             logger.info(
-                f"scan_engine.scan_directory completed, got {len(scan_results)} results"
+                f"Directory scan completed - processed {len(scan_results)} files"
             )
 
             # Combine all threats from all files
@@ -722,28 +849,45 @@ class AdversaryMCPServer:
             for scan_result in scan_results:
                 all_threats.extend(scan_result.all_threats)
 
+            logger.info(f"Total threats found across all files: {len(all_threats)}")
+
             # Generate exploits if requested (limited for directory scans)
             if include_exploits:
+                logger.info(
+                    "Generating exploits for discovered threats (limited to first 10)..."
+                )
+                exploit_count = 0
                 for threat in all_threats[:10]:  # Limit to first 10 threats
                     try:
                         exploits = self.exploit_generator.generate_exploits(
                             threat, "", False  # Don't use LLM directly
                         )
                         threat.exploit_examples = exploits
+                        if exploits:
+                            exploit_count += len(exploits)
                     except Exception as e:
                         logger.warning(
                             f"Failed to generate exploits for {threat.rule_id}: {e}"
                         )
+                logger.info(f"Generated {exploit_count} total exploit examples")
+            else:
+                logger.debug("Exploit generation skipped")
 
             # Format results based on output format
             if output_format == "json":
+                logger.debug("Formatting results as JSON")
                 result = self._format_json_directory_results(
                     scan_results, str(directory_path)
                 )
                 # Save JSON results to custom path or default location
                 save_path = output_path if output_path else "."
-                self._save_scan_results_json(result, save_path)
+                saved_path = self._save_scan_results_json(result, save_path)
+                if saved_path:
+                    logger.info(f"JSON results saved to: {saved_path}")
+                else:
+                    logger.warning("Failed to save JSON results")
             else:
+                logger.debug("Formatting results as text")
                 # Format results with enhanced information
                 result = self._format_directory_scan_results(
                     scan_results, str(directory_path)
@@ -751,6 +895,9 @@ class AdversaryMCPServer:
 
                 # Add LLM prompts if requested (only for files with issues)
                 if use_llm and scan_results:
+                    logger.debug(
+                        "Adding LLM analysis prompts for files with issues (first 3)"
+                    )
                     result += "\n\n# 🤖 LLM Analysis Prompts\n\n"
                     result += "For enhanced LLM-based analysis, use the following prompts with your client's LLM:\n\n"
                     result += "**Note:** Directory scans include prompts for the first 3 files with security issues.\n\n"
@@ -777,11 +924,17 @@ class AdversaryMCPServer:
                             )
 
                         except Exception as e:
+                            logger.warning(
+                                f"Could not read {scan_result.file_path} for LLM analysis: {e}"
+                            )
                             result += f"⚠️ Could not read {scan_result.file_path} for LLM analysis: {e}\n\n"
 
+            logger.info("Directory scan completed successfully")
             return [types.TextContent(type="text", text=result)]
 
         except Exception as e:
+            logger.error(f"Directory scanning failed: {e}")
+            logger.debug("Directory scan error details", exc_info=True)
             raise AdversaryToolError(f"Directory scanning failed: {e}")
 
     async def _handle_diff_scan(
@@ -835,19 +988,27 @@ class AdversaryMCPServer:
 
             # Generate exploits if requested
             if include_exploits:
+                logger.info("Generating exploits for discovered threats...")
+                exploit_count = 0
                 for threat in all_threats[:10]:  # Limit to first 10 threats
                     try:
                         exploits = self.exploit_generator.generate_exploits(
                             threat, "", False  # Don't use LLM directly
                         )
                         threat.exploit_examples = exploits
+                        if exploits:
+                            exploit_count += len(exploits)
                     except Exception as e:
                         logger.warning(
                             f"Failed to generate exploits for {threat.rule_id}: {e}"
                         )
+                logger.info(f"Generated {exploit_count} total exploit examples")
+            else:
+                logger.debug("Exploit generation skipped")
 
             # Format results based on output format
             if output_format == "json":
+                logger.debug("Formatting results as JSON")
                 result = self._format_json_diff_results(
                     scan_results,
                     diff_summary,
@@ -857,6 +1018,7 @@ class AdversaryMCPServer:
                 # Auto-save JSON results to project root
                 self._save_scan_results_json(result, ".")
             else:
+                logger.debug("Formatting results as text")
                 # Format results
                 result = self._format_diff_scan_results(
                     scan_results, diff_summary, source_branch, target_branch
@@ -864,6 +1026,7 @@ class AdversaryMCPServer:
 
                 # Add LLM prompts if requested
                 if use_llm and scan_results:
+                    logger.debug("Adding LLM analysis prompts for diff scan")
                     result += "\n\n# 🤖 LLM Analysis Prompts\n\n"
                     result += "For enhanced LLM-based analysis, use the following prompts with your client's LLM:\n\n"
                     result += "**Note:** Diff scans include prompts for changed code in files with security issues.\n\n"
@@ -907,9 +1070,12 @@ class AdversaryMCPServer:
                                 f"⚠️ Could not get changed code for {file_path}: {e}\n\n"
                             )
 
+            logger.info("Diff scan completed successfully")
             return [types.TextContent(type="text", text=result)]
 
         except Exception as e:
+            logger.error(f"Diff scanning failed: {e}")
+            logger.debug("Diff scan error details", exc_info=True)
             raise AdversaryToolError(f"Diff scanning failed: {e}")
 
     async def _handle_generate_exploit(
@@ -979,11 +1145,14 @@ class AdversaryMCPServer:
                 result += f"```\n{prompt.system_prompt}\n```\n\n"
                 result += "## User Prompt\n\n"
                 result += f"```\n{prompt.user_prompt}\n```\n\n"
-                result += "**Instructions:** Send both prompts to your LLM to generate exploits based on the vulnerability analysis.\n"
+                result += "**Instructions:** Send both prompts to your LLM for enhanced exploit generation.\n"
 
+            logger.info("Exploit generation completed successfully")
             return [types.TextContent(type="text", text=result)]
 
         except Exception as e:
+            logger.error(f"Exploit generation failed: {e}")
+            logger.debug("Exploit generation error details", exc_info=True)
             raise AdversaryToolError(f"Exploit generation failed: {e}")
 
     async def _handle_list_rules(
@@ -1032,9 +1201,12 @@ class AdversaryMCPServer:
                     result += f"  - Languages: {', '.join(rule['languages'])}\n"
                     result += f"  - {rule['description']}\n\n"
 
+            logger.info("Rules list retrieved successfully")
             return [types.TextContent(type="text", text=result)]
 
         except Exception as e:
+            logger.error(f"Failed to list rules: {e}")
+            logger.debug("Rules listing error details", exc_info=True)
             raise AdversaryToolError(f"Failed to list rules: {e}")
 
     async def _handle_get_rule_details(
@@ -1071,9 +1243,12 @@ class AdversaryMCPServer:
                 for ref in rule["references"]:
                     result += f"- {ref}\n"
 
+            logger.info("Rule details retrieved successfully")
             return [types.TextContent(type="text", text=result)]
 
         except Exception as e:
+            logger.error(f"Failed to get rule details: {e}")
+            logger.debug("Rule details retrieval error details", exc_info=True)
             raise AdversaryToolError(f"Failed to get rule details: {e}")
 
     async def _handle_configure_settings(
@@ -1081,33 +1256,59 @@ class AdversaryMCPServer:
     ) -> list[types.TextContent]:
         """Handle configuration settings request."""
         try:
+            logger.info("Configuring server settings")
+            logger.debug(f"Configuration arguments: {arguments}")
+
             config = self.credential_manager.load_config()
+            import dataclasses
+
+            original_config = dataclasses.replace(config)
 
             # Update configuration
             if "severity_threshold" in arguments:
+                old_value = config.severity_threshold
                 config.severity_threshold = arguments["severity_threshold"]
+                logger.info(
+                    f"Severity threshold changed: {old_value} -> {config.severity_threshold}"
+                )
 
             if "exploit_safety_mode" in arguments:
+                old_value = config.exploit_safety_mode
                 config.exploit_safety_mode = arguments["exploit_safety_mode"]
+                logger.info(
+                    f"Exploit safety mode changed: {old_value} -> {config.exploit_safety_mode}"
+                )
 
             if "enable_llm_analysis" in arguments:
+                old_value = config.enable_llm_analysis
                 config.enable_llm_analysis = arguments["enable_llm_analysis"]
+                logger.info(
+                    f"LLM analysis changed: {old_value} -> {config.enable_llm_analysis}"
+                )
 
             if "enable_exploit_generation" in arguments:
+                old_value = config.enable_exploit_generation
                 config.enable_exploit_generation = arguments[
                     "enable_exploit_generation"
                 ]
+                logger.info(
+                    f"Exploit generation changed: {old_value} -> {config.enable_exploit_generation}"
+                )
 
             # Save configuration
+            logger.debug("Saving updated configuration...")
             self.credential_manager.store_config(config)
+            logger.info("Configuration saved successfully")
 
             # Reinitialize components with new config
+            logger.debug("Reinitializing components with new configuration...")
             self.exploit_generator = ExploitGenerator(self.credential_manager)
             self.scan_engine = ScanEngine(
                 self.threat_engine,
                 self.credential_manager,
                 enable_llm_analysis=config.enable_llm_analysis,
             )
+            logger.info("Components reinitialized with new configuration")
 
             result = "✅ Configuration updated successfully!\n\n"
             result += "**Current Settings:**\n"
@@ -1116,14 +1317,18 @@ class AdversaryMCPServer:
             result += f"- LLM Security Analysis: {'✓ Enabled' if config.enable_llm_analysis else '✗ Disabled'}\n"
             result += f"- Exploit Generation: {'✓ Enabled' if config.enable_exploit_generation else '✗ Disabled'}\n"
 
+            logger.info("Server settings updated successfully")
             return [types.TextContent(type="text", text=result)]
 
         except Exception as e:
+            logger.error(f"Failed to configure settings: {e}")
+            logger.debug("Configuration error details", exc_info=True)
             raise AdversaryToolError(f"Failed to configure settings: {e}")
 
     async def _handle_get_status(self) -> list[types.TextContent]:
         """Handle get status request."""
         try:
+            logger.info("Getting server status")
             config = self.credential_manager.load_config()
 
             result = "# Adversary MCP Server Status\n\n"
@@ -1152,9 +1357,12 @@ class AdversaryMCPServer:
             result += "- **LLM Integration:** ✓ Client-based (no API key required)\n"
             result += "- **Scan Engine:** ✓ Active\n"
 
+            logger.info("Status retrieved successfully")
             return [types.TextContent(type="text", text=result)]
 
         except Exception as e:
+            logger.error(f"Failed to get status: {e}")
+            logger.debug("Status error details", exc_info=True)
             raise AdversaryToolError(f"Failed to get status: {e}")
 
     async def _handle_get_version(self) -> list[types.TextContent]:
@@ -1167,9 +1375,12 @@ class AdversaryMCPServer:
             result += "**Supported Languages:** Python, JavaScript, TypeScript\n"
             result += f"**Security Rules:** {len(self.threat_engine.list_rules())}\n"
 
+            logger.info("Version information retrieved successfully")
             return [types.TextContent(type="text", text=result)]
 
         except Exception as e:
+            logger.error(f"Failed to get version: {e}")
+            logger.debug("Version retrieval error details", exc_info=True)
             raise AdversaryToolError(f"Failed to get version: {e}")
 
     def _get_version(self) -> str:
@@ -2059,6 +2270,7 @@ class AdversaryMCPServer:
             Path to saved file or None if save failed
         """
         try:
+            logger.debug(f"Saving scan results to: {output_path}")
             from pathlib import Path
 
             path = Path(output_path)
@@ -2072,30 +2284,17 @@ class AdversaryMCPServer:
 
             # Ensure parent directory exists
             final_path.parent.mkdir(parents=True, exist_ok=True)
+            logger.debug(f"Writing scan results to: {final_path}")
 
             with open(final_path, "w", encoding="utf-8") as f:
                 f.write(json_data)
 
-            logger.info(f"Scan results saved to {final_path}")
+            logger.info(f"Scan results saved successfully to {final_path}")
             return str(final_path)
         except Exception as e:
-            logger.warning(f"Failed to save scan results JSON: {e}")
+            logger.error(f"Failed to save scan results JSON to {output_path}: {e}")
+            logger.debug("Save error details", exc_info=True)
             return None
-
-    async def run(self) -> None:
-        """Run the MCP server."""
-        async with stdio_server() as (read_stream, write_stream):
-            await self.server.run(
-                read_stream,
-                write_stream,
-                InitializationOptions(
-                    server_name="adversary-mcp-server",
-                    server_version=self._get_version(),
-                    capabilities=ServerCapabilities(
-                        tools=ToolsCapability(listChanged=True)
-                    ),
-                ),
-            )
 
     def _add_llm_analysis_prompts(
         self,
@@ -2238,6 +2437,28 @@ class AdversaryMCPServer:
         except Exception as e:
             logger.error(f"Error listing false positives: {e}")
             raise AdversaryToolError(f"Failed to list false positives: {str(e)}")
+
+    async def run(self) -> None:
+        """Run the MCP server."""
+        logger.info("Starting MCP server...")
+        try:
+            async with stdio_server() as (read_stream, write_stream):
+                logger.info("MCP server running and accepting connections")
+                await self.server.run(
+                    read_stream,
+                    write_stream,
+                    InitializationOptions(
+                        server_name="adversary-mcp-server",
+                        server_version=self._get_version(),
+                        capabilities=ServerCapabilities(
+                            tools=ToolsCapability(listChanged=True)
+                        ),
+                    ),
+                )
+        except Exception as e:
+            logger.error(f"Server runtime error: {e}")
+            logger.debug("Server error details", exc_info=True)
+            raise
 
 
 async def async_main() -> None:
