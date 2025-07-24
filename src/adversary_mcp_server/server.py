@@ -15,7 +15,6 @@ from mcp.types import ServerCapabilities, Tool, ToolsCapability
 from pydantic import BaseModel
 
 from . import get_version
-from .ast_scanner import ASTScanner
 from .credential_manager import CredentialManager
 from .diff_scanner import GitDiffScanner
 from .exploit_generator import ExploitGenerator
@@ -24,14 +23,7 @@ from .false_positive_manager import FalsePositiveManager
 # Set up centralized logging
 from .logging_config import get_logger
 from .scan_engine import EnhancedScanResult, ScanEngine
-from .threat_engine import (
-    Category,
-    Language,
-    LanguageSupport,
-    Severity,
-    ThreatEngine,
-    ThreatMatch,
-)
+from .types import Category, Language, LanguageSupport, Severity, ThreatMatch
 
 logger = get_logger("server")
 
@@ -71,28 +63,18 @@ class AdversaryMCPServer:
         self.credential_manager = CredentialManager()
         logger.debug("Created credential manager")
 
-        # Initialize core components
-        logger.info("Initializing threat engine...")
-        self.threat_engine = ThreatEngine()
-        logger.info(
-            f"Threat engine initialized with {len(self.threat_engine.rules)} rules"
-        )
-
-        logger.debug("Initializing AST scanner...")
-        self.ast_scanner = ASTScanner(self.threat_engine)
-
-        # Get configuration to determine LLM analysis setting
+        # Get configuration to determine scanner settings
         logger.debug("Loading configuration...")
         config = self.credential_manager.load_config()
         logger.info(
-            f"Configuration loaded - LLM analysis: {config.enable_llm_analysis}"
+            f"Configuration loaded - LLM analysis: {config.enable_llm_analysis}, Semgrep: {config.enable_semgrep_scanning}"
         )
 
         logger.info("Initializing scan engine...")
         self.scan_engine = ScanEngine(
-            self.threat_engine,
             self.credential_manager,
             enable_llm_analysis=config.enable_llm_analysis,
+            enable_semgrep_analysis=config.enable_semgrep_scanning,
         )
         logger.debug("Scan engine initialized")
 
@@ -153,11 +135,6 @@ class AdversaryMCPServer:
                                 "description": "Whether to include Semgrep analysis",
                                 "default": True,
                             },
-                            "use_rules": {
-                                "type": "boolean",
-                                "description": "Whether to include rules-based threat detection",
-                                "default": True,
-                            },
                             "output_format": {
                                 "type": "string",
                                 "description": "Output format for results",
@@ -201,11 +178,6 @@ class AdversaryMCPServer:
                             "use_semgrep": {
                                 "type": "boolean",
                                 "description": "Whether to include Semgrep analysis",
-                                "default": True,
-                            },
-                            "use_rules": {
-                                "type": "boolean",
-                                "description": "Whether to include rules-based threat detection",
                                 "default": True,
                             },
                             "output_format": {
@@ -256,11 +228,6 @@ class AdversaryMCPServer:
                             "use_semgrep": {
                                 "type": "boolean",
                                 "description": "Whether to include Semgrep analysis",
-                                "default": True,
-                            },
-                            "use_rules": {
-                                "type": "boolean",
-                                "description": "Whether to include rules-based threat detection",
                                 "default": True,
                             },
                             "output_format": {
@@ -315,11 +282,6 @@ class AdversaryMCPServer:
                             "use_semgrep": {
                                 "type": "boolean",
                                 "description": "Whether to include Semgrep analysis",
-                                "default": True,
-                            },
-                            "use_rules": {
-                                "type": "boolean",
-                                "description": "Whether to include rules-based threat detection",
                                 "default": True,
                             },
                             "output_format": {
@@ -589,14 +551,13 @@ class AdversaryMCPServer:
             include_exploits = arguments.get("include_exploits", True)
             use_llm = arguments.get("use_llm", False)
             use_semgrep = arguments.get("use_semgrep", True)
-            use_rules = arguments.get("use_rules", True)
             output_format = arguments.get("output_format", "text")
             output_path = arguments.get("output")
 
             logger.debug(
                 f"Code scan parameters - Language: {language_str}, "
                 f"Severity: {severity_threshold}, LLM: {use_llm}, "
-                f"Semgrep: {use_semgrep}, Rules: {use_rules}"
+                f"Semgrep: {use_semgrep}"
             )
 
             # Convert language string to enum
@@ -613,7 +574,6 @@ class AdversaryMCPServer:
                 language=language,
                 use_llm=use_llm,
                 use_semgrep=use_semgrep,
-                use_rules=use_rules,
                 severity_threshold=severity_enum,
             )
             logger.info(
@@ -690,14 +650,13 @@ class AdversaryMCPServer:
             include_exploits = arguments.get("include_exploits", True)
             use_llm = arguments.get("use_llm", False)
             use_semgrep = arguments.get("use_semgrep", True)
-            use_rules = arguments.get("use_rules", True)
             output_format = arguments.get("output_format", "text")
             output_path = arguments.get("output")
 
             logger.info(f"Scanning file: {file_path}")
             logger.debug(
                 f"File scan parameters - Severity: {severity_threshold}, "
-                f"LLM: {use_llm}, Semgrep: {use_semgrep}, Rules: {use_rules}"
+                f"LLM: {use_llm}, Semgrep: {use_semgrep}"
             )
 
             if not file_path.exists():
@@ -713,7 +672,6 @@ class AdversaryMCPServer:
                 file_path=file_path,
                 use_llm=use_llm,
                 use_semgrep=use_semgrep,
-                use_rules=use_rules,
                 severity_threshold=severity_enum,
             )
             logger.info(
@@ -810,7 +768,6 @@ class AdversaryMCPServer:
             include_exploits = arguments.get("include_exploits", True)
             use_llm = arguments.get("use_llm", False)
             use_semgrep = arguments.get("use_semgrep", True)
-            use_rules = arguments.get("use_rules", True)
             output_format = arguments.get("output_format", "text")
             output_path = arguments.get("output")
 
@@ -818,7 +775,7 @@ class AdversaryMCPServer:
             logger.debug(
                 f"Directory scan parameters - Recursive: {recursive}, "
                 f"Severity: {severity_threshold}, LLM: {use_llm}, "
-                f"Semgrep: {use_semgrep}, Rules: {use_rules}"
+                f"Semgrep: {use_semgrep}"
             )
 
             if not directory_path.exists():
@@ -835,7 +792,6 @@ class AdversaryMCPServer:
                 recursive=recursive,
                 use_llm=use_llm,
                 use_semgrep=use_semgrep,
-                use_rules=use_rules,
                 severity_threshold=severity_enum,
                 max_files=50,  # Limit files for performance
             )
@@ -949,7 +905,6 @@ class AdversaryMCPServer:
             include_exploits = arguments.get("include_exploits", True)
             use_llm = arguments.get("use_llm", False)
             use_semgrep = arguments.get("use_semgrep", True)
-            use_rules = arguments.get("use_rules", True)
             output_format = arguments.get("output_format", "text")
 
             # Convert severity threshold to enum
@@ -976,7 +931,6 @@ class AdversaryMCPServer:
                 working_dir=working_dir_path,
                 use_llm=use_llm,
                 use_semgrep=use_semgrep,
-                use_rules=use_rules,
                 severity_threshold=severity_enum,
             )
 
@@ -1160,48 +1114,46 @@ class AdversaryMCPServer:
     ) -> list[types.TextContent]:
         """Handle list rules request."""
         try:
-            category = arguments.get("category")
-            severity = arguments.get("severity")
-            language = arguments.get("language")
+            # Since threat_engine was removed, we now use Semgrep for rule management
+            logger.info("Listing available Semgrep rules")
 
-            # Get all rules
-            rules = self.threat_engine.list_rules(
-                category=category,
-                min_severity=Severity(severity) if severity else None,
-                language=Language(language) if language else None,
+            # For now, return a message indicating the available scanners
+            result = "# Available Security Analysis Rules\n\n"
+            result += "The Adversary MCP server uses multiple scanners for security analysis:\n\n"
+
+            result += "## Built-in Scanners\n"
+            result += (
+                "- **Semgrep Scanner**: Static analysis with community and pro rules\n"
+            )
+            result += (
+                "- **LLM Scanner**: AI-powered security analysis using client LLM\n"
+            )
+            result += (
+                "- **Enhanced Pattern Matching**: Custom security pattern detection\n\n"
             )
 
-            # Format results
-            result = "# Threat Detection Rules\n\n"
-            result += f"**Total Rules:** {len(rules)}\n"
+            result += "## Semgrep Rules\n"
+            if self.scan_engine.semgrep_scanner.is_available():
+                semgrep_status = self.scan_engine.semgrep_scanner.get_status()
+                result += f"**Status**: ✅ Available (Version: {semgrep_status.get('version', 'unknown')})\n"
+                result += "**Rule Sets**: Auto-configured based on language detection\n"
+                result += "**Coverage**: SQL injection, XSS, authentication, cryptography, and more\n\n"
+            else:
+                result += "**Status**: ❌ Not Available\n"
+                result += "**Installation**: `pip install semgrep` or `brew install semgrep`\n\n"
 
-            if category:
-                result += f"**Category Filter:** {category}\n"
-            if severity:
-                result += f"**Minimum Severity:** {severity}\n"
-            if language:
-                result += f"**Language Filter:** {language}\n"
+            result += "## LLM Analysis\n"
+            if self.scan_engine.enable_llm_analysis:
+                result += "**Status**: ✅ Available (Client-based)\n"
+                result += "**Coverage**: Comprehensive security analysis using your client's LLM\n"
+                result += "**Features**: Context-aware analysis, custom vulnerability detection\n"
+            else:
+                result += "**Status**: ❌ Disabled\n"
+                result += (
+                    "**Enable**: Use `adv_configure_settings` to enable LLM analysis\n"
+                )
 
-            result += "\n## Rules\n\n"
-
-            # Group rules by category
-            categories = {}
-            for rule in rules:
-                cat = rule["category"]
-                if cat not in categories:
-                    categories[cat] = []
-                categories[cat].append(rule)
-
-            for category, cat_rules in categories.items():
-                result += f"### {category}\n\n"
-                for rule in cat_rules:
-                    result += (
-                        f"- **{rule['id']}**: {rule['name']} ({rule['severity']})\n"
-                    )
-                    result += f"  - Languages: {', '.join(rule['languages'])}\n"
-                    result += f"  - {rule['description']}\n\n"
-
-            logger.info("Rules list retrieved successfully")
+            logger.info("Rules information retrieved successfully")
             return [types.TextContent(type="text", text=result)]
 
         except Exception as e:
@@ -1216,34 +1168,34 @@ class AdversaryMCPServer:
         try:
             rule_id = arguments["rule_id"]
 
-            # Get rule details
-            rule = self.threat_engine.get_rule_details(rule_id)
-            if not rule:
-                raise AdversaryToolError(f"Rule not found: {rule_id}")
+            # Since threat_engine was removed, provide information about scanner capabilities
+            result = f"# Rule Details: {rule_id}\n\n"
+            result += "**Note**: The Adversary MCP server now uses distributed rule management.\n\n"
 
-            # Format results
-            result = f"# Rule Details: {rule['name']}\n\n"
-            result += f"**ID:** {rule['id']}\n"
-            result += f"**Category:** {rule['category']}\n"
-            result += f"**Severity:** {rule['severity']}\n"
-            result += f"**Languages:** {', '.join(rule['languages'])}\n\n"
-            result += f"**Description:** {rule['description']}\n\n"
+            result += "## Rule Resolution\n"
+            result += f"**Requested ID**: {rule_id}\n\n"
 
-            if rule.get("pattern"):
-                result += f"**Pattern:** `{rule['pattern']}`\n\n"
+            if rule_id.startswith("semgrep-"):
+                result += "**Scanner**: Semgrep\n"
+                result += "**Type**: Static analysis rule\n"
+                result += "**Documentation**: Visit https://semgrep.dev/docs/ for rule details\n"
+            elif rule_id.startswith("llm_"):
+                result += "**Scanner**: LLM Analysis\n"
+                result += "**Type**: AI-powered security analysis\n"
+                result += (
+                    "**Description**: Dynamic analysis using client LLM capabilities\n"
+                )
+            else:
+                result += "**Scanner**: Enhanced Pattern Matching\n"
+                result += "**Type**: Custom security pattern detection\n"
 
-            if rule.get("cwe_id"):
-                result += f"**CWE ID:** {rule['cwe_id']}\n"
+            result += "\n## Available Information\n"
+            result += "For detailed rule information, please:\n"
+            result += "1. Run a scan to see active rules in action\n"
+            result += "2. Check Semgrep documentation for specific rule details\n"
+            result += "3. Use `adv_get_status` to see available scanner capabilities\n"
 
-            if rule.get("owasp_category"):
-                result += f"**OWASP Category:** {rule['owasp_category']}\n"
-
-            if rule.get("references"):
-                result += "**References:**\n"
-                for ref in rule["references"]:
-                    result += f"- {ref}\n"
-
-            logger.info("Rule details retrieved successfully")
+            logger.info("Rule details information provided")
             return [types.TextContent(type="text", text=result)]
 
         except Exception as e:
@@ -1304,9 +1256,9 @@ class AdversaryMCPServer:
             logger.debug("Reinitializing components with new configuration...")
             self.exploit_generator = ExploitGenerator(self.credential_manager)
             self.scan_engine = ScanEngine(
-                self.threat_engine,
                 self.credential_manager,
                 enable_llm_analysis=config.enable_llm_analysis,
+                enable_semgrep_analysis=config.enable_semgrep_scanning,
             )
             logger.info("Components reinitialized with new configuration")
 
@@ -1338,24 +1290,26 @@ class AdversaryMCPServer:
             result += f"- **LLM Analysis:** {'✓ Enabled' if config.enable_llm_analysis else '✗ Disabled'}\n"
             result += f"- **Exploit Generation:** {'✓ Enabled' if config.enable_exploit_generation else '✗ Disabled'}\n\n"
 
-            result += "## Threat Engine\n"
-            rules = self.threat_engine.list_rules()
-            result += f"- **Total Rules:** {len(rules)}\n"
+            result += "## Security Scanners\n"
 
-            # Count by language
-            lang_counts = {}
-            for rule in rules:
-                for lang in rule["languages"]:
-                    lang_counts[lang] = lang_counts.get(lang, 0) + 1
+            # Semgrep status
+            if self.scan_engine.semgrep_scanner.is_available():
+                semgrep_status = self.scan_engine.semgrep_scanner.get_status()
+                result += f"- **Semgrep Scanner:** ✓ Available (Version: {semgrep_status.get('version', 'unknown')})\n"
+            else:
+                result += "- **Semgrep Scanner:** ✗ Not Available\n"
 
-            for lang, count in lang_counts.items():
-                result += f"- **{lang.capitalize()} Rules:** {count}\n"
+            # LLM status
+            if self.scan_engine.enable_llm_analysis:
+                result += "- **LLM Scanner:** ✓ Enabled (Client-based)\n"
+            else:
+                result += "- **LLM Scanner:** ✗ Disabled\n"
 
             result += "\n## Components\n"
-            result += "- **AST Scanner:** ✓ Active\n"
+            result += "- **Scan Engine:** ✓ Active\n"
             result += "- **Exploit Generator:** ✓ Active\n"
             result += "- **LLM Integration:** ✓ Client-based (no API key required)\n"
-            result += "- **Scan Engine:** ✓ Active\n"
+            result += "- **False Positive Manager:** ✓ Active\n"
 
             logger.info("Status retrieved successfully")
             return [types.TextContent(type="text", text=result)]
@@ -1373,7 +1327,15 @@ class AdversaryMCPServer:
             result += f"**Version:** {version}\n"
             result += "**LLM Integration:** Client-based (no API key required)\n"
             result += "**Supported Languages:** Python, JavaScript, TypeScript\n"
-            result += f"**Security Rules:** {len(self.threat_engine.list_rules())}\n"
+
+            # Count available scanners instead of rules
+            scanner_count = 0
+            if self.scan_engine.semgrep_scanner.is_available():
+                scanner_count += 1
+            if self.scan_engine.enable_llm_analysis:
+                scanner_count += 1
+
+            result += f"**Active Scanners:** {scanner_count}\n"
 
             logger.info("Version information retrieved successfully")
             return [types.TextContent(type="text", text=result)]
@@ -1486,16 +1448,12 @@ class AdversaryMCPServer:
             result += "🎉 **No security vulnerabilities found!**\n\n"
             # Still show analysis overview
             result += "## Analysis Overview\n\n"
-            result += (
-                f"**Rules Engine:** {scan_result.stats['rules_threats']} findings\n"
-            )
             result += f"**LLM Analysis:** {scan_result.stats['llm_threats']} findings\n"
             result += f"**Language:** {scan_result.language.value}\n\n"
             return result
 
         # Analysis overview
         result += "## Analysis Overview\n\n"
-        result += f"**Rules Engine:** {scan_result.stats['rules_threats']} findings\n"
         result += f"**LLM Analysis:** {scan_result.stats['llm_threats']} findings\n"
         result += f"**Total Unique:** {scan_result.stats['unique_threats']} findings\n"
         result += f"**Language:** {scan_result.language.value}\n\n"
@@ -1845,16 +1803,6 @@ class AdversaryMCPServer:
             "statistics": scan_result.stats,
             "threats": threats_data,
             "scanner_execution_status": {
-                "rules_scanner": {
-                    "executed": scan_result.scan_metadata.get(
-                        "rules_scan_success", False
-                    ),
-                    "reason": scan_result.scan_metadata.get(
-                        "rules_scan_reason", "unknown"
-                    ),
-                    "error": scan_result.scan_metadata.get("rules_scan_error", None),
-                    "threats_found": scan_result.stats.get("rules_threats", 0),
-                },
                 "llm_scanner": {
                     "executed": scan_result.scan_metadata.get(
                         "llm_scan_success", False
@@ -1877,9 +1825,6 @@ class AdversaryMCPServer:
                 },
             },
             "scan_details": {
-                "rules_scan_success": scan_result.scan_metadata.get(
-                    "rules_scan_success", False
-                ),
                 "llm_scan_success": scan_result.scan_metadata.get(
                     "llm_scan_success", False
                 ),

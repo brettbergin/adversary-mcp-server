@@ -6,7 +6,7 @@ from pathlib import Path
 
 from .logging_config import get_logger
 from .scan_engine import EnhancedScanResult, ScanEngine
-from .threat_engine import Language, LanguageSupport, Severity
+from .types import Language, LanguageSupport, Severity
 
 logger = get_logger("diff_scanner")
 

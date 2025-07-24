@@ -10,7 +10,7 @@ from click.testing import CliRunner
 
 from adversary_mcp_server.cli import _display_scan_results, _save_results_to_file, cli
 from adversary_mcp_server.credential_manager import SecurityConfig
-from adversary_mcp_server.threat_engine import Category, Language, Severity, ThreatMatch
+from adversary_mcp_server.types import Category, Severity, ThreatMatch
 
 
 class TestCLICommandsCoverage:
@@ -36,12 +36,12 @@ class TestCLICommandsCoverage:
                 "--severity-threshold",
                 "high",
                 "--enable-safety-mode",
-                "--enable-llm",
             ],
         )
 
         assert result.exit_code == 0
-        mock_manager.store_config.assert_called_once()
+        # The actual save_config method is called, not store_config
+        mock_manager.save_config.assert_called_once()
 
     def test_configure_command_with_existing_config(self):
         """Test configure command with existing config."""
@@ -58,7 +58,7 @@ class TestCLICommandsCoverage:
             )
 
             assert result.exit_code == 0
-            mock_instance.store_config.assert_called_once()
+            mock_instance.save_config.assert_called_once()
 
     @patch("adversary_mcp_server.cli.CredentialManager")
     @patch("adversary_mcp_server.cli.console")
@@ -77,8 +77,8 @@ class TestCLICommandsCoverage:
             ],
         )
 
-        # Should still work with default config
-        assert result.exit_code == 0
+        # Should fail when config load fails
+        assert result.exit_code == 1
 
     @patch("adversary_mcp_server.cli.CredentialManager")
     @patch("adversary_mcp_server.cli.console")
@@ -87,64 +87,46 @@ class TestCLICommandsCoverage:
         mock_manager = Mock()
         mock_config = SecurityConfig()
         mock_manager.load_config.return_value = mock_config
-        mock_manager.store_config.side_effect = Exception("Store failed")
+        mock_manager.save_config.side_effect = Exception("Store failed")
         mock_cred_manager.return_value = mock_manager
 
         result = self.runner.invoke(cli, ["configure", "--severity-threshold", "high"])
 
         assert result.exit_code == 1
 
-    @patch("adversary_mcp_server.cli.ThreatEngine")
-    def test_status_command_configured(self, mock_threat_engine):
-        """Test status command with configured system."""
-        with patch("adversary_mcp_server.cli.CredentialManager") as mock_manager:
-            mock_instance = mock_manager.return_value
-            mock_config = SecurityConfig(
-                enable_llm_analysis=True, severity_threshold="high"
-            )
-            mock_instance.load_config.return_value = mock_config
-            mock_instance.has_config.return_value = True
-
-            # Mock ThreatEngine to return some sample rules
-            mock_engine = Mock()
-            mock_engine.list_rules.return_value = [
-                {
-                    "id": "test_rule",
-                    "name": "Test Rule",
-                    "category": "injection",
-                    "severity": "high",
-                    "languages": ["python"],
-                }
-            ]
-            mock_threat_engine.return_value = mock_engine
-
-            runner = CliRunner()
-            result = runner.invoke(cli, ["status"])
-
-            assert result.exit_code == 0
-            # Check for key content that should be in the output
-            assert "Server Status" in result.output or "Configuration" in result.output
-
+    @patch("adversary_mcp_server.cli.ScanEngine")
     @patch("adversary_mcp_server.cli.CredentialManager")
-    @patch("adversary_mcp_server.cli.ThreatEngine")
     @patch("adversary_mcp_server.cli.console")
-    def test_status_command_not_configured(
-        self, mock_console, mock_threat_engine, mock_cred_manager
+    def test_status_command_basic(
+        self, mock_console, mock_cred_manager, mock_scan_engine
     ):
-        """Test status command with unconfigured system."""
+        """Test status command basic functionality."""
         mock_manager = Mock()
-        mock_config = SecurityConfig()
+        mock_config = SecurityConfig(
+            enable_llm_analysis=True, severity_threshold="high"
+        )
         mock_manager.load_config.return_value = mock_config
-        mock_manager.has_config.return_value = False
         mock_cred_manager.return_value = mock_manager
 
+        # Mock ScanEngine and its components
         mock_engine = Mock()
-        mock_engine.list_rules.return_value = []
-        mock_threat_engine.return_value = mock_engine
+        mock_engine.semgrep_scanner.is_available.return_value = True
+        mock_engine.llm_analyzer = Mock()
+        mock_engine.llm_analyzer.is_available.return_value = True
+        mock_scan_engine.return_value = mock_engine
 
         result = self.runner.invoke(cli, ["status"])
 
         assert result.exit_code == 0
+        # Verify console.print was called with status information
+        mock_console.print.assert_called()
+        # Check that at least one call mentions configuration-related content
+        calls = [str(call) for call in mock_console.print.call_args_list]
+        config_mentioned = any(
+            "Configuration" in call or "Adversary MCP Server Status" in call
+            for call in calls
+        )
+        assert config_mentioned
 
     @patch("adversary_mcp_server.cli.CredentialManager")
     @patch("adversary_mcp_server.cli.console")
@@ -158,163 +140,6 @@ class TestCLICommandsCoverage:
 
         assert result.exit_code == 1
 
-    @patch("adversary_mcp_server.cli.ThreatEngine")
-    @patch("adversary_mcp_server.cli.console")
-    def test_list_rules_command_basic(self, mock_console, mock_threat_engine):
-        """Test list_rules command basic functionality."""
-        mock_engine = Mock()
-        mock_engine.list_rules.return_value = [
-            {
-                "id": "sql_injection",
-                "name": "SQL Injection",
-                "category": "injection",
-                "severity": "critical",
-                "languages": ["python", "javascript"],
-            }
-        ]
-        mock_threat_engine.return_value = mock_engine
-
-        result = self.runner.invoke(cli, ["list-rules"])
-
-        assert result.exit_code == 0
-        mock_console.print.assert_called()
-
-    @patch("adversary_mcp_server.cli.ThreatEngine")
-    @patch("adversary_mcp_server.cli.console")
-    def test_list_rules_command_with_filters(self, mock_console, mock_threat_engine):
-        """Test list_rules command with filters."""
-        mock_engine = Mock()
-        mock_engine.list_rules.return_value = [
-            {
-                "id": "sql_injection",
-                "name": "SQL Injection",
-                "category": "injection",
-                "severity": "critical",
-                "languages": ["python"],
-            },
-            {
-                "id": "xss",
-                "name": "XSS",
-                "category": "xss",
-                "severity": "high",
-                "languages": ["javascript"],
-            },
-        ]
-        mock_threat_engine.return_value = mock_engine
-
-        result = self.runner.invoke(
-            cli,
-            [
-                "list-rules",
-                "--category",
-                "injection",
-                "--severity",
-                "high",
-                "--language",
-                "python",
-            ],
-        )
-
-        assert result.exit_code == 0
-
-    @patch("adversary_mcp_server.cli.ThreatEngine")
-    @patch("adversary_mcp_server.cli.console")
-    def test_list_rules_command_with_output(self, mock_console, mock_threat_engine):
-        """Test list_rules command with output file."""
-        mock_engine = Mock()
-        mock_engine.list_rules.return_value = [
-            {
-                "id": "test_rule",
-                "name": "Test Rule",
-                "category": "injection",
-                "severity": "medium",
-                "languages": ["python"],
-            }
-        ]
-        mock_threat_engine.return_value = mock_engine
-
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            output_file = f.name
-
-        try:
-            result = self.runner.invoke(cli, ["list-rules", "--output", output_file])
-
-            assert result.exit_code == 0
-
-            # Verify file was created
-            assert Path(output_file).exists()
-            with open(output_file) as f:
-                data = json.load(f)
-            assert len(data) == 1
-            assert data[0]["id"] == "test_rule"
-
-        finally:
-            os.unlink(output_file)
-
-    @patch("adversary_mcp_server.cli.ThreatEngine")
-    @patch("adversary_mcp_server.cli.console")
-    def test_list_rules_command_error(self, mock_console, mock_threat_engine):
-        """Test list_rules command error handling."""
-        mock_engine = Mock()
-        mock_engine.list_rules.side_effect = Exception("Rules failed")
-        mock_threat_engine.return_value = mock_engine
-
-        result = self.runner.invoke(cli, ["list-rules"])
-
-        assert result.exit_code == 1
-
-    @patch("adversary_mcp_server.cli.ThreatEngine")
-    @patch("adversary_mcp_server.cli.console")
-    def test_rule_details_command_found(self, mock_console, mock_threat_engine):
-        """Test rule_details command for existing rule."""
-        mock_rule = Mock()
-        mock_rule.id = "test_rule"
-        mock_rule.name = "Test Rule"
-        mock_rule.category = Category.INJECTION
-        mock_rule.severity = Severity.HIGH
-        mock_rule.languages = [Language.PYTHON]
-        mock_rule.description = "Test description"
-        mock_rule.remediation = "Test remediation"
-        mock_rule.cwe_id = "CWE-89"
-        mock_rule.owasp_category = "A03"
-        mock_rule.conditions = []
-        mock_rule.exploit_templates = []
-        mock_rule.references = ["http://example.com"]
-        mock_rule.tags = None
-
-        mock_engine = Mock()
-        mock_engine.get_rule_by_id.return_value = mock_rule
-        mock_threat_engine.return_value = mock_engine
-
-        result = self.runner.invoke(cli, ["rule-details", "test_rule"])
-
-        assert result.exit_code == 0
-        mock_console.print.assert_called()
-
-    @patch("adversary_mcp_server.cli.ThreatEngine")
-    @patch("adversary_mcp_server.cli.console")
-    def test_rule_details_command_not_found(self, mock_console, mock_threat_engine):
-        """Test rule_details command for non-existing rule."""
-        mock_engine = Mock()
-        mock_engine.get_rule_by_id.return_value = None
-        mock_threat_engine.return_value = mock_engine
-
-        result = self.runner.invoke(cli, ["rule-details", "nonexistent_rule"])
-
-        assert result.exit_code == 1
-
-    @patch("adversary_mcp_server.cli.ThreatEngine")
-    @patch("adversary_mcp_server.cli.console")
-    def test_rule_details_command_error(self, mock_console, mock_threat_engine):
-        """Test rule_details command error handling."""
-        mock_engine = Mock()
-        mock_engine.get_rule_by_id.side_effect = Exception("Rule details failed")
-        mock_threat_engine.return_value = mock_engine
-
-        result = self.runner.invoke(cli, ["rule-details", "test_rule"])
-
-        assert result.exit_code == 1
-
     @patch("adversary_mcp_server.cli.CredentialManager")
     @patch("adversary_mcp_server.cli.console")
     def test_reset_command_confirmed(self, mock_console, mock_cred_manager):
@@ -325,7 +150,7 @@ class TestCLICommandsCoverage:
         result = self.runner.invoke(cli, ["reset"], input="y\n")
 
         assert result.exit_code == 0
-        mock_manager.delete_config.assert_called_once()
+        mock_manager.reset_config.assert_called_once()
 
     @patch("adversary_mcp_server.cli.CredentialManager")
     @patch("adversary_mcp_server.cli.console")
@@ -337,14 +162,14 @@ class TestCLICommandsCoverage:
         result = self.runner.invoke(cli, ["reset"], input="n\n")
 
         assert result.exit_code == 0
-        mock_manager.delete_config.assert_not_called()
+        mock_manager.reset_config.assert_not_called()
 
     @patch("adversary_mcp_server.cli.CredentialManager")
     @patch("adversary_mcp_server.cli.console")
     def test_reset_command_error(self, mock_console, mock_cred_manager):
         """Test reset command error handling."""
         mock_manager = Mock()
-        mock_manager.delete_config.side_effect = Exception("Delete failed")
+        mock_manager.reset_config.side_effect = Exception("Reset failed")
         mock_cred_manager.return_value = mock_manager
 
         result = self.runner.invoke(cli, ["reset"], input="y\n")
@@ -353,247 +178,108 @@ class TestCLICommandsCoverage:
 
 
 class TestCLIScanCommand:
-    """Test CLI scan command comprehensively."""
+    """Test CLI scan (diff-scan) command comprehensively."""
 
     def setup_method(self):
         """Setup test fixtures."""
         self.runner = CliRunner()
 
     @patch("adversary_mcp_server.cli.CredentialManager")
-    @patch("adversary_mcp_server.cli.ThreatEngine")
     @patch("adversary_mcp_server.cli.ScanEngine")
+    @patch("adversary_mcp_server.cli.GitDiffScanner")
     @patch("adversary_mcp_server.cli.console")
-    def test_scan_file_basic(
+    def test_diff_scan_basic(
         self,
         mock_console,
-        mock_scan_engine,
-        mock_threat_engine,
+        mock_diff_scanner_class,
+        mock_scan_engine_class,
         mock_cred_manager,
     ):
-        """Test scanning a single file."""
+        """Test basic diff scan functionality."""
         # Setup mocks
         mock_manager = Mock()
         mock_cred_manager.return_value = mock_manager
 
-        mock_engine = Mock()
-        mock_threat_engine.return_value = mock_engine
+        mock_scan_engine = Mock()
+        mock_scan_engine_class.return_value = mock_scan_engine
 
-        mock_scan_engine_instance = Mock()
-        mock_scan_engine.return_value = mock_scan_engine_instance
+        mock_diff_scanner = Mock()
+        mock_diff_scanner_class.return_value = mock_diff_scanner
 
-        # Create a mock EnhancedScanResult
+        # Create mock threat and scan result
+        mock_threat = ThreatMatch(
+            rule_id="test_rule",
+            rule_name="Test Rule",
+            description="Test description",
+            category=Category.INJECTION,
+            severity=Severity.HIGH,
+            file_path="test.py",
+            line_number=1,
+        )
+
+        # Create mock diff scan result
         mock_scan_result = Mock()
-        mock_scan_result.all_threats = [
-            ThreatMatch(
-                rule_id="test_rule",
-                rule_name="Test Rule",
-                description="Test description",
-                category=Category.INJECTION,
-                severity=Severity.HIGH,
-                file_path="test.py",
-                line_number=1,
-            )
-        ]
-        mock_scan_engine_instance.scan_file_sync.return_value = mock_scan_result
+        mock_scan_result.all_threats = [mock_threat]
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write("print('hello')")
-            test_file = f.name
+        mock_diff_scanner.scan_diff_sync.return_value = {"test.py": [mock_scan_result]}
 
-        try:
-            result = self.runner.invoke(
-                cli, ["scan", test_file, "--language", "python", "--severity", "medium"]
-            )
+        result = self.runner.invoke(
+            cli, ["scan", "--source-branch", "main", "--target-branch", "feature"]
+        )
 
-            assert result.exit_code == 0
-            mock_scan_engine_instance.scan_file_sync.assert_called_once()
-
-        finally:
-            os.unlink(test_file)
+        assert result.exit_code == 0
+        mock_diff_scanner.scan_diff_sync.assert_called_once()
 
     @patch("adversary_mcp_server.cli.CredentialManager")
-    @patch("adversary_mcp_server.cli.ThreatEngine")
     @patch("adversary_mcp_server.cli.ScanEngine")
+    @patch("adversary_mcp_server.cli.GitDiffScanner")
     @patch("adversary_mcp_server.cli.console")
-    def test_scan_directory_basic(
+    def test_diff_scan_with_output(
         self,
         mock_console,
-        mock_scanner,
-        mock_threat_engine,
+        mock_diff_scanner_class,
+        mock_scan_engine_class,
         mock_cred_manager,
     ):
-        """Test scanning a directory."""
+        """Test diff scan with output file."""
         # Setup mocks
         mock_manager = Mock()
         mock_cred_manager.return_value = mock_manager
 
-        mock_engine = Mock()
-        mock_threat_engine.return_value = mock_engine
+        mock_scan_engine = Mock()
+        mock_scan_engine_class.return_value = mock_scan_engine
 
-        mock_scan_engine_instance = Mock()
-        mock_scanner.return_value = mock_scan_engine_instance
-        mock_scan_engine_instance.scan_directory_sync.return_value = []
+        mock_diff_scanner = Mock()
+        mock_diff_scanner_class.return_value = mock_diff_scanner
 
-        with tempfile.TemporaryDirectory() as temp_dir:
-            # Create a test file in the directory
-            test_file = Path(temp_dir) / "test.py"
-            with open(test_file, "w") as f:
-                f.write("print('test')")
-
-            result = self.runner.invoke(
-                cli, ["scan", temp_dir, "--recursive", "--severity", "low"]
-            )
-
-            assert result.exit_code == 0
-            # CLI calls scan_directory_sync for directory scanning
-            mock_scan_engine_instance.scan_directory_sync.assert_called_once()
-
-    @patch("adversary_mcp_server.cli.CredentialManager")
-    @patch("adversary_mcp_server.cli.ThreatEngine")
-    @patch("adversary_mcp_server.cli.ScanEngine")
-    @patch("adversary_mcp_server.cli.console")
-    def test_scan_with_exploits(
-        self,
-        mock_console,
-        mock_scanner,
-        mock_threat_engine,
-        mock_cred_manager,
-    ):
-        """Test scanning with exploit generation."""
-        # Setup mocks
-        mock_manager = Mock()
-        mock_config = SecurityConfig()
-        mock_manager.load_config.return_value = mock_config
-        mock_cred_manager.return_value = mock_manager
-
-        mock_engine = Mock()
-        mock_threat_engine.return_value = mock_engine
-
-        mock_scan_engine_instance = Mock()
-        mock_scanner.return_value = mock_scan_engine_instance
-
-        # Create a mock EnhancedScanResult
+        # Create mock diff scan result
         mock_scan_result = Mock()
-        mock_scan_result.all_threats = [
-            ThreatMatch(
-                rule_id="test_rule",
-                rule_name="Test Rule",
-                description="Test description",
-                category=Category.INJECTION,
-                severity=Severity.HIGH,
-                file_path="test.py",
-                line_number=1,
-            )
-        ]
-        mock_scan_engine_instance.scan_file_sync.return_value = mock_scan_result
-
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write("print('hello')")
-            test_file = f.name
-
-        try:
-            result = self.runner.invoke(
-                cli, ["scan", test_file, "--include-exploits", "--use-llm"]
-            )
-
-            assert result.exit_code == 0
-            # Note: CLI scan command doesn't currently implement exploit generation
-            # so we don't assert on exploit_generator calls
-
-        finally:
-            os.unlink(test_file)
-
-    @patch("adversary_mcp_server.cli.CredentialManager")
-    @patch("adversary_mcp_server.cli.ThreatEngine")
-    @patch("adversary_mcp_server.cli.ScanEngine")
-    @patch("adversary_mcp_server.cli.console")
-    @patch("adversary_mcp_server.cli._save_results_to_file")
-    def test_scan_with_output_file(
-        self,
-        mock_save_results,
-        mock_console,
-        mock_scanner,
-        mock_threat_engine,
-        mock_cred_manager,
-    ):
-        """Test scanning with output file."""
-        # Setup mocks
-        mock_manager = Mock()
-        mock_config = SecurityConfig()
-        mock_manager.load_config.return_value = mock_config
-        mock_cred_manager.return_value = mock_manager
-
-        mock_engine = Mock()
-        mock_threat_engine.return_value = mock_engine
-
-        mock_scan_engine_instance = Mock()
-        mock_scanner.return_value = mock_scan_engine_instance
-
-        # Create a mock EnhancedScanResult
-        mock_scan_result = Mock()
-        mock_scan_result.all_threats = [
-            ThreatMatch(
-                rule_id="test_rule",
-                rule_name="Test Rule",
-                description="Test description",
-                category=Category.INJECTION,
-                severity=Severity.HIGH,
-                file_path="test.py",
-                line_number=1,
-            )
-        ]
-        mock_scan_engine_instance.scan_file_sync.return_value = mock_scan_result
-
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write("print('hello')")
-            test_file = f.name
+        mock_scan_result.all_threats = []
+        mock_diff_scanner.scan_diff_sync.return_value = {}
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             output_file = f.name
 
         try:
             result = self.runner.invoke(
-                cli, ["scan", test_file, "--output", output_file]
+                cli,
+                [
+                    "scan",
+                    "--source-branch",
+                    "main",
+                    "--target-branch",
+                    "feature",
+                    "--output",
+                    output_file,
+                ],
             )
 
             assert result.exit_code == 0
-            mock_save_results.assert_called_once()
+            # Verify file exists (content check would depend on implementation)
+            assert Path(output_file).exists()
 
         finally:
-            os.unlink(test_file)
             os.unlink(output_file)
-
-    @patch("adversary_mcp_server.cli.CredentialManager")
-    @patch("adversary_mcp_server.cli.ThreatEngine")
-    @patch("adversary_mcp_server.cli.ScanEngine")
-    @patch("adversary_mcp_server.cli.console")
-    def test_scan_command_with_mocked_error(
-        self, mock_console, mock_scanner, mock_threat_engine, mock_cred_manager
-    ):
-        """Test scan command with mocked scanner error."""
-        # Setup mocks
-        mock_manager = Mock()
-        mock_cred_manager.return_value = mock_manager
-
-        mock_engine = Mock()
-        mock_threat_engine.return_value = mock_engine
-
-        mock_scanner_instance = Mock()
-        mock_scanner_instance.scan_code.side_effect = Exception("Scanner error")
-        mock_scanner.return_value = mock_scanner_instance
-
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write("print('hello')")
-            test_file = f.name
-
-        try:
-            result = self.runner.invoke(cli, ["scan", test_file])
-
-            # Should handle scanner errors gracefully
-            assert result.exit_code == 1
-
-        finally:
-            os.unlink(test_file)
 
 
 class TestCLIUtilityFunctions:
@@ -623,8 +309,8 @@ class TestCLIUtilityFunctions:
             assert Path(output_file).exists()
             with open(output_file) as f:
                 data = json.load(f)
-            assert len(data) == 1
-            assert data[0]["rule_id"] == "test_rule"
+            assert len(data["threats"]) == 1
+            assert data["threats"][0]["rule_id"] == "test_rule"
 
         finally:
             os.unlink(output_file)

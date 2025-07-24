@@ -18,7 +18,7 @@ from adversary_mcp_server.diff_scanner import (
     GitDiffScanner,
 )
 from adversary_mcp_server.scan_engine import ScanEngine
-from adversary_mcp_server.threat_engine import Language, Severity
+from adversary_mcp_server.types import Language, Severity
 
 
 class TestDiffChunk:

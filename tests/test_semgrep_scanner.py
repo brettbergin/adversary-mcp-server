@@ -10,13 +10,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from adversary_mcp_server.semgrep_scanner import SemgrepScanner
-from adversary_mcp_server.threat_engine import (
-    Category,
-    Language,
-    Severity,
-    ThreatEngine,
-    ThreatMatch,
-)
+from adversary_mcp_server.types import Category, Language, Severity, ThreatMatch
 
 
 class TestSemgrepScanner:
@@ -24,8 +18,7 @@ class TestSemgrepScanner:
 
     def setup_method(self):
         """Set up test fixtures."""
-        self.threat_engine = ThreatEngine()
-        self.scanner = SemgrepScanner(self.threat_engine)
+        self.scanner = SemgrepScanner()
 
     def teardown_method(self):
         """Clean up test fixtures."""
@@ -35,13 +28,13 @@ class TestSemgrepScanner:
     @patch("adversary_mcp_server.semgrep_scanner._SEMGREP_AVAILABLE", True)
     def test_check_semgrep_available_success(self):
         """Test successful Semgrep availability check."""
-        scanner = SemgrepScanner(self.threat_engine)
+        scanner = SemgrepScanner()
         assert scanner.is_available() is True
 
     @patch("adversary_mcp_server.semgrep_scanner._SEMGREP_AVAILABLE", False)
     def test_check_semgrep_available_failure(self):
         """Test failed Semgrep availability check."""
-        scanner = SemgrepScanner(self.threat_engine)
+        scanner = SemgrepScanner()
         assert scanner.is_available() is False
 
     def test_get_status_when_available(self):
@@ -256,12 +249,17 @@ class TestSemgrepScanner:
     async def test_scan_code_unavailable(self):
         """Test code scanning when Semgrep is unavailable."""
         with patch.object(self.scanner, "is_available", return_value=False):
-            source_code = "eval(user_input)"
-            threats = await self.scanner.scan_code(
-                source_code, "test.py", Language.PYTHON
-            )
+            with patch.object(
+                self.scanner,
+                "_perform_scan",
+                side_effect=FileNotFoundError("semgrep not found"),
+            ):
+                source_code = "eval(user_input)"
+                threats = await self.scanner.scan_code(
+                    source_code, "test.py", Language.PYTHON
+                )
 
-            assert threats == []
+                assert threats == []
 
     @pytest.mark.asyncio
     async def test_scan_file_unavailable(self):
@@ -276,8 +274,7 @@ class TestSemgrepScannerIntegration:
 
     def setup_method(self):
         """Set up test fixtures."""
-        self.threat_engine = ThreatEngine()
-        self.scanner = SemgrepScanner(self.threat_engine)
+        self.scanner = SemgrepScanner()
 
     def teardown_method(self):
         """Clean up test fixtures."""

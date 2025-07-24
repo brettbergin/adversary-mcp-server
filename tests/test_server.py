@@ -21,7 +21,7 @@ from adversary_mcp_server.server import (
     ScanRequest,
     ScanResult,
 )
-from adversary_mcp_server.threat_engine import Category, Language, Severity, ThreatMatch
+from adversary_mcp_server.types import Category, Language, Severity, ThreatMatch
 
 
 class TestAdversaryMCPServer:
@@ -30,8 +30,6 @@ class TestAdversaryMCPServer:
     def test_init(self):
         """Test server initialization."""
         server = AdversaryMCPServer()
-        assert server.threat_engine is not None
-        assert server.ast_scanner is not None
         assert server.credential_manager is not None
         assert server.exploit_generator is not None
         assert server.scan_engine is not None
@@ -113,9 +111,8 @@ class TestMCPToolHandlers:
         return EnhancedScanResult(
             file_path="test.py",
             language=Language.PYTHON,
-            rules_threats=[mock_threat],
             llm_threats=[],
-            semgrep_threats=[],
+            semgrep_threats=[mock_threat],
             scan_metadata={"total_threats": 1},
         )
 
@@ -129,7 +126,6 @@ class TestMCPToolHandlers:
             "include_exploits": False,
             "use_llm": False,
             "use_semgrep": False,
-            "use_rules": True,
             "output_format": "text",
         }
 
@@ -152,7 +148,6 @@ class TestMCPToolHandlers:
             "include_exploits": True,
             "use_llm": False,
             "use_semgrep": False,
-            "use_rules": True,
             "output_format": "text",
         }
 
@@ -180,7 +175,6 @@ class TestMCPToolHandlers:
             "include_exploits": True,
             "use_llm": False,
             "use_semgrep": False,
-            "use_rules": True,
             "output_format": "text",
         }
 
@@ -207,7 +201,6 @@ class TestMCPToolHandlers:
             "include_exploits": False,
             "use_llm": False,
             "use_semgrep": False,
-            "use_rules": True,
             "output_format": "json",
         }
 
@@ -237,7 +230,6 @@ class TestMCPToolHandlers:
             "include_exploits": False,
             "use_llm": False,
             "use_semgrep": False,
-            "use_rules": True,
             "output_format": "json",
         }
 
@@ -267,7 +259,6 @@ class TestMCPToolHandlers:
                 "include_exploits": False,
                 "use_llm": False,
                 "use_semgrep": False,
-                "use_rules": True,
                 "output_format": "text",
             }
 
@@ -292,7 +283,6 @@ class TestMCPToolHandlers:
             "include_exploits": False,
             "use_llm": False,
             "use_semgrep": False,
-            "use_rules": True,
             "output_format": "text",
         }
 
@@ -313,7 +303,6 @@ class TestMCPToolHandlers:
                 "include_exploits": True,
                 "use_llm": False,
                 "use_semgrep": False,
-                "use_rules": True,
                 "output_format": "text",
             }
 
@@ -344,7 +333,6 @@ class TestMCPToolHandlers:
             "include_exploits": True,
             "use_llm": False,
             "use_semgrep": False,
-            "use_rules": True,
             "output_format": "text",
         }
 
@@ -377,7 +365,6 @@ class TestMCPToolHandlers:
                 "include_exploits": True,
                 "use_llm": True,
                 "use_semgrep": False,
-                "use_rules": True,
                 "output_format": "text",
             }
 
@@ -411,7 +398,6 @@ class TestMCPToolHandlers:
             "include_exploits": True,
             "use_llm": True,
             "use_semgrep": False,
-            "use_rules": True,
             "output_format": "text",
         }
 
@@ -441,7 +427,6 @@ class TestMCPToolHandlers:
                 "include_exploits": False,
                 "use_llm": False,
                 "use_semgrep": False,
-                "use_rules": True,
                 "output_format": "text",
             }
 
@@ -463,7 +448,6 @@ class TestMCPToolHandlers:
             "include_exploits": False,
             "use_llm": False,
             "use_semgrep": False,
-            "use_rules": True,
             "output_format": "text",
         }
 
@@ -481,7 +465,6 @@ class TestMCPToolHandlers:
                 "include_exploits": True,
                 "use_llm": False,
                 "use_semgrep": False,
-                "use_rules": True,
                 "output_format": "text",
             }
 
@@ -509,7 +492,6 @@ class TestMCPToolHandlers:
             "include_exploits": False,
             "use_llm": False,
             "use_semgrep": False,
-            "use_rules": True,
             "output_format": "text",
         }
 
@@ -546,7 +528,6 @@ class TestMCPToolHandlers:
             "include_exploits": False,
             "use_llm": False,
             "use_semgrep": False,
-            "use_rules": True,
             "output_format": "text",
         }
 
@@ -569,7 +550,6 @@ class TestMCPToolHandlers:
             "include_exploits": True,
             "use_llm": False,
             "use_semgrep": False,
-            "use_rules": True,
             "output_format": "text",
         }
 
@@ -647,103 +627,6 @@ class TestMCPToolHandlers:
         assert "Test system prompt" in result[0].text
 
     @pytest.mark.asyncio
-    async def test_handle_list_rules_basic(self, server):
-        """Test basic list_rules tool handler."""
-        arguments = {
-            "category": None,
-            "severity": None,
-            "language": None,
-        }
-
-        mock_rules = [
-            {
-                "id": "rule1",
-                "name": "Rule 1",
-                "category": "injection",
-                "severity": "high",
-                "languages": ["python"],
-                "description": "Test rule 1",
-            },
-            {
-                "id": "rule2",
-                "name": "Rule 2",
-                "category": "xss",
-                "severity": "medium",
-                "languages": ["javascript"],
-                "description": "Test rule 2",
-            },
-        ]
-
-        with patch.object(server.threat_engine, "list_rules", return_value=mock_rules):
-            result = await server._handle_list_rules(arguments)
-
-        assert len(result) == 1
-        assert isinstance(result[0], types.TextContent)
-        assert "rule1" in result[0].text
-
-    @pytest.mark.asyncio
-    async def test_handle_list_rules_filtered(self, server):
-        """Test list_rules with filtering."""
-        arguments = {
-            "category": "injection",
-            "severity": "high",
-            "language": "python",
-        }
-
-        mock_rules = [
-            {
-                "id": "rule1",
-                "name": "Rule 1",
-                "category": "injection",
-                "severity": "high",
-                "languages": ["python"],
-                "description": "Test rule",
-            },
-        ]
-
-        with patch.object(server.threat_engine, "list_rules", return_value=mock_rules):
-            result = await server._handle_list_rules(arguments)
-
-        assert len(result) == 1
-        assert isinstance(result[0], types.TextContent)
-
-    @pytest.mark.asyncio
-    async def test_handle_get_rule_details(self, server):
-        """Test get_rule_details tool handler."""
-        arguments = {
-            "rule_id": "python_pickle_injection",
-        }
-
-        mock_rule_details = {
-            "id": "python_pickle_injection",
-            "name": "Pickle Injection",
-            "description": "Detects unsafe pickle usage",
-            "category": "deserialization",
-            "severity": "high",
-            "languages": ["python"],
-        }
-
-        with patch.object(
-            server.threat_engine, "get_rule_details", return_value=mock_rule_details
-        ):
-            result = await server._handle_get_rule_details(arguments)
-
-        assert len(result) == 1
-        assert isinstance(result[0], types.TextContent)
-        assert "python_pickle_injection" in result[0].text
-
-    @pytest.mark.asyncio
-    async def test_handle_get_rule_details_not_found(self, server):
-        """Test get_rule_details with non-existent rule."""
-        arguments = {
-            "rule_id": "nonexistent_rule",
-        }
-
-        with patch.object(server.threat_engine, "get_rule_details", return_value=None):
-            with pytest.raises(AdversaryToolError, match="Rule not found"):
-                await server._handle_get_rule_details(arguments)
-
-    @pytest.mark.asyncio
     async def test_handle_configure_settings(self, server):
         """Test configure_settings tool handler."""
         arguments = {
@@ -767,12 +650,7 @@ class TestMCPToolHandlers:
         with patch.object(
             server.scan_engine, "get_scanner_stats", return_value={"status": "ok"}
         ):
-            with patch.object(
-                server.threat_engine,
-                "get_rule_statistics",
-                return_value={"total_rules": 100},
-            ):
-                result = await server._handle_get_status()
+            result = await server._handle_get_status()
 
         assert len(result) == 1
         assert isinstance(result[0], types.TextContent)
@@ -864,7 +742,6 @@ class TestMCPToolHandlers:
             "include_exploits": False,
             "use_llm": False,
             "use_semgrep": False,
-            "use_rules": True,
             "output_format": "text",
         }
 
@@ -882,8 +759,6 @@ class TestServerIntegration:
         """Test server can be created and initialized."""
         server = AdversaryMCPServer()
         assert server is not None
-        assert hasattr(server, "threat_engine")
-        assert hasattr(server, "ast_scanner")
         assert hasattr(server, "exploit_generator")
         assert hasattr(server, "credential_manager")
         assert hasattr(server, "scan_engine")
@@ -903,8 +778,6 @@ class TestServerIntegration:
         assert hasattr(server, "_handle_scan_directory")
         assert hasattr(server, "_handle_diff_scan")
         assert hasattr(server, "_handle_generate_exploit")
-        assert hasattr(server, "_handle_list_rules")
-        assert hasattr(server, "_handle_get_rule_details")
         assert hasattr(server, "_handle_configure_settings")
         assert hasattr(server, "_handle_get_status")
         assert hasattr(server, "_handle_get_version")
@@ -1001,9 +874,8 @@ class TestServerUtilityMethods:
         return EnhancedScanResult(
             file_path="test.py",
             language=Language.PYTHON,
-            rules_threats=[mock_threat],
             llm_threats=[],
-            semgrep_threats=[],
+            semgrep_threats=[mock_threat],
             scan_metadata={
                 "rules_scan_success": True,
                 "llm_scan_success": False,
@@ -1034,15 +906,14 @@ class TestServerUtilityMethods:
 
         assert "Enhanced Security Scan Results for test.py" in result
         assert "Test Rule" in result
-        assert "**Rules Engine:** 1 findings" in result
         assert "**LLM Analysis:** 0 findings" in result
+        assert "**Total Threats:** 1" in result
 
     def test_format_enhanced_scan_results_no_threats(self, server):
         """Test _format_enhanced_scan_results with no threats."""
         empty_result = EnhancedScanResult(
             file_path="test.py",
             language=Language.PYTHON,
-            rules_threats=[],
             llm_threats=[],
             semgrep_threats=[],
             scan_metadata={},
@@ -1291,7 +1162,6 @@ class TestServerUtilityMethods:
             "include_exploits": True,
             "use_llm": True,
             "use_semgrep": False,
-            "use_rules": True,
             "output_format": "text",
         }
 
@@ -1324,7 +1194,6 @@ class TestServerUtilityMethods:
                 "include_exploits": False,
                 "use_llm": False,
                 "use_semgrep": False,
-                "use_rules": True,
                 "output_format": "json",
             }
 
@@ -1359,7 +1228,6 @@ class TestServerUtilityMethods:
                 "include_exploits": False,
                 "use_llm": False,
                 "use_semgrep": False,
-                "use_rules": True,
                 "output_format": "json",
             }
 
@@ -1390,7 +1258,6 @@ class TestServerUtilityMethods:
             "include_exploits": False,
             "use_llm": False,
             "use_semgrep": False,
-            "use_rules": True,
             "output_format": "json",
         }
 
@@ -1434,7 +1301,6 @@ class TestServerUtilityMethods:
             "include_exploits": False,
             "use_llm": True,
             "use_semgrep": False,
-            "use_rules": True,
             "output_format": "text",
         }
 
@@ -1473,7 +1339,6 @@ class TestServerUtilityMethods:
                 "include_exploits": True,
                 "use_llm": False,
                 "use_semgrep": False,
-                "use_rules": True,
                 "output_format": "text",
             }
 
@@ -1503,7 +1368,6 @@ class TestServerUtilityMethods:
             "include_exploits": True,
             "use_llm": False,
             "use_semgrep": False,
-            "use_rules": True,
             "output_format": "text",
         }
 
@@ -1551,22 +1415,6 @@ class TestServerUtilityMethods:
         assert len(result) == 1
         assert isinstance(result[0], types.TextContent)
         assert "No template-based exploits available" in result[0].text
-
-    @pytest.mark.asyncio
-    async def test_handle_list_rules_empty_result(self, server):
-        """Test list_rules with empty result."""
-        arguments = {
-            "category": None,
-            "severity": None,
-            "language": None,
-        }
-
-        with patch.object(server.threat_engine, "list_rules", return_value=[]):
-            result = await server._handle_list_rules(arguments)
-
-        assert len(result) == 1
-        assert isinstance(result[0], types.TextContent)
-        assert "**Total Rules:** 0" in result[0].text
 
     @pytest.mark.asyncio
     async def test_handle_list_false_positives_empty_result(self, server):

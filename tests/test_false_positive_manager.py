@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from adversary_mcp_server.false_positive_manager import FalsePositiveManager
-from adversary_mcp_server.threat_engine import Category, Severity, ThreatMatch
+from adversary_mcp_server.types import Category, Severity, ThreatMatch
 
 
 class TestFalsePositiveManager:

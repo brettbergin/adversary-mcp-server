@@ -6,7 +6,7 @@ from typing import Any
 
 from .credential_manager import CredentialManager
 from .logging_config import get_logger
-from .threat_engine import Category, Language, Severity, ThreatMatch
+from .types import Category, Language, Severity, ThreatMatch
 
 logger = get_logger("llm_scanner")
 

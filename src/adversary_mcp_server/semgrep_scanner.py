@@ -9,8 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-# Import necessary types for compatibility with old interface
-from .threat_engine import Category, Language, Severity, ThreatMatch
+# Import necessary types for compatibility
+from .types import Category, Language, Severity, ThreatMatch
 
 
 class SemgrepError(Exception):
