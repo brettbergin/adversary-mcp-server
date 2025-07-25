@@ -112,7 +112,7 @@ class OptimizedSemgrepScanner:
                     self._semgrep_path = path
                     print(f"🔍 Found Semgrep at: {path}")
                     return path
-            except (FileNotFoundError, asyncio.TimeoutError):
+            except (TimeoutError, FileNotFoundError):
                 continue
 
         raise RuntimeError("Semgrep not found in PATH or common locations")
@@ -630,7 +630,7 @@ class OptimizedSemgrepScanner:
                 error_msg = stderr.decode() if stderr else "Unknown error"
                 return []
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             print(f"⏰ Scan timed out after {timeout}s")
             if proc:
                 proc.kill()
@@ -695,7 +695,7 @@ class OptimizedSemgrepScanner:
                 error_msg = stderr.decode() if stderr else "Unknown error"
                 return []
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             print(f"⏰ Directory scan timed out after {timeout}s")
             if proc:
                 proc.kill()

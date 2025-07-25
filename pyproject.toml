@@ -1,12 +1,12 @@
 [project]
 name = "adversary-mcp-server"
-version = "0.9.4"
+version = "0.9.5"
 description = "MCP server for adversarial security analysis and vulnerability detection"
 readme = "README.md"
 authors = [
     { name = "Brett Bergin", email = "brettberginbc@yahoo.com" }
 ]
-requires-python = "==3.11"
+requires-python = ">=3.11,<3.13"
 license = { text = "MIT" }
 keywords = ["security", "mcp", "vulnerability", "adversary", "cursor", "red-team"]
 classifiers = [
@@ -16,6 +16,7 @@ classifiers = [
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Topic :: Security",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Software Development :: Quality Assurance",
@@ -94,7 +95,7 @@ dev-dependencies = [
 packages = ["src/adversary_mcp_server", "rules"]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.12"
 strict = false
 warn_return_any = false
 warn_unused_configs = false
@@ -118,7 +119,7 @@ disable_error_code = ["type-var", "var-annotated", "assignment", "attr-defined",
 
 [tool.black]
 line-length = 88
-target-version = ['py310']
+target-version = ['py311', 'py312']
 include = '\.pyi?$'
 extend-exclude = '''
 /(
@@ -145,7 +146,7 @@ ensure_newline_before_comments = true
 
 [tool.ruff]
 line-length = 88
-target-version = "py310"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = [

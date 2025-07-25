@@ -1,6 +1,5 @@
 """Tests for SemgrepScanner module."""
 
-import asyncio
 import os
 import sys
 import time
@@ -911,7 +910,7 @@ class TestSemgrepScannerEdgeCases:
                     mock_proc = AsyncMock()
                     mock_create.return_value = mock_proc
 
-                    with patch("asyncio.wait_for", side_effect=asyncio.TimeoutError()):
+                    with patch("asyncio.wait_for", side_effect=TimeoutError()):
                         findings = await scanner._perform_scan(
                             "code", "test.py", "python", 30
                         )
@@ -1035,7 +1034,7 @@ class TestSemgrepScannerEdgeCases:
                 mock_proc = AsyncMock()
                 mock_create.return_value = mock_proc
 
-                with patch("asyncio.wait_for", side_effect=asyncio.TimeoutError()):
+                with patch("asyncio.wait_for", side_effect=TimeoutError()):
                     findings = await scanner._perform_directory_scan(
                         "/test/dir", 60, True
                     )

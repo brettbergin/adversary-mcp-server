@@ -15,7 +15,7 @@ def _get_default_version() -> str:
 
         if pyproject_path.exists():
             # Use tomllib for Python 3.11+ or simple parsing for older versions
-            if sys.version_info >= (3, 11):
+            if sys.version_info >= (3, 11) or sys.version_info >= (3, 12):
                 import tomllib
 
                 with open(pyproject_path, "rb") as f:
@@ -48,7 +48,7 @@ def _read_version_from_pyproject() -> str:
 
         if pyproject_path.exists():
             # Use tomllib for Python 3.11+ or simple parsing for older versions
-            if sys.version_info >= (3, 11):
+            if sys.version_info >= (3, 11) or sys.version_info >= (3, 12):
                 import tomllib
 
                 with open(pyproject_path, "rb") as f:
