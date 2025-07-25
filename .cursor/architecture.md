@@ -2,7 +2,7 @@
 
 ## System Overview
 
-The Adversary MCP Server is designed as a modular, extensible security analysis platform that integrates multiple scanning engines through a unified MCP interface. The architecture emphasizes performance, accuracy, and ease of integration with development tools.
+The Adversary MCP Server is designed as a streamlined, high-performance security analysis platform that integrates two primary scanning engines (Semgrep and LLM) through a unified MCP interface. The architecture emphasizes simplicity, accuracy, and ease of integration with Cursor IDE and other development tools.
 
 ## High-Level Architecture
 
@@ -25,15 +25,15 @@ The Adversary MCP Server is designed as a modular, extensible security analysis 
 │  ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐   │
 │  │  Orchestrator   │ │ Result Merger   │ │ Performance Mgr │   │
 │  └─────────────────┘ └─────────────────┘ └─────────────────┘   │
-└─┬─────────────────┬─────────────────┬─────────────────────────┬─┘
-  │                 │                 │                         │
-  ▼                 ▼                 ▼                         ▼
-┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────────┐
-│Rules Scanner│ │LLM Scanner  │ │Semgrep      │ │AST Scanner      │
-│             │ │             │ │Scanner      │ │                 │
-└─────────────┘ └─────────────┘ └─────────────┘ └─────────────────┘
-  │                 │                 │                         │
-  ▼                 ▼                 ▼                         ▼
+└─┬─────────────────────────────────────────┬─────────────────────┘
+  │                                         │
+  ▼                                         ▼
+┌─────────────────┐                 ┌─────────────────┐
+│   LLM Scanner   │                 │ Semgrep Scanner │
+│                 │                 │                 │
+└─────────────────┘                 └─────────────────┘
+  │                                         │
+  ▼                                         ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                   Support Layer                                │
 │ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌───────────┐ │
@@ -47,26 +47,22 @@ The Adversary MCP Server is designed as a modular, extensible security analysis 
 
 ### 1. MCP Server Layer (`server.py`)
 
-**Purpose**: Protocol adapter between MCP clients and security analysis engine
+**Purpose**: Protocol adapter between MCP clients (Cursor IDE) and security analysis engine
 
 **Key Responsibilities**:
-- Handle MCP protocol messages
+- Handle MCP protocol messages from Cursor IDE
 - Validate tool requests and parameters
-- Route requests to appropriate handlers
-- Format responses for MCP clients
+- Route requests to appropriate security scanners
+- Format responses for IDE integration
 - Manage server lifecycle and resources
 
-**MCP Tools Exposed**:
+**MCP Tools for Cursor IDE**:
 ```python
 # Security Analysis Tools
-adv_scan_code       # Analyze code snippets
+adv_scan_code       # Analyze code snippets in editor
 adv_scan_file       # Scan individual files
-adv_scan_folder     # Recursive directory scanning
-adv_diff_scan       # Git diff-aware scanning
-
-# Rule Management Tools
-adv_list_rules      # List available security rules
-adv_get_rule_details# Get detailed rule information
+adv_diff_scan       # Git diff-aware scanning for commits
+adv_generate_exploit# Generate educational exploit examples
 
 # False Positive Management
 adv_mark_false_positive    # Mark findings as false positives
@@ -76,19 +72,25 @@ adv_list_false_positives   # List all false positives
 
 ### 2. Scan Engine Layer (`scan_engine.py`)
 
-**Purpose**: Orchestrates multiple security scanners and aggregates results
+**Purpose**: Orchestrates dual-scanner security analysis combining Semgrep and LLM
 
-**Key Components**:
+**Architecture Changes**:
+- **Removed**: AST Scanner, Rules Engine (95+ YAML rules)
+- **Kept**: Semgrep Scanner, LLM Scanner
+- **Simplified**: Two-scanner architecture for better performance and fewer false positives
 
 #### ScanEngine
 ```python
 class ScanEngine:
-    def __init__(self, threat_engine, credential_manager):
-        self.threat_engine = threat_engine           # Rules-based scanning
-        self.llm_scanner = LLMScanner()             # AI-powered analysis
-        self.semgrep_scanner = OptimizedSemgrepScanner()  # Static analysis
-        self.ast_scanner = ASTScanner()             # AST-based analysis
+    def __init__(self, credential_manager):
+        self.credential_manager = credential_manager
+        self.semgrep_scanner = SemgrepScanner()          # Static analysis
+        self.llm_analyzer = LLMScanner()                 # AI-powered analysis
         self.false_positive_manager = FalsePositiveManager()
+
+        # Both scanners enabled by default
+        self.enable_llm_analysis = True
+        self.enable_semgrep_analysis = True
 ```
 
 #### EnhancedScanResult
@@ -97,307 +99,212 @@ class ScanEngine:
 class EnhancedScanResult:
     file_path: str
     language: Language
-    rules_threats: list[ThreatMatch]    # Rules scanner results
-    llm_threats: list[ThreatMatch]      # LLM scanner results
-    semgrep_threats: list[ThreatMatch]  # Semgrep scanner results
-    scan_metadata: dict[str, Any]       # Execution metadata
+    llm_threats: list[ThreatMatch]      # LLM analysis results
+    semgrep_threats: list[ThreatMatch]  # Semgrep analysis results
+    scan_metadata: dict[str, Any]       # Performance & execution data
 
     @property
     def all_threats(self) -> list[ThreatMatch]:
-        """Aggregated threats from all scanners"""
+        """Combined and deduplicated threats from both scanners"""
 ```
 
-### 3. Security Scanner Components
+## Security Scanner Components
 
-#### Rules Scanner (`threat_engine.py`)
-- **Technology**: YAML-based rule definitions with regex/AST patterns
-- **Strengths**: Fast execution, customizable rules, low false positives
-- **Use Cases**: Known vulnerability patterns, policy violations
-- **Rule Structure**:
-  ```yaml
-  id: "sql-injection-basic"
-  name: "SQL Injection Vulnerability"
-  category: "injection"
-  severity: "high"
-  languages: ["python", "javascript"]
-  conditions:
-    - type: "regex"
-      value: "execute\\(.*\\+.*\\)"
-  ```
+### 1. LLM Scanner (`llm_scanner.py`)
+**Integration**: Client-based LLM analysis through Cursor IDE
 
-#### LLM Scanner (`llm_scanner.py`)
-- **Technology**: OpenAI GPT models for semantic analysis
-- **Strengths**: Context-aware, business logic understanding, novel vulnerability detection
-- **Use Cases**: Complex vulnerabilities, code review, contextual analysis
-- **Analysis Flow**:
-  ```
-  Code Input → Context Building → LLM Analysis → Result Parsing → ThreatMatch Objects
-  ```
+**Capabilities**:
+- **Context-Aware Analysis**: Understands business logic and complex patterns
+- **Novel Vulnerability Detection**: Finds issues not covered by static rules
+- **Educational Explanations**: Provides detailed vulnerability explanations
 
-#### Semgrep Scanner (`semgrep_scanner.py`)
-- **Technology**: Semgrep static analysis engine
-- **Strengths**: Industry-standard rules, comprehensive coverage, performance
-- **Use Cases**: Compliance scanning, comprehensive security assessment
-- **Optimization Features**:
-  - Async subprocess execution
-  - Timeout management
-  - Result caching
-  - Error recovery
+**Cursor IDE Integration**:
+```
+Code Selection → Prompt Generation → Cursor's LLM → Structured Response → Security Finding
+```
 
-#### AST Scanner (`ast_scanner.py`)
-- **Technology**: Tree-sitter for multi-language parsing
-- **Strengths**: Precise pattern matching, language-aware analysis
-- **Use Cases**: Syntax-specific vulnerabilities, code structure analysis
+**Supported Vulnerability Types**:
+- SQL Injection, XSS, Command Injection
+- Authentication/Authorization flaws
+- Cryptographic issues
+- Business logic vulnerabilities
+- And 20+ other security categories
 
-### 4. Supporting Systems
+### 2. Semgrep Scanner (`semgrep_scanner.py`)
+**Integration**: Subprocess execution with optimized performance
 
-#### False Positive Manager (`false_positive_manager.py`)
-- **Purpose**: Track and suppress known false positives
-- **Storage**: `.adversary.json` files with UUID-based tracking
-- **Performance**: Intelligent caching system (recently optimized)
-- **Features**:
-  - Project-specific false positive tracking
-  - Cache invalidation on file changes
-  - Legacy system migration support
+**Capabilities**:
+- **Industry-Standard Rules**: Leverages Semgrep's extensive rule database
+- **Fast Static Analysis**: Optimized for real-time IDE feedback
+- **Language Coverage**: Python, JavaScript, TypeScript, and more
 
-#### Exploit Generator (`exploit_generator.py`)
-- **Purpose**: Generate proof-of-concept exploits
-- **Technology**: Template-based generation with LLM enhancement
-- **Safety**: Designed for testing environments only
+**Performance Optimizations**:
+- Async subprocess execution
+- Timeout management and error recovery
+- Language-specific rule selection
+- Result caching for repeated scans
 
-#### Credential Manager (`credential_manager.py`)
-- **Purpose**: Secure API key and credential management
-- **Technology**: OS keyring integration with environment fallback
-- **Security**: No plaintext credential storage
+## Cursor IDE Integration Features
+
+### Real-Time Code Analysis
+- **Background Scanning**: Automatic analysis as you type
+- **Inline Warnings**: Security issues highlighted in editor
+- **Quick Fixes**: Suggested remediation for common issues
+
+### Git Integration
+- **Diff-Aware Scanning**: Only analyze changed lines
+- **Commit Hooks**: Pre-commit security validation
+- **Branch Comparison**: Security impact of merges
+
+### Workspace Integration
+- **Project-Wide Scanning**: Comprehensive security assessment
+- **Configuration Management**: Per-project security settings
+- **False Positive Management**: Persistent across sessions
 
 ## Data Flow Architecture
 
-### 1. Scan Request Flow
-
+### Single File Analysis Flow
 ```
-MCP Client Request
-       ▼
-Parameter Validation
-       ▼
-Language Detection
-       ▼
-┌─────────────────────────────────┐
-│     Parallel Scanner Execution │
-├─────────────┬─────────────┬─────┴─────────────┐
-│Rules Scanner│ LLM Scanner │ Semgrep Scanner   │
-├─────────────┼─────────────┼───────────────────┤
-│• Rule Match │• AI Analysis│• Static Analysis  │
-│• Pattern Det│• Context Aw │• Industry Rules   │
-│• Fast Exec  │• Semantic   │• Comprehensive    │
-└─────────────┴─────────────┴───────────────────┘
-       ▼             ▼              ▼
-┌─────────────────────────────────────────────┐
-│           Result Aggregation                │
-│• Deduplication by similarity              │
-│• Severity normalization                   │
-│• Metadata enrichment                      │
-└─────────────────────────────────────────────┘
-       ▼
-┌─────────────────────────────────────────────┐
-│         False Positive Filtering            │
-│• UUID-based lookup with caching           │
-│• Project-specific suppression             │
-│• Performance-optimized queries            │
-└─────────────────────────────────────────────┘
-       ▼
-┌─────────────────────────────────────────────┐
-│          Result Formatting                  │
-│• JSON or text output                       │
-│• Exploit generation (if requested)        │
-│• Metadata inclusion                        │
-└─────────────────────────────────────────────┘
-       ▼
-MCP Client Response
+Cursor IDE → File Selection → Language Detection → Parallel Analysis
+                                                         ↓
+          ┌─────────────────┐                    ┌─────────────────┐
+          │  Semgrep Scan   │                    │   LLM Analysis  │
+          │                 │                    │                 │
+          │ • Static rules  │                    │ • Context aware │
+          │ • Fast execution│                    │ • Novel patterns│
+          │ • Low overhead  │                    │ • Deep analysis │
+          └─────────────────┘                    └─────────────────┘
+                    ↓                                      ↓
+            Semgrep Results                          LLM Results
+                    ↓                                      ↓
+                    └──────────────┬─────────────────────┘
+                                   ↓
+                        Result Aggregation & Deduplication
+                                   ↓
+                        Enhanced Security Assessment
+                                   ↓
+                        Cursor IDE Display Integration
 ```
 
-### 2. Rule Management Flow
-
+### Git Diff Analysis Flow
 ```
-Rule Request
-       ▼
-┌─────────────────────────────────────────────┐
-│            Rule Discovery                   │
-│• Built-in rules (rules/built-in/)          │
-│• Custom rules (rules/custom/)              │
-│• Organization rules (rules/organization/)  │
-└─────────────────────────────────────────────┘
-       ▼
-┌─────────────────────────────────────────────┐
-│            Rule Validation                  │
-│• YAML schema validation                    │
-│• Pattern syntax checking                  │
-│• Language compatibility                   │
-└─────────────────────────────────────────────┘
-       ▼
-┌─────────────────────────────────────────────┐
-│            Rule Loading                     │
-│• Memory-based caching                     │
-│• Hot-reload support                       │
-│• Error handling and logging               │
-└─────────────────────────────────────────────┘
+Git Repository → Branch Comparison → Changed Lines Extraction
+                                            ↓
+                               Focus Analysis on New Code
+                                            ↓
+                                Apply Dual-Scanner Analysis
+                                            ↓
+                           Map Results to Original Line Numbers
+                                            ↓
+                              Cursor IDE Diff View Integration
 ```
 
-## Performance Architecture
+## Performance Characteristics
 
-### 1. Caching Strategy
+### Scanner Performance in Cursor IDE
 
-```
-┌─────────────────────────────────────────────┐
-│               Cache Layers                  │
-├─────────────────────────────────────────────┤
-│ L1: False Positive Cache (Memory)          │
-│ • UUID → Metadata mapping                  │
-│ • File modification time tracking          │
-│ • Automatic invalidation                   │
-├─────────────────────────────────────────────┤
-│ L2: Rule Cache (Memory)                    │
-│ • Compiled rule patterns                   │
-│ • Hot-reload capability                    │
-│ • Language-specific indexing               │
-├─────────────────────────────────────────────┤
-│ L3: Semgrep Results Cache (File)           │
-│ • Temporary result storage                 │
-│ • Process-level caching                    │
-│ • Timeout-based expiration                 │
-└─────────────────────────────────────────────┘
-```
+| Component | Response Time | Resource Usage | IDE Impact |
+|-----------|---------------|----------------|------------|
+| Semgrep Scanner | 1-3 seconds | Low CPU | Minimal |
+| LLM Scanner | Variable (client-dependent) | No local resources | None |
+| Result Processing | <100ms | Minimal memory | None |
+| IDE Integration | Real-time | Background threads | Seamless |
 
-### 2. Async Processing
+### Optimization for IDE Use
+1. **Non-blocking Execution**: All analysis runs in background
+2. **Incremental Analysis**: Only scan changed files
+3. **Smart Caching**: Reuse results for unchanged code
+4. **Priority Queuing**: Active file gets priority analysis
+5. **Resource Management**: Automatic cleanup and throttling
 
-```
-┌─────────────────────────────────────────────┐
-│            Async Architecture               │
-├─────────────────────────────────────────────┤
-│ Main Event Loop                            │
-│ ├─ Scanner Task Pool                       │
-│ ├─ File I/O Operations                     │
-│ ├─ Network Requests (LLM API)              │
-│ └─ Subprocess Management (Semgrep)         │
-├─────────────────────────────────────────────┤
-│ Concurrent Execution                       │
-│ • Multiple files in parallel              │
-│ • Scanner independence                     │
-│ • Resource management                      │
-└─────────────────────────────────────────────┘
+## Configuration for Cursor IDE
+
+### MCP Configuration (`.cursor/mcp.json`)
+```json
+{
+  "adversary-mcp-server": {
+    "command": "python",
+    "args": [
+      "-m", "adversary_mcp_server.server"
+    ],
+    "env": {
+      "PYTHONPATH": "/path/to/adversary-mcp-server/src"
+    }
+  }
+}
 ```
 
-## Security Architecture
-
-### 1. Input Validation
-
-```
-User Input
-    ▼
-┌─────────────────────────────────────────────┐
-│           Parameter Validation              │
-│ • Pydantic schema enforcement              │
-│ • Path traversal prevention                │
-│ • Size limits and timeouts                 │
-│ • Encoding validation                      │
-└─────────────────────────────────────────────┘
-    ▼
-┌─────────────────────────────────────────────┐
-│            Content Sanitization             │
-│ • Code injection prevention                │
-│ • Safe file operations                     │
-│ • Resource limitation                      │
-└─────────────────────────────────────────────┘
-```
-
-### 2. Credential Security
-
-```
-┌─────────────────────────────────────────────┐
-│          Credential Flow                    │
-│                                            │
-│ Environment Variables                      │
-│        ▼                                   │
-│ Credential Manager                         │
-│        ▼                                   │
-│ OS Keyring (Secure Storage)                │
-│        ▼                                   │
-│ In-Memory Cache (Temporary)                │
-│        ▼                                   │
-│ Scanner Usage (OpenAI API)                 │
-└─────────────────────────────────────────────┘
-```
-
-## Extensibility Points
-
-### 1. Adding New Scanners
-
+### Security Configuration
 ```python
-class NewScanner:
-    async def scan_code(self, code: str, language: Language) -> list[ThreatMatch]:
-        """Scanner interface implementation"""
-        pass
+@dataclass
+class SecurityConfig:
+    # Scanner Control
+    enable_llm_analysis: bool = True      # Use Cursor's LLM
+    enable_semgrep_scanning: bool = True  # Use Semgrep engine
 
-    async def scan_file(self, file_path: Path) -> list[ThreatMatch]:
-        """File scanning implementation"""
-        pass
+    # Analysis Thresholds
+    severity_threshold: str = "medium"    # Filter noise
+    max_file_size_mb: int = 10           # Prevent large file issues
+
+    # IDE Integration
+    real_time_analysis: bool = True       # Background scanning
+    show_inline_warnings: bool = True     # Editor annotations
 ```
 
-### 2. Custom Rule Types
+## Error Handling & Resilience
 
-```yaml
-# New rule type example
-id: "custom-business-logic"
-type: "semantic"  # New rule type
-engine: "llm"     # Specify execution engine
-conditions:
-  - type: "business_logic"
-    description: "Check for business logic flaws"
-    context: "financial_calculations"
-```
+### Graceful Degradation for IDE Use
+- **Semgrep Unavailable**: Falls back to LLM-only analysis
+- **LLM Unavailable**: Continues with Semgrep analysis
+- **Network Issues**: Uses cached results where possible
+- **Performance Issues**: Automatically reduces scan frequency
 
-### 3. Output Formatters
+### User Experience
+- **Non-blocking Operations**: IDE remains responsive
+- **Progress Indicators**: Visual feedback for long operations
+- **Error Notifications**: Clear messaging for issues
+- **Fallback Modes**: Always provides some level of analysis
 
-```python
-class CustomFormatter:
-    def format_results(self, results: EnhancedScanResult) -> str:
-        """Custom result formatting"""
-        pass
-```
+## Security Benefits of Simplified Architecture
 
-## Deployment Architecture
+### Reduced False Positives
+- **Fewer Scanners**: Less conflicting detection logic
+- **Quality Focus**: Two high-quality scanners vs. many basic ones
+- **Better Tuning**: Easier to optimize detection accuracy
 
-### 1. MCP Integration
+### Improved Performance
+- **Faster Scans**: Fewer components to coordinate
+- **Lower Resource Usage**: Streamlined execution path
+- **Better Caching**: Simpler result management
 
-```
-┌─────────────────────────────────────────────┐
-│              Cursor IDE                     │
-│ ┌─────────────────────────────────────────┐ │
-│ │          MCP Client                     │ │
-│ │ • Tool discovery                        │ │
-│ │ • Request/response handling             │ │
-│ │ • UI integration                        │ │
-│ └─────────────────────────────────────────┘ │
-└─────────────────┬───────────────────────────┘
-                  │ JSON-RPC over stdio
-                  ▼
-┌─────────────────────────────────────────────┐
-│         Adversary MCP Server               │
-│ • Installed as Python package              │
-│ • Configured in Cursor settings            │
-│ • Auto-discovery of tools                  │
-└─────────────────────────────────────────────┘
-```
+### Enhanced Maintainability
+- **Cleaner Codebase**: Removed complex rules engine
+- **Easier Updates**: Fewer dependencies to manage
+- **Better Testing**: Simplified test matrix
 
-### 2. Standalone CLI
+## Integration with Cursor's AI Features
 
-```
-┌─────────────────────────────────────────────┐
-│            CLI Interface                    │
-│ • Direct command execution                 │
-│ • Batch processing                         │
-│ • CI/CD integration                        │
-│ • Configuration file support               │
-└─────────────────────────────────────────────┘
-```
+### LLM Analysis Enhancement
+- **Shared Context**: Leverages Cursor's code understanding
+- **Consistent Experience**: Matches Cursor's AI interaction patterns
+- **Enhanced Explanations**: Rich context for security findings
 
-This architecture provides a solid foundation for extensible, performant security analysis while maintaining clean separation of concerns and strong integration capabilities.
+### Code Suggestions
+- **Security-Aware Autocomplete**: Suggests secure coding patterns
+- **Vulnerability Prevention**: Warns about risky patterns as you type
+- **Fix Recommendations**: AI-powered remediation suggestions
+
+## Future Enhancements for Cursor IDE
+
+### Planned Features
+1. **Inline Fix Suggestions**: Direct code replacement options
+2. **Security Tutorials**: Interactive learning for vulnerabilities
+3. **Team Security Insights**: Shared security knowledge base
+4. **Custom Rule Integration**: User-defined security patterns
+5. **Advanced Git Integration**: Security-focused code review tools
+
+### Extensibility Options
+- **Plugin Architecture**: Support for additional security tools
+- **Custom Prompts**: User-defined LLM analysis patterns
+- **Integration APIs**: Connect with external security platforms
+- **Workflow Automation**: Automated security testing pipelines

@@ -47,8 +47,8 @@ adversary-mcp-cli status
 # Configure the security engine
 adversary-mcp-cli configure
 
-# View available rules and setup
-adversary-mcp-cli rules stats
+# Check server status
+adversary-mcp-cli status
 ```
 
 ### 2. Cursor IDE Integration
@@ -77,8 +77,6 @@ Once configured, you can use these MCP tools in Cursor:
 - `adv_scan_file` - file scanning with LLM support
 - `adv_scan_folder` - folder scanning
 - `adv_diff_scan` - **🆕 Git diff-aware scanning** - scans only changed files between branches
-- `adv_list_rules` - List all 95+ security rules
-- `adv_get_rule_details` - Get details about specific rules
 - `adv_generate_exploit` - exploit generation
 - `adv_configure_settings` - Configuration management
 - `adv_get_status` - Check server status and AI availability
@@ -87,15 +85,13 @@ Once configured, you can use these MCP tools in Cursor:
 - `adv_unmark_false_positives` - Unmark false positive
 - `adv_list_false_postives` - List false positives
 
-### 4. Enable Hot-Reload (Optional)
+### 4. Run Demo (Optional)
 
-For real-time rule updates during development:
+Test the scanner with vulnerable code examples:
 
 ```bash
-# Start hot-reload service
-adversary-mcp-cli watch start
-
-# Now edit rules and they'll automatically reload
+# Run interactive demonstration
+adversary-mcp-cli demo
 ```
 
 ### 5. **🆕 Git Diff-Aware Scanning**
@@ -103,14 +99,11 @@ adversary-mcp-cli watch start
 Scan only changed files between git branches for efficient CI/CD integration:
 
 ```bash
-# Scan changes in your current branch vs main
-adversary-mcp-cli scan --diff
-
-# Scan changes between specific branches
-adversary-mcp-cli scan --diff --source-branch=develop --target-branch=feature/auth
+# Scan changes between branches
+adversary-mcp-cli scan --source-branch=main --target-branch=feature/auth
 
 # Scan with high severity filter
-adversary-mcp-cli scan --diff --severity=high --no-rules --use-llm --use-semgrep
+adversary-mcp-cli scan --source-branch=main --target-branch=HEAD --severity=high --use-llm --use-semgrep
 ```
 
 ---
@@ -160,8 +153,6 @@ adversary-mcp-cli status
 | `adv_scan_folder` | **🆕 Intelligent** folder scanning | ✅ Batch LLM prompts, statistical insights |
 | `adv_diff_scan` | **🆕 Git diff-aware scanning** - scans only newly added lines | ✅ Smart change detection, branch comparison, requires `working_directory` |
 | `adv_generate_exploit` | **🆕 AI-enhanced** exploit generation | ✅ Context-aware prompts, safety mode |
-| `adv_list_rules` | List all 95+ threat detection rules | Enhanced with AI rule categories |
-| `adv_get_rule_details` | Get detailed rule information | Improved formatting and examples |
 | `adv_configure_settings` | **🆕 Advanced** configuration management | ✅ LLM settings, validation |
 | `adv_get_status` | Get server status and **🆕 AI availability** | ✅ LLM configuration status |
 | `adv_get_version` | Get version information | Shows AI capabilities |
@@ -306,7 +297,7 @@ adversary-mcp-cli scan myproject/ --use-llm --use-semgrep
 adversary-mcp-cli scan myproject/ --no-llm --use-semgrep
 
 # Semgrep with git diff scanning
-adversary-mcp-cli scan --diff --use-semgrep --source-branch=main
+adversary-mcp-cli scan --use-semgrep --source-branch=main --target-branch=HEAD
 ```
 
 ### **Configuration Options**
@@ -410,46 +401,9 @@ Rules are automatically organized in your user directory:
 └── templates/             # 🆕 Enhanced rule templates
 ```
 
-### **🆕 AI-Enhanced Rule Management**
+### Rule Management
 
-```bash
-# View enhanced rules with AI categories
-adversary-mcp-cli list-rules --show-ai-categories
-
-# Validate rules with AI assistance
-adversary-mcp-cli rules validate --use-ai
-
-# Enhanced rule statistics
-adversary-mcp-cli rules stats --detailed
-```
-
-### Quick Rule Management
-
-```bash
-# View rules directory and contents
-adversary-mcp-cli show-rules-dir
-
-# List all loaded rules with source files
-adversary-mcp-cli list-rules
-
-# List rules with full file paths
-adversary-mcp-cli list-rules --verbose
-
-# View detailed rule statistics
-adversary-mcp-cli rules stats
-
-# Export rules for backup/sharing
-adversary-mcp-cli rules export my-rules.yaml
-
-# Import custom rules
-adversary-mcp-cli rules import-rules external-rules.yaml
-
-# Validate all rules
-adversary-mcp-cli rules validate
-
-# Reload rules after changes
-adversary-mcp-cli rules reload
-```
+The adversary MCP server includes 95+ built-in security rules organized by language and category. Rules are automatically loaded and don't require manual management in the current CLI version.
 
 ### Creating Custom Rules
 
@@ -485,49 +439,14 @@ rules:
     owasp_category: A05:2021
 ```
 
-3. **Reload rules:**
-```bash
-adversary-mcp-cli rules reload
-```
+3. **Restart the server:**
+The new rule will be automatically loaded when the MCP server restarts.
 
 ---
 
-## Hot-Reload Service
+## Rule Configuration
 
-Enable real-time rule updates without server restart:
-
-### Start Hot-Reload
-
-```bash
-# Start with default settings
-adversary-mcp-cli watch start
-
-# Start with custom directories and debounce time
-adversary-mcp-cli watch start \
-  --directory /path/to/project/rules/ \
-  --debounce 2.0
-```
-
-### Monitor Status
-
-```bash
-# Check service status
-adversary-mcp-cli watch status
-
-# Test hot-reload functionality
-adversary-mcp-cli watch test
-```
-
-### Development Workflow
-
-```bash
-# Terminal 1: Start hot-reload service
-adversary-mcp-cli watch start
-
-# Terminal 2: Edit rules (auto-reloads)
-vim ~/.local/share/adversary-mcp-server/rules/custom/my-rule.yaml
-# Changes are automatically detected and rules reload!
-```
+The server automatically loads built-in rules from the rule directory structure. Custom rules can be added to the user's configuration directory for extended functionality.
 
 ---
 
@@ -537,75 +456,91 @@ vim ~/.local/share/adversary-mcp-server/rules/custom/my-rule.yaml
 
 | Command | Description |
 |---------|-------------|
-| `adversary-mcp-cli configure` | Initial setup and configuration |
-| `adversary-mcp-cli status` | Show server status and configuration |
-| `adversary-mcp-cli scan <target>` | Scan files/directories for vulnerabilities |
-| `adversary-mcp-cli scan --diff` | **🆕 Git diff-aware scanning** - scan only newly added lines (no context) |
-| `adversary-mcp-cli server` | Start MCP server (used by Cursor) |
+| `adversary-mcp-cli configure` | Configure server settings, security thresholds, and Semgrep API key |
+| `adversary-mcp-cli status` | Show current server status and configuration |
+| `adversary-mcp-cli scan [TARGET]` | Scan files/directories for vulnerabilities |
+| `adversary-mcp-cli demo` | Run demonstration of vulnerability scanner |
+| `adversary-mcp-cli mark-false-positive <UUID>` | Mark a finding as false positive |
+| `adversary-mcp-cli unmark-false-positive <UUID>` | Remove false positive marking |
+| `adversary-mcp-cli list-false-positives` | List all false positive findings |
+| `adversary-mcp-cli reset` | Reset all configuration and credentials |
+| `adversary-mcp-cli reset-semgrep-key` | Remove stored Semgrep API key from keyring |
 
-### Rule Management Commands
-
-| Command | Description |
-|---------|-------------|
-| `adversary-mcp-cli list-rules` | List all rules with source files |
-| `adversary-mcp-cli rule-details <id>` | Get detailed rule information |
-| `adversary-mcp-cli rules stats` | Show comprehensive rule statistics |
-| `adversary-mcp-cli rules export <file>` | Export rules to YAML/JSON |
-| `adversary-mcp-cli rules import-rules <file>` | Import external rules |
-| `adversary-mcp-cli rules validate` | Validate all loaded rules |
-| `adversary-mcp-cli rules reload` | Reload rules from files |
-
-### Hot-Reload Commands
+### False Positive Management
 
 | Command | Description |
 |---------|-------------|
-| `adversary-mcp-cli watch start` | Start hot-reload service |
-| `adversary-mcp-cli watch status` | Show service status |
-| `adversary-mcp-cli watch test` | Test hot-reload functionality |
+| `adversary-mcp-cli mark-false-positive <UUID>` | Mark finding as false positive |
+| `adversary-mcp-cli unmark-false-positive <UUID>` | Remove false positive marking |
+| `adversary-mcp-cli list-false-positives` | List all false positive findings |
 
-### **🆕 Git Diff-Aware Scanning Options**
+#### **False Positive Options:**
 
-The `scan` command now supports git diff-aware scanning with the following options:
+- `--reason TEXT`: Reason for marking as false positive
+- `--reviewer TEXT`: Name of reviewer making the decision
+
+### Configuration Commands
+
+| Command | Description |
+|---------|-------------|
+| `adversary-mcp-cli configure` | Configure server settings |
+| `adversary-mcp-cli status` | Show current configuration and status |
+| `adversary-mcp-cli reset` | Reset all configuration and credentials |
+
+#### **Configure Options:**
+
+- `--severity-threshold`: Default severity threshold (low, medium, high, critical)
+- `--enable-safety-mode/--disable-safety-mode`: Enable/disable exploit safety mode
+
+### Scan Command Options
+
+The `scan` command supports the following options:
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--diff/--no-diff` | Enable git diff-aware scanning | `false` |
-| `--source-branch` | Source branch for comparison | `main` |
-| `--target-branch` | Target branch for comparison | `HEAD` |
-| `--severity` | Minimum severity threshold | `medium` |
-| `--include-exploits/--no-exploits` | Include exploit examples | `true` |
-| `--use-llm/--no-llm` | Enable AI analysis | `true` |
-| `--use-semgrep/--no-semgrep` | Enable Semgrep static analysis | `true` |
-| `--output` | Output results to JSON file | None |
+| `--source-branch` | Source branch for git diff scanning | None |
+| `--target-branch` | Target branch for git diff scanning | None |
+| `--language` | Target language (python, javascript, typescript) | Auto-detect |
+| `--use-llm/--no-llm` | Enable/disable LLM analysis | `true` |
+| `--use-semgrep/--no-semgrep` | Enable/disable Semgrep analysis | `true` |
+| `--severity` | Minimum severity threshold (low, medium, high, critical) | None |
+| `--output` | Output file for results (JSON format) | None |
+| `--include-exploits` | Include exploit examples in results | `false` |
 
-#### **Diff Scanning Examples:**
+#### **Scanning Examples:**
 ```bash
-# Basic diff scan (main vs current branch) - scans only newly added lines
-adversary-mcp-cli scan --diff
+# Scan a single file
+adversary-mcp-cli scan app.py
 
-# Compare specific branches - scans only new code between branches
-adversary-mcp-cli scan --diff --source-branch=develop --target-branch=feature/auth
+# Scan a directory
+adversary-mcp-cli scan /path/to/project
 
-# High severity threats only - filters results to high/critical severity
-adversary-mcp-cli scan --diff --severity=high
+# Git diff scanning - compare branches
+adversary-mcp-cli scan --source-branch=main --target-branch=feature/auth
 
-# Save diff scan results to JSON file
-adversary-mcp-cli scan --diff --output=security-diff.json
+# Scan with specific language
+adversary-mcp-cli scan app.js --language=javascript
 
-# Comprehensive diff analysis with AI - includes LLM prompts for enhanced analysis
-adversary-mcp-cli scan --diff --use-llm --include-exploits=true
+# High severity threats only
+adversary-mcp-cli scan . --severity=high
 
-# Specify custom directory for git operations
-adversary-mcp-cli scan /path/to/repo --diff --source-branch=main --target-branch=HEAD
+# Save scan results to JSON file
+adversary-mcp-cli scan . --output=security-results.json
+
+# Comprehensive analysis with LLM and exploits
+adversary-mcp-cli scan . --use-llm --include-exploits
+
+# Disable LLM, use only Semgrep
+adversary-mcp-cli scan . --no-llm --use-semgrep
 ```
 
-### Utility Commands
+### Additional Commands
 
 | Command | Description |
 |---------|-------------|
-| `adversary-mcp-cli show-rules-dir` | Show rules directory location |
-| `adversary-mcp-cli demo` | Run interactive demo |
-| `adversary-mcp-cli reset` | Reset all configuration |
+| `adversary-mcp-cli demo` | Run interactive vulnerability demonstration |
+| `adversary-mcp-cli --version` | Show version information |
+| `adversary-mcp-cli --help` | Show help information |
 
 ---
 
@@ -773,16 +708,16 @@ adversary-mcp-cli scan myproject/ --use-llm --confidence-threshold=0.8
 #### **🆕 Git Diff-Aware Scanning**
 ```bash
 # Scan only newly added lines between branches (no context lines)
-adversary-mcp-cli scan --diff --source-branch=main --target-branch=HEAD
+adversary-mcp-cli scan --source-branch=main --target-branch=HEAD
 
 # Scan changes with specific severity threshold - only new code
-adversary-mcp-cli scan --diff --source-branch=staging --target-branch=production --severity=high
+adversary-mcp-cli scan --source-branch=staging --target-branch=production --severity=high
 
 # Scan current branch changes with AI analysis - includes LLM prompts for new code
-adversary-mcp-cli scan --diff --use-llm --include-exploits=true
+adversary-mcp-cli scan --source-branch=main --target-branch=HEAD --use-llm --include-exploits
 
 # Specify repository directory for git operations
-adversary-mcp-cli scan /path/to/repo --diff --source-branch=main --target-branch=feature/new
+adversary-mcp-cli scan /path/to/repo --source-branch=main --target-branch=feature/new
 ```
 
 ### **🆕 Advanced Configuration**
@@ -830,7 +765,7 @@ adversary-mcp-cli scan myproject/ --output=scan-results.json
 adversary-mcp-cli scan myproject/ --use-llm --use-semgrep --output=results.json
 
 # Git diff scanning with JSON output
-adversary-mcp-cli scan --diff --use-semgrep --output=diff-scan.json
+adversary-mcp-cli scan --source-branch=main --target-branch=HEAD --use-semgrep --output=diff-scan.json
 ```
 
 #### **Automatic JSON Generation**
@@ -856,7 +791,7 @@ JSON files are automatically generated in your project root, making them perfect
 
 ```bash
 # Example CI/CD workflow
-adversary-mcp-cli scan --diff --output=security-scan.json
+adversary-mcp-cli scan --source-branch=main --target-branch=HEAD --output=security-scan.json
 git add security-scan.json
 git commit -m "Security scan results for PR"
 ```
@@ -933,7 +868,7 @@ jobs:
       - name: Diff Security Scan (PR) - Scans only newly added lines
         if: github.event_name == 'pull_request'
         run: |
-          adversary-mcp-cli scan . --diff \
+          adversary-mcp-cli scan . \
             --source-branch=origin/main \
             --target-branch=HEAD \
             --severity=medium \

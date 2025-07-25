@@ -21,7 +21,32 @@ from adversary_mcp_server.server import (
     ScanRequest,
     ScanResult,
 )
-from adversary_mcp_server.threat_engine import Category, Language, Severity, ThreatMatch
+from adversary_mcp_server.types import Category, Language, Severity, ThreatMatch
+
+
+@pytest.fixture(autouse=True, scope="function")
+def mock_adversary_json_file_access():
+    """Automatically mock .adversary.json file access during tests only to prevent test interference."""
+    # Only apply this mock during actual test execution
+    import os
+
+    if "PYTEST_CURRENT_TEST" not in os.environ:
+        yield  # Not in a test, don't apply the mock
+        return
+
+    # Store the original exists method
+    original_exists = Path.exists
+
+    def mock_path_exists(self):
+        """Mock Path.exists() to simulate .adversary.json exists without real file access."""
+        if self.name == ".adversary.json":
+            # For tests, always return True to avoid smart search traversal
+            return True
+        # For other files, use the original exists method
+        return original_exists(self)
+
+    with patch.object(Path, "exists", mock_path_exists):
+        yield
 
 
 class TestAdversaryMCPServer:
@@ -30,13 +55,10 @@ class TestAdversaryMCPServer:
     def test_init(self):
         """Test server initialization."""
         server = AdversaryMCPServer()
-        assert server.threat_engine is not None
-        assert server.ast_scanner is not None
         assert server.credential_manager is not None
         assert server.exploit_generator is not None
         assert server.scan_engine is not None
         assert server.diff_scanner is not None
-        assert server.false_positive_manager is not None
 
     def test_server_filtering_methods(self):
         """Test server utility methods."""
@@ -113,9 +135,8 @@ class TestMCPToolHandlers:
         return EnhancedScanResult(
             file_path="test.py",
             language=Language.PYTHON,
-            rules_threats=[mock_threat],
             llm_threats=[],
-            semgrep_threats=[],
+            semgrep_threats=[mock_threat],
             scan_metadata={"total_threats": 1},
         )
 
@@ -129,7 +150,6 @@ class TestMCPToolHandlers:
             "include_exploits": False,
             "use_llm": False,
             "use_semgrep": False,
-            "use_rules": True,
             "output_format": "text",
         }
 
@@ -152,7 +172,6 @@ class TestMCPToolHandlers:
             "include_exploits": True,
             "use_llm": False,
             "use_semgrep": False,
-            "use_rules": True,
             "output_format": "text",
         }
 
@@ -180,7 +199,6 @@ class TestMCPToolHandlers:
             "include_exploits": True,
             "use_llm": False,
             "use_semgrep": False,
-            "use_rules": True,
             "output_format": "text",
         }
 
@@ -207,7 +225,6 @@ class TestMCPToolHandlers:
             "include_exploits": False,
             "use_llm": False,
             "use_semgrep": False,
-            "use_rules": True,
             "output_format": "json",
         }
 
@@ -237,7 +254,6 @@ class TestMCPToolHandlers:
             "include_exploits": False,
             "use_llm": False,
             "use_semgrep": False,
-            "use_rules": True,
             "output_format": "json",
         }
 
@@ -267,7 +283,6 @@ class TestMCPToolHandlers:
                 "include_exploits": False,
                 "use_llm": False,
                 "use_semgrep": False,
-                "use_rules": True,
                 "output_format": "text",
             }
 
@@ -292,7 +307,6 @@ class TestMCPToolHandlers:
             "include_exploits": False,
             "use_llm": False,
             "use_semgrep": False,
-            "use_rules": True,
             "output_format": "text",
         }
 
@@ -313,7 +327,6 @@ class TestMCPToolHandlers:
                 "include_exploits": True,
                 "use_llm": False,
                 "use_semgrep": False,
-                "use_rules": True,
                 "output_format": "text",
             }
 
@@ -344,7 +357,6 @@ class TestMCPToolHandlers:
             "include_exploits": True,
             "use_llm": False,
             "use_semgrep": False,
-            "use_rules": True,
             "output_format": "text",
         }
 
@@ -377,7 +389,6 @@ class TestMCPToolHandlers:
                 "include_exploits": True,
                 "use_llm": True,
                 "use_semgrep": False,
-                "use_rules": True,
                 "output_format": "text",
             }
 
@@ -411,7 +422,6 @@ class TestMCPToolHandlers:
             "include_exploits": True,
             "use_llm": True,
             "use_semgrep": False,
-            "use_rules": True,
             "output_format": "text",
         }
 
@@ -441,7 +451,6 @@ class TestMCPToolHandlers:
                 "include_exploits": False,
                 "use_llm": False,
                 "use_semgrep": False,
-                "use_rules": True,
                 "output_format": "text",
             }
 
@@ -463,7 +472,6 @@ class TestMCPToolHandlers:
             "include_exploits": False,
             "use_llm": False,
             "use_semgrep": False,
-            "use_rules": True,
             "output_format": "text",
         }
 
@@ -481,7 +489,6 @@ class TestMCPToolHandlers:
                 "include_exploits": True,
                 "use_llm": False,
                 "use_semgrep": False,
-                "use_rules": True,
                 "output_format": "text",
             }
 
@@ -509,7 +516,6 @@ class TestMCPToolHandlers:
             "include_exploits": False,
             "use_llm": False,
             "use_semgrep": False,
-            "use_rules": True,
             "output_format": "text",
         }
 
@@ -546,7 +552,6 @@ class TestMCPToolHandlers:
             "include_exploits": False,
             "use_llm": False,
             "use_semgrep": False,
-            "use_rules": True,
             "output_format": "text",
         }
 
@@ -569,7 +574,6 @@ class TestMCPToolHandlers:
             "include_exploits": True,
             "use_llm": False,
             "use_semgrep": False,
-            "use_rules": True,
             "output_format": "text",
         }
 
@@ -647,103 +651,6 @@ class TestMCPToolHandlers:
         assert "Test system prompt" in result[0].text
 
     @pytest.mark.asyncio
-    async def test_handle_list_rules_basic(self, server):
-        """Test basic list_rules tool handler."""
-        arguments = {
-            "category": None,
-            "severity": None,
-            "language": None,
-        }
-
-        mock_rules = [
-            {
-                "id": "rule1",
-                "name": "Rule 1",
-                "category": "injection",
-                "severity": "high",
-                "languages": ["python"],
-                "description": "Test rule 1",
-            },
-            {
-                "id": "rule2",
-                "name": "Rule 2",
-                "category": "xss",
-                "severity": "medium",
-                "languages": ["javascript"],
-                "description": "Test rule 2",
-            },
-        ]
-
-        with patch.object(server.threat_engine, "list_rules", return_value=mock_rules):
-            result = await server._handle_list_rules(arguments)
-
-        assert len(result) == 1
-        assert isinstance(result[0], types.TextContent)
-        assert "rule1" in result[0].text
-
-    @pytest.mark.asyncio
-    async def test_handle_list_rules_filtered(self, server):
-        """Test list_rules with filtering."""
-        arguments = {
-            "category": "injection",
-            "severity": "high",
-            "language": "python",
-        }
-
-        mock_rules = [
-            {
-                "id": "rule1",
-                "name": "Rule 1",
-                "category": "injection",
-                "severity": "high",
-                "languages": ["python"],
-                "description": "Test rule",
-            },
-        ]
-
-        with patch.object(server.threat_engine, "list_rules", return_value=mock_rules):
-            result = await server._handle_list_rules(arguments)
-
-        assert len(result) == 1
-        assert isinstance(result[0], types.TextContent)
-
-    @pytest.mark.asyncio
-    async def test_handle_get_rule_details(self, server):
-        """Test get_rule_details tool handler."""
-        arguments = {
-            "rule_id": "python_pickle_injection",
-        }
-
-        mock_rule_details = {
-            "id": "python_pickle_injection",
-            "name": "Pickle Injection",
-            "description": "Detects unsafe pickle usage",
-            "category": "deserialization",
-            "severity": "high",
-            "languages": ["python"],
-        }
-
-        with patch.object(
-            server.threat_engine, "get_rule_details", return_value=mock_rule_details
-        ):
-            result = await server._handle_get_rule_details(arguments)
-
-        assert len(result) == 1
-        assert isinstance(result[0], types.TextContent)
-        assert "python_pickle_injection" in result[0].text
-
-    @pytest.mark.asyncio
-    async def test_handle_get_rule_details_not_found(self, server):
-        """Test get_rule_details with non-existent rule."""
-        arguments = {
-            "rule_id": "nonexistent_rule",
-        }
-
-        with patch.object(server.threat_engine, "get_rule_details", return_value=None):
-            with pytest.raises(AdversaryToolError, match="Rule not found"):
-                await server._handle_get_rule_details(arguments)
-
-    @pytest.mark.asyncio
     async def test_handle_configure_settings(self, server):
         """Test configure_settings tool handler."""
         arguments = {
@@ -767,12 +674,7 @@ class TestMCPToolHandlers:
         with patch.object(
             server.scan_engine, "get_scanner_stats", return_value={"status": "ok"}
         ):
-            with patch.object(
-                server.threat_engine,
-                "get_rule_statistics",
-                return_value={"total_rules": 100},
-            ):
-                result = await server._handle_get_status()
+            result = await server._handle_get_status()
 
         assert len(result) == 1
         assert isinstance(result[0], types.TextContent)
@@ -794,42 +696,60 @@ class TestMCPToolHandlers:
         arguments = {
             "finding_uuid": "test-uuid-123",
             "reason": "False positive",
-            "working_directory": ".",
+            "adversary_file_path": ".adversary.json",
         }
 
-        with patch.object(
-            server.false_positive_manager, "mark_false_positive", return_value=True
-        ) as mock_mark:
-            result = await server._handle_mark_false_positive(arguments)
+        with patch("adversary_mcp_server.server.FalsePositiveManager") as mock_fp_class:
+            mock_fp_instance = Mock()
+            mock_fp_instance.mark_false_positive.return_value = True
+            mock_fp_class.return_value = mock_fp_instance
+
+            # Mock Path.cwd() to avoid using actual working directory
+            with patch("adversary_mcp_server.server.Path.cwd") as mock_cwd:
+                mock_cwd.return_value = Path("/mock/working/dir")
+                result = await server._handle_mark_false_positive(arguments)
 
         assert len(result) == 1
         assert isinstance(result[0], types.TextContent)
         assert "marked as false positive" in result[0].text
-        mock_mark.assert_called_once()
+        # Path should be resolved to absolute path using mocked working directory
+        expected_path = "/mock/working/dir/.adversary.json"
+        mock_fp_class.assert_called_once_with(adversary_file_path=expected_path)
+        mock_fp_instance.mark_false_positive.assert_called_once_with(
+            "test-uuid-123", "False positive", "user"
+        )
 
     @pytest.mark.asyncio
     async def test_handle_unmark_false_positive(self, server):
         """Test unmark_false_positive tool handler."""
         arguments = {
             "finding_uuid": "test-uuid-123",
-            "working_directory": ".",
+            "adversary_file_path": ".adversary.json",
         }
 
-        with patch.object(
-            server.false_positive_manager, "unmark_false_positive", return_value=True
-        ) as mock_unmark:
-            result = await server._handle_unmark_false_positive(arguments)
+        with patch("adversary_mcp_server.server.FalsePositiveManager") as mock_fp_class:
+            mock_fp_instance = Mock()
+            mock_fp_instance.unmark_false_positive.return_value = True
+            mock_fp_class.return_value = mock_fp_instance
+
+            # Mock Path.cwd() to avoid using actual working directory
+            with patch("adversary_mcp_server.server.Path.cwd") as mock_cwd:
+                mock_cwd.return_value = Path("/mock/working/dir")
+                result = await server._handle_unmark_false_positive(arguments)
 
         assert len(result) == 1
         assert isinstance(result[0], types.TextContent)
         assert "unmarked as false positive" in result[0].text
-        mock_unmark.assert_called_once()
+        # Path should be resolved to absolute path using mocked working directory
+        expected_path = "/mock/working/dir/.adversary.json"
+        mock_fp_class.assert_called_once_with(adversary_file_path=expected_path)
+        mock_fp_instance.unmark_false_positive.assert_called_once_with("test-uuid-123")
 
     @pytest.mark.asyncio
     async def test_handle_list_false_positives(self, server):
         """Test list_false_positives tool handler."""
         arguments = {
-            "working_directory": ".",
+            "adversary_file_path": ".adversary.json",
         }
 
         mock_false_positives = [
@@ -843,16 +763,23 @@ class TestMCPToolHandlers:
             }
         ]
 
-        with patch.object(
-            server.false_positive_manager,
-            "get_false_positives",
-            return_value=mock_false_positives,
-        ):
-            result = await server._handle_list_false_positives(arguments)
+        with patch("adversary_mcp_server.server.FalsePositiveManager") as mock_fp_class:
+            mock_fp_instance = Mock()
+            mock_fp_instance.get_false_positives.return_value = mock_false_positives
+            mock_fp_class.return_value = mock_fp_instance
+
+            # Mock Path.cwd() to avoid using actual working directory
+            with patch("adversary_mcp_server.server.Path.cwd") as mock_cwd:
+                mock_cwd.return_value = Path("/mock/working/dir")
+                result = await server._handle_list_false_positives(arguments)
 
         assert len(result) == 1
         assert isinstance(result[0], types.TextContent)
         assert "test-uuid-123" in result[0].text
+        # Path should be resolved to absolute path using mocked working directory
+        expected_path = "/mock/working/dir/.adversary.json"
+        mock_fp_class.assert_called_once_with(adversary_file_path=expected_path)
+        mock_fp_instance.get_false_positives.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_handle_scan_code_exception_handling(self, server):
@@ -864,7 +791,6 @@ class TestMCPToolHandlers:
             "include_exploits": False,
             "use_llm": False,
             "use_semgrep": False,
-            "use_rules": True,
             "output_format": "text",
         }
 
@@ -882,13 +808,10 @@ class TestServerIntegration:
         """Test server can be created and initialized."""
         server = AdversaryMCPServer()
         assert server is not None
-        assert hasattr(server, "threat_engine")
-        assert hasattr(server, "ast_scanner")
         assert hasattr(server, "exploit_generator")
         assert hasattr(server, "credential_manager")
         assert hasattr(server, "scan_engine")
         assert hasattr(server, "diff_scanner")
-        assert hasattr(server, "false_positive_manager")
 
     def test_list_tools(self):
         """Test list_tools functionality."""
@@ -903,8 +826,6 @@ class TestServerIntegration:
         assert hasattr(server, "_handle_scan_directory")
         assert hasattr(server, "_handle_diff_scan")
         assert hasattr(server, "_handle_generate_exploit")
-        assert hasattr(server, "_handle_list_rules")
-        assert hasattr(server, "_handle_get_rule_details")
         assert hasattr(server, "_handle_configure_settings")
         assert hasattr(server, "_handle_get_status")
         assert hasattr(server, "_handle_get_version")
@@ -1001,9 +922,8 @@ class TestServerUtilityMethods:
         return EnhancedScanResult(
             file_path="test.py",
             language=Language.PYTHON,
-            rules_threats=[mock_threat],
             llm_threats=[],
-            semgrep_threats=[],
+            semgrep_threats=[mock_threat],
             scan_metadata={
                 "rules_scan_success": True,
                 "llm_scan_success": False,
@@ -1034,15 +954,14 @@ class TestServerUtilityMethods:
 
         assert "Enhanced Security Scan Results for test.py" in result
         assert "Test Rule" in result
-        assert "**Rules Engine:** 1 findings" in result
         assert "**LLM Analysis:** 0 findings" in result
+        assert "**Total Threats:** 1" in result
 
     def test_format_enhanced_scan_results_no_threats(self, server):
         """Test _format_enhanced_scan_results with no threats."""
         empty_result = EnhancedScanResult(
             file_path="test.py",
             language=Language.PYTHON,
-            rules_threats=[],
             llm_threats=[],
             semgrep_threats=[],
             scan_metadata={},
@@ -1055,11 +974,11 @@ class TestServerUtilityMethods:
 
     def test_format_json_scan_results(self, server, mock_scan_result):
         """Test _format_json_scan_results utility method."""
-        with patch.object(
-            server.false_positive_manager,
-            "get_false_positive_details",
-            return_value=None,
-        ):
+        with patch("adversary_mcp_server.server.FalsePositiveManager") as mock_fp_class:
+            mock_fp_instance = Mock()
+            mock_fp_instance.get_false_positive_details.return_value = None
+            mock_fp_class.return_value = mock_fp_instance
+
             result = server._format_json_scan_results(mock_scan_result, "test.py")
 
         # Parse JSON to verify structure
@@ -1080,11 +999,13 @@ class TestServerUtilityMethods:
             "marked_at": "2023-01-01T00:00:00Z",
         }
 
-        with patch.object(
-            server.false_positive_manager,
-            "get_false_positive_details",
-            return_value=false_positive_data,
-        ):
+        with patch("adversary_mcp_server.server.FalsePositiveManager") as mock_fp_class:
+            mock_fp_instance = Mock()
+            mock_fp_instance.get_false_positive_details.return_value = (
+                false_positive_data
+            )
+            mock_fp_class.return_value = mock_fp_instance
+
             result = server._format_json_scan_results(mock_scan_result, "test.py")
 
         data = json.loads(result)
@@ -1093,11 +1014,11 @@ class TestServerUtilityMethods:
 
     def test_format_json_directory_results(self, server, mock_scan_result):
         """Test _format_json_directory_results utility method."""
-        with patch.object(
-            server.false_positive_manager,
-            "get_false_positive_details",
-            return_value=None,
-        ):
+        with patch("adversary_mcp_server.server.FalsePositiveManager") as mock_fp_class:
+            mock_fp_instance = Mock()
+            mock_fp_instance.get_false_positive_details.return_value = None
+            mock_fp_class.return_value = mock_fp_instance
+
             with patch.object(
                 server, "_get_semgrep_summary", return_value={"files_processed": 1}
             ):
@@ -1125,11 +1046,11 @@ class TestServerUtilityMethods:
             "lines_removed": 5,
         }
 
-        with patch.object(
-            server.false_positive_manager,
-            "get_false_positive_details",
-            return_value=None,
-        ):
+        with patch("adversary_mcp_server.server.FalsePositiveManager") as mock_fp_class:
+            mock_fp_instance = Mock()
+            mock_fp_instance.get_false_positive_details.return_value = None
+            mock_fp_class.return_value = mock_fp_instance
+
             result = server._format_json_diff_results(
                 scan_results, diff_summary, "main..feature", "."
             )
@@ -1291,7 +1212,6 @@ class TestServerUtilityMethods:
             "include_exploits": True,
             "use_llm": True,
             "use_semgrep": False,
-            "use_rules": True,
             "output_format": "text",
         }
 
@@ -1324,7 +1244,6 @@ class TestServerUtilityMethods:
                 "include_exploits": False,
                 "use_llm": False,
                 "use_semgrep": False,
-                "use_rules": True,
                 "output_format": "json",
             }
 
@@ -1359,7 +1278,6 @@ class TestServerUtilityMethods:
                 "include_exploits": False,
                 "use_llm": False,
                 "use_semgrep": False,
-                "use_rules": True,
                 "output_format": "json",
             }
 
@@ -1390,7 +1308,6 @@ class TestServerUtilityMethods:
             "include_exploits": False,
             "use_llm": False,
             "use_semgrep": False,
-            "use_rules": True,
             "output_format": "json",
         }
 
@@ -1434,7 +1351,6 @@ class TestServerUtilityMethods:
             "include_exploits": False,
             "use_llm": True,
             "use_semgrep": False,
-            "use_rules": True,
             "output_format": "text",
         }
 
@@ -1473,7 +1389,6 @@ class TestServerUtilityMethods:
                 "include_exploits": True,
                 "use_llm": False,
                 "use_semgrep": False,
-                "use_rules": True,
                 "output_format": "text",
             }
 
@@ -1503,7 +1418,6 @@ class TestServerUtilityMethods:
             "include_exploits": True,
             "use_llm": False,
             "use_semgrep": False,
-            "use_rules": True,
             "output_format": "text",
         }
 
@@ -1553,31 +1467,17 @@ class TestServerUtilityMethods:
         assert "No template-based exploits available" in result[0].text
 
     @pytest.mark.asyncio
-    async def test_handle_list_rules_empty_result(self, server):
-        """Test list_rules with empty result."""
-        arguments = {
-            "category": None,
-            "severity": None,
-            "language": None,
-        }
-
-        with patch.object(server.threat_engine, "list_rules", return_value=[]):
-            result = await server._handle_list_rules(arguments)
-
-        assert len(result) == 1
-        assert isinstance(result[0], types.TextContent)
-        assert "**Total Rules:** 0" in result[0].text
-
-    @pytest.mark.asyncio
     async def test_handle_list_false_positives_empty_result(self, server):
         """Test list_false_positives with empty result."""
         arguments = {
-            "working_directory": ".",
+            "adversary_file_path": ".adversary.json",
         }
 
-        with patch.object(
-            server.false_positive_manager, "get_false_positives", return_value=[]
-        ):
+        with patch("adversary_mcp_server.server.FalsePositiveManager") as mock_fp_class:
+            mock_fp_instance = Mock()
+            mock_fp_instance.get_false_positives.return_value = []
+            mock_fp_class.return_value = mock_fp_instance
+
             result = await server._handle_list_false_positives(arguments)
 
         assert len(result) == 1

@@ -16,7 +16,7 @@ from adversary_mcp_server.llm_scanner import (
     LLMScanner,
     LLMSecurityFinding,
 )
-from adversary_mcp_server.threat_engine import Category, Language, Severity, ThreatMatch
+from adversary_mcp_server.types import Category, Language, Severity, ThreatMatch
 
 
 class TestLLMSecurityFinding:

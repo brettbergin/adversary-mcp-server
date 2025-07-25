@@ -6,7 +6,7 @@ from pathlib import Path
 
 from .logging_config import get_logger
 from .scan_engine import EnhancedScanResult, ScanEngine
-from .threat_engine import Language, LanguageSupport, Severity
+from .types import Language, LanguageSupport, Severity
 
 logger = get_logger("diff_scanner")
 
@@ -80,7 +80,8 @@ class DiffChunk:
         This includes only 1-2 context lines around changes, not all context,
         which is useful for LLM analysis while keeping the scope focused.
         """
-        logger.debug(f"Getting added lines with minimal context for {self.file_path}")
+        file_path_abs = str(Path(self.file_path).resolve())
+        logger.debug(f"Getting added lines with minimal context for {file_path_abs}")
 
         lines = []
 
@@ -310,21 +311,24 @@ class GitDiffScanner:
             Detected language or None if not supported for security scanning
         """
         extension = Path(file_path).suffix.lower()
-        logger.debug(f"Detecting language for {file_path} (extension: {extension})")
+        file_path_abs = str(Path(file_path).resolve())
+        logger.debug(f"Detecting language for {file_path_abs} (extension: {extension})")
 
         language_map = LanguageSupport.get_extension_to_language_map()
         detected_language = language_map.get(extension)
 
         # Diff scanner only scans code files, not documentation or config files
         if detected_language == Language.GENERIC:
+            file_path_abs = str(Path(file_path).resolve())
             logger.debug(
-                f"Skipping {file_path}: generic file type not supported for diff scanning"
+                f"Skipping {file_path_abs}: generic file type not supported for diff scanning"
             )
             return None
 
         if detected_language:
+            file_path_abs = str(Path(file_path).resolve())
             logger.debug(
-                f"Detected language for {file_path}: {detected_language.value}"
+                f"Detected language for {file_path_abs}: {detected_language.value}"
             )
         else:
             logger.debug(
@@ -424,16 +428,17 @@ class GitDiffScanner:
         total_threats_found = 0
 
         for file_path, chunks in diff_changes.items():
-            logger.debug(f"Processing file: {file_path}")
+            file_path_abs = str(Path(file_path).resolve())
+            logger.debug(f"Processing file: {file_path_abs}")
 
             # Skip non-code files
             language = self._detect_language_from_path(file_path)
             if not language:
-                logger.debug(f"Skipping {file_path}: unsupported file type")
+                logger.debug(f"Skipping {file_path_abs}: unsupported file type")
                 files_skipped += 1
                 continue
 
-            logger.info(f"Scanning {file_path} as {language.value}")
+            logger.info(f"Scanning {file_path_abs} as {language.value}")
 
             # Combine only the newly added lines from all chunks
             all_added_code = []
@@ -465,18 +470,18 @@ class GitDiffScanner:
                             combined_line_num += 1
 
             if not all_added_code:
-                logger.debug(f"No added code to scan in {file_path}")
+                logger.debug(f"No added code to scan in {file_path_abs}")
                 files_skipped += 1
                 continue
 
-            logger.info(f"Scanning {total_added_lines} added lines in {file_path}")
+            logger.info(f"Scanning {total_added_lines} added lines in {file_path_abs}")
 
             # Scan the combined added code (only new lines)
             full_added_code = "\n".join(all_added_code)
             logger.debug(f"Combined added code: {len(full_added_code)} characters")
 
             try:
-                logger.debug(f"Calling scan_engine.scan_code for {file_path}...")
+                logger.debug(f"Calling scan_engine.scan_code for {file_path_abs}...")
                 scan_result = await self.scan_engine.scan_code(
                     source_code=full_added_code,
                     file_path=file_path,
@@ -506,13 +511,13 @@ class GitDiffScanner:
                 files_processed += 1
 
                 logger.info(
-                    f"Scanned {file_path}: {threat_count} threats found, "
+                    f"Scanned {file_path_abs}: {threat_count} threats found, "
                     f"{remapped_threats} line numbers remapped"
                 )
 
             except Exception as e:
-                logger.error(f"Failed to scan {file_path}: {e}")
-                logger.debug(f"Scan error details for {file_path}", exc_info=True)
+                logger.error(f"Failed to scan {file_path_abs}: {e}")
+                logger.debug(f"Scan error details for {file_path_abs}", exc_info=True)
                 files_failed += 1
                 continue
 

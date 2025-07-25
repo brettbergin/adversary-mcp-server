@@ -1,10 +1,11 @@
 """Corrected tests for credential manager module with actual interfaces."""
 
+import json
 import os
 import sys
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import mock_open, patch
 
 import pytest
 
@@ -62,7 +63,6 @@ class TestSecurityConfigCorrected:
             severity_threshold="high",
             exploit_safety_mode=False,
             max_file_size_mb=20,
-            custom_rules_path="/path/to/rules",
             verbose_output=True,
         )
 
@@ -71,7 +71,6 @@ class TestSecurityConfigCorrected:
         assert config.severity_threshold == "high"
         assert config.exploit_safety_mode is False
         assert config.max_file_size_mb == 20
-        assert config.custom_rules_path == "/path/to/rules"
         assert config.verbose_output is True
 
     def test_security_config_is_dataclass(self):
@@ -81,7 +80,6 @@ class TestSecurityConfigCorrected:
         # Check that it's a dataclass with expected fields
         expected_fields = {
             "enable_llm_analysis",
-            "enable_ast_scanning",
             "enable_semgrep_scanning",
             "enable_bandit_scanning",
             "enable_exploit_generation",
@@ -447,3 +445,710 @@ class TestCredentialManagerCorrected:
             # Should have same number of calls (no additional keyring access)
             assert second_call_count == first_call_count
             assert config1.enable_llm_analysis == config2.enable_llm_analysis
+
+
+class TestCredentialManagerEdgeCases:
+    """Test edge cases and error conditions for CredentialManager."""
+
+    def test_ensure_config_dir_with_custom_none(self):
+        """Test _ensure_config_dir with None config_dir defaults."""
+        manager = CredentialManager(config_dir=None)  # Should use default
+
+        # Should create default path
+        expected_path = Path.home() / ".local" / "share" / "adversary-mcp-server"
+        assert manager.config_dir == expected_path
+
+    @patch("os.chmod")
+    def test_ensure_config_dir_chmod_failure(self, mock_chmod):
+        """Test _ensure_config_dir when chmod fails."""
+        mock_chmod.side_effect = OSError("Permission denied")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Should not raise exception even if chmod fails
+            manager = CredentialManager(config_dir=Path(temp_dir) / "test")
+            assert manager.config_dir.exists()
+
+    def test_derive_key_consistency(self):
+        """Test that _derive_key produces consistent results."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            password = b"test_password"
+            salt = b"test_salt_16bytes"
+
+            key1 = manager._derive_key(password, salt)
+            key2 = manager._derive_key(password, salt)
+
+            assert key1 == key2
+            assert len(key1) > 0
+
+    def test_encrypt_data_different_salts(self):
+        """Test that _encrypt_data produces different results with different calls."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            data = "test data"
+            password = "test_password"
+
+            result1 = manager._encrypt_data(data, password)
+            result2 = manager._encrypt_data(data, password)
+
+            # Should have different salts and encrypted data
+            assert result1["salt"] != result2["salt"]
+            assert result1["encrypted_data"] != result2["encrypted_data"]
+
+    def test_decrypt_data_invalid_base64(self):
+        """Test _decrypt_data with invalid base64 data."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            with pytest.raises(CredentialDecryptionError):
+                manager._decrypt_data("invalid_base64!", "dGVzdA==", "password")
+
+    def test_decrypt_data_invalid_salt(self):
+        """Test _decrypt_data with invalid salt."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            with pytest.raises(CredentialDecryptionError):
+                manager._decrypt_data("dGVzdA==", "invalid_salt!", "password")
+
+    @patch("builtins.open", mock_open(read_data="machine123"))
+    @patch("os.path.exists")
+    def test_get_machine_id_from_etc_machine_id(self, mock_exists):
+        """Test _get_machine_id reading from /etc/machine-id."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            mock_exists.side_effect = lambda path: path == "/etc/machine-id"
+
+            machine_id = manager._get_machine_id()
+            assert machine_id == "machine123"
+
+    @patch("builtins.open", mock_open(read_data="dbus456"))
+    @patch("os.path.exists")
+    def test_get_machine_id_from_dbus_machine_id(self, mock_exists):
+        """Test _get_machine_id reading from /var/lib/dbus/machine-id."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            # First file doesn't exist, second does
+            mock_exists.side_effect = lambda path: path == "/var/lib/dbus/machine-id"
+
+            machine_id = manager._get_machine_id()
+            assert machine_id == "dbus456"
+
+    @patch("os.path.exists", return_value=False)
+    @patch("socket.gethostname", return_value="testhost")
+    @patch("getpass.getuser", return_value="testuser")
+    def test_get_machine_id_fallback(self, mock_user, mock_hostname, mock_exists):
+        """Test _get_machine_id fallback to hostname-username."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            machine_id = manager._get_machine_id()
+            assert machine_id == "testhost-testuser"
+
+    @patch("builtins.open", mock_open())
+    @patch("os.path.exists")
+    def test_get_machine_id_file_read_error(self, mock_exists):
+        """Test _get_machine_id when file read fails."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            mock_exists.return_value = True
+
+            with patch("builtins.open", side_effect=OSError("Read error")):
+                # Should fall back to hostname-username
+                machine_id = manager._get_machine_id()
+                assert "-" in machine_id  # Should contain hostname-username format
+
+    @patch("adversary_mcp_server.credential_manager.keyring")
+    def test_try_keyring_storage_success(self, mock_keyring):
+        """Test _try_keyring_storage success case."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            mock_keyring.set_password.return_value = None
+            config = SecurityConfig(enable_llm_analysis=True)
+
+            result = manager._try_keyring_storage(config)
+            assert result is True
+            mock_keyring.set_password.assert_called_once()
+
+    @patch("adversary_mcp_server.credential_manager.keyring")
+    def test_try_keyring_storage_failure(self, mock_keyring):
+        """Test _try_keyring_storage failure case."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            from keyring.errors import KeyringError
+
+            mock_keyring.set_password.side_effect = KeyringError("Storage failed")
+            config = SecurityConfig(enable_llm_analysis=True)
+
+            result = manager._try_keyring_storage(config)
+            assert result is False
+
+    @patch("adversary_mcp_server.credential_manager.keyring")
+    def test_try_keyring_retrieval_success(self, mock_keyring):
+        """Test _try_keyring_retrieval success case."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            config_dict = {
+                "enable_llm_analysis": True,
+                "enable_ast_scanning": True,
+                "enable_semgrep_scanning": True,
+                "enable_bandit_scanning": True,
+                "enable_exploit_generation": True,
+                "exploit_safety_mode": True,
+                "max_file_size_mb": 10,
+                "max_scan_depth": 5,
+                "timeout_seconds": 300,
+                "custom_rules_path": None,
+                "severity_threshold": "medium",
+                "include_exploit_examples": True,
+                "include_remediation_advice": True,
+                "verbose_output": False,
+            }
+            mock_keyring.get_password.return_value = json.dumps(config_dict)
+
+            result = manager._try_keyring_retrieval()
+            assert result is not None
+            assert result.enable_llm_analysis is True
+
+    @patch("adversary_mcp_server.credential_manager.keyring")
+    def test_try_keyring_retrieval_none(self, mock_keyring):
+        """Test _try_keyring_retrieval when no password found."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            mock_keyring.get_password.return_value = None
+
+            result = manager._try_keyring_retrieval()
+            assert result is None
+
+    @patch("adversary_mcp_server.credential_manager.keyring")
+    def test_try_keyring_retrieval_json_error(self, mock_keyring):
+        """Test _try_keyring_retrieval with invalid JSON."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            mock_keyring.get_password.return_value = "invalid json"
+
+            result = manager._try_keyring_retrieval()
+            assert result is None
+
+    @patch("adversary_mcp_server.credential_manager.keyring")
+    def test_try_keyring_retrieval_keyring_error(self, mock_keyring):
+        """Test _try_keyring_retrieval with KeyringError."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            from keyring.errors import KeyringError
+
+            mock_keyring.get_password.side_effect = KeyringError("Access denied")
+
+            result = manager._try_keyring_retrieval()
+            assert result is None
+
+    @patch("adversary_mcp_server.credential_manager.keyring")
+    def test_try_keyring_deletion_success(self, mock_keyring):
+        """Test _try_keyring_deletion success case."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            mock_keyring.delete_password.return_value = None
+
+            result = manager._try_keyring_deletion()
+            assert result is True
+
+    @patch("adversary_mcp_server.credential_manager.keyring")
+    def test_try_keyring_deletion_failure(self, mock_keyring):
+        """Test _try_keyring_deletion failure case."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            from keyring.errors import KeyringError
+
+            mock_keyring.delete_password.side_effect = KeyringError("Delete failed")
+
+            result = manager._try_keyring_deletion()
+            assert result is False
+
+    def test_store_file_config_success(self):
+        """Test _store_file_config success case."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            config = SecurityConfig(enable_llm_analysis=True)
+
+            # Should not raise exception
+            manager._store_file_config(config)
+
+            # File should exist and be readable
+            assert manager.config_file.exists()
+
+            # Check file permissions (should be 600)
+            file_stat = manager.config_file.stat()
+            assert file_stat.st_mode & 0o777 == 0o600
+
+    @patch("builtins.open", side_effect=OSError("Write failed"))
+    def test_store_file_config_write_error(self, mock_open):
+        """Test _store_file_config with write error."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            config = SecurityConfig(enable_llm_analysis=True)
+
+            with pytest.raises(CredentialStorageError):
+                manager._store_file_config(config)
+
+    def test_load_file_config_not_exists(self):
+        """Test _load_file_config when file doesn't exist."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            result = manager._load_file_config()
+            assert result is None
+
+    def test_load_file_config_encrypted(self):
+        """Test _load_file_config with encrypted file."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            # Create encrypted config file
+            config = SecurityConfig(enable_llm_analysis=True, severity_threshold="high")
+            manager._store_file_config(config)
+
+            # Load it back
+            loaded_config = manager._load_file_config()
+            assert loaded_config is not None
+            assert loaded_config.enable_llm_analysis is True
+            assert loaded_config.severity_threshold == "high"
+
+    def test_load_file_config_plain_json(self):
+        """Test _load_file_config with plain JSON (backward compatibility)."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            # Create plain JSON config file
+            config_dict = {
+                "enable_llm_analysis": False,
+                "enable_ast_scanning": True,
+                "enable_semgrep_scanning": True,
+                "enable_bandit_scanning": True,
+                "enable_exploit_generation": True,
+                "exploit_safety_mode": True,
+                "max_file_size_mb": 10,
+                "max_scan_depth": 5,
+                "timeout_seconds": 300,
+                "custom_rules_path": None,
+                "severity_threshold": "low",
+                "include_exploit_examples": True,
+                "include_remediation_advice": True,
+                "verbose_output": False,
+            }
+
+            with open(manager.config_file, "w") as f:
+                json.dump(config_dict, f)
+
+            loaded_config = manager._load_file_config()
+            assert loaded_config is not None
+            assert loaded_config.enable_llm_analysis is False
+            assert loaded_config.severity_threshold == "low"
+
+    @patch("builtins.open", side_effect=OSError("Read failed"))
+    def test_load_file_config_read_error(self, mock_open):
+        """Test _load_file_config with read error."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            # Create file so exists() returns True
+            manager.config_file.touch()
+
+            result = manager._load_file_config()
+            assert result is None
+
+    def test_load_file_config_invalid_json(self):
+        """Test _load_file_config with invalid JSON."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            # Write invalid JSON
+            manager.config_file.write_text("invalid json")
+
+            result = manager._load_file_config()
+            assert result is None
+
+    def test_load_file_config_decryption_error(self):
+        """Test _load_file_config with decryption error."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            # Write encrypted-looking data that will fail decryption
+            bad_encrypted = {
+                "encrypted_data": "invalid_encrypted_data",
+                "salt": "invalid_salt",
+            }
+
+            with open(manager.config_file, "w") as f:
+                json.dump(bad_encrypted, f)
+
+            result = manager._load_file_config()
+            assert result is None
+
+    def test_delete_file_config_success(self):
+        """Test _delete_file_config success case."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            # Create config file
+            manager.config_file.touch()
+            assert manager.config_file.exists()
+
+            result = manager._delete_file_config()
+            assert result is True
+            assert not manager.config_file.exists()
+
+    def test_delete_file_config_not_exists(self):
+        """Test _delete_file_config when file doesn't exist."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            # File doesn't exist
+            result = manager._delete_file_config()
+            assert result is True  # Should still return True
+
+    @patch("pathlib.Path.unlink", side_effect=OSError("Delete failed"))
+    def test_delete_file_config_delete_error(self, mock_unlink):
+        """Test _delete_file_config with delete error."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            # Create file
+            manager.config_file.touch()
+
+            result = manager._delete_file_config()
+            assert result is False
+
+    @patch("adversary_mcp_server.credential_manager.keyring")
+    def test_store_config_keyring_success(self, mock_keyring):
+        """Test store_config success via keyring."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            mock_keyring.set_password.return_value = None
+            config = SecurityConfig(enable_llm_analysis=True)
+
+            manager.store_config(config)
+
+            # Should have cached the config
+            assert manager._config_cache == config
+            assert manager._cache_loaded is True
+
+    @patch("adversary_mcp_server.credential_manager.keyring")
+    def test_store_config_keyring_fails_file_success(self, mock_keyring):
+        """Test store_config falls back to file when keyring fails."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            from keyring.errors import KeyringError
+
+            mock_keyring.set_password.side_effect = KeyringError("Keyring failed")
+
+            config = SecurityConfig(enable_llm_analysis=True)
+            manager.store_config(config)
+
+            # Should have fallen back to file storage
+            assert manager.config_file.exists()
+            assert manager._config_cache == config
+            assert manager._cache_loaded is True
+
+    @patch("adversary_mcp_server.credential_manager.keyring")
+    def test_load_config_keyring_success(self, mock_keyring):
+        """Test load_config success via keyring."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            config_dict = {
+                "enable_llm_analysis": True,
+                "enable_ast_scanning": True,
+                "enable_semgrep_scanning": True,
+                "enable_bandit_scanning": True,
+                "enable_exploit_generation": True,
+                "exploit_safety_mode": True,
+                "max_file_size_mb": 15,
+                "max_scan_depth": 5,
+                "timeout_seconds": 300,
+                "custom_rules_path": None,
+                "severity_threshold": "critical",
+                "include_exploit_examples": True,
+                "include_remediation_advice": True,
+                "verbose_output": False,
+            }
+            mock_keyring.get_password.return_value = json.dumps(config_dict)
+
+            config = manager.load_config()
+
+            assert config.enable_llm_analysis is True
+            assert config.max_file_size_mb == 15
+            assert config.severity_threshold == "critical"
+            assert manager._config_cache == config
+            assert manager._cache_loaded is True
+
+    @patch("adversary_mcp_server.credential_manager.keyring")
+    def test_load_config_keyring_fails_file_success(self, mock_keyring):
+        """Test load_config falls back to file when keyring fails."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            from keyring.errors import KeyringError
+
+            mock_keyring.get_password.side_effect = KeyringError("Keyring failed")
+
+            # Create file config
+            config = SecurityConfig(enable_llm_analysis=False, severity_threshold="low")
+            manager._store_file_config(config)
+
+            # Clear cache to force reload
+            manager._config_cache = None
+            manager._cache_loaded = False
+
+            loaded_config = manager.load_config()
+
+            assert loaded_config.enable_llm_analysis is False
+            assert loaded_config.severity_threshold == "low"
+
+    @patch("adversary_mcp_server.credential_manager.keyring")
+    def test_load_config_returns_default_when_nothing_found(self, mock_keyring):
+        """Test load_config returns default when no config found anywhere."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            from keyring.errors import KeyringError
+
+            mock_keyring.get_password.side_effect = KeyringError("Keyring failed")
+
+            # No file config exists
+            config = manager.load_config()
+
+            # Should return default config
+            default_config = SecurityConfig()
+            assert config.enable_llm_analysis == default_config.enable_llm_analysis
+            assert config.severity_threshold == default_config.severity_threshold
+
+    @patch("adversary_mcp_server.credential_manager.keyring")
+    def test_delete_config_clears_both_sources(self, mock_keyring):
+        """Test delete_config attempts to clear both keyring and file."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            mock_keyring.delete_password.return_value = None
+
+            # Create file config
+            manager.config_file.touch()
+            manager._config_cache = SecurityConfig()
+            manager._cache_loaded = True
+
+            manager.delete_config()
+
+            # Should have attempted keyring deletion
+            mock_keyring.delete_password.assert_called_once()
+
+            # Should have deleted file
+            assert not manager.config_file.exists()
+
+            # Should have cleared cache
+            assert manager._config_cache is None
+            assert manager._cache_loaded is False
+
+
+class TestCredentialManagerSemgrepAPI:
+    """Test Semgrep API key management methods."""
+
+    @patch("adversary_mcp_server.credential_manager.keyring")
+    def test_store_semgrep_api_key_success(self, mock_keyring):
+        """Test storing Semgrep API key successfully."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            mock_keyring.set_password.return_value = None
+
+            manager.store_semgrep_api_key("test_api_key_123")
+
+            mock_keyring.set_password.assert_called_once_with(
+                "adversary-mcp-server", "semgrep_api_key", "test_api_key_123"
+            )
+
+    @patch("adversary_mcp_server.credential_manager.keyring")
+    def test_store_semgrep_api_key_failure(self, mock_keyring):
+        """Test storing Semgrep API key with keyring error."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            from keyring.errors import KeyringError
+
+            mock_keyring.set_password.side_effect = KeyringError("Storage failed")
+
+            with pytest.raises(CredentialStorageError):
+                manager.store_semgrep_api_key("test_api_key_123")
+
+    @patch("adversary_mcp_server.credential_manager.keyring")
+    def test_get_semgrep_api_key_success(self, mock_keyring):
+        """Test getting Semgrep API key successfully."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            mock_keyring.get_password.return_value = "retrieved_api_key"
+
+            result = manager.get_semgrep_api_key()
+
+            assert result == "retrieved_api_key"
+            mock_keyring.get_password.assert_called_once_with(
+                "adversary-mcp-server", "semgrep_api_key"
+            )
+
+    @patch("adversary_mcp_server.credential_manager.keyring")
+    def test_get_semgrep_api_key_not_found(self, mock_keyring):
+        """Test getting Semgrep API key when not found."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            mock_keyring.get_password.return_value = None
+
+            result = manager.get_semgrep_api_key()
+
+            assert result is None
+
+    @patch("adversary_mcp_server.credential_manager.keyring")
+    def test_get_semgrep_api_key_keyring_error(self, mock_keyring):
+        """Test getting Semgrep API key with keyring error."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            from keyring.errors import KeyringError
+
+            mock_keyring.get_password.side_effect = KeyringError("Access denied")
+
+            result = manager.get_semgrep_api_key()
+
+            assert result is None
+
+    @patch("adversary_mcp_server.credential_manager.keyring")
+    def test_delete_semgrep_api_key_success(self, mock_keyring):
+        """Test deleting Semgrep API key successfully."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            mock_keyring.delete_password.return_value = None
+
+            result = manager.delete_semgrep_api_key()
+
+            assert result is True
+            mock_keyring.delete_password.assert_called_once_with(
+                "adversary-mcp-server", "semgrep_api_key"
+            )
+
+    @patch("adversary_mcp_server.credential_manager.keyring")
+    def test_delete_semgrep_api_key_keyring_error(self, mock_keyring):
+        """Test deleting Semgrep API key with keyring error."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            from keyring.errors import KeyringError
+
+            mock_keyring.delete_password.side_effect = KeyringError("Delete failed")
+
+            result = manager.delete_semgrep_api_key()
+
+            assert result is False
+
+
+class TestCredentialManagerHasConfig:
+    """Test has_config method edge cases."""
+
+    @patch("adversary_mcp_server.credential_manager.keyring")
+    def test_has_config_with_cached_config(self, mock_keyring):
+        """Test has_config returns True when config is cached."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            # Set up cache
+            manager._config_cache = SecurityConfig(enable_llm_analysis=True)
+            manager._cache_loaded = True
+
+            result = manager.has_config()
+
+            assert result is True
+            # Should not call keyring since cache is available
+            mock_keyring.get_password.assert_not_called()
+
+    @patch("adversary_mcp_server.credential_manager.keyring")
+    def test_has_config_with_keyring_config(self, mock_keyring):
+        """Test has_config returns True when config found in keyring."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            config_dict = {
+                "enable_llm_analysis": True,
+                "enable_ast_scanning": True,
+                "enable_semgrep_scanning": True,
+                "enable_bandit_scanning": True,
+                "enable_exploit_generation": True,
+                "exploit_safety_mode": True,
+                "max_file_size_mb": 10,
+                "max_scan_depth": 5,
+                "timeout_seconds": 300,
+                "custom_rules_path": None,
+                "severity_threshold": "medium",
+                "include_exploit_examples": True,
+                "include_remediation_advice": True,
+                "verbose_output": False,
+            }
+            mock_keyring.get_password.return_value = json.dumps(config_dict)
+
+            result = manager.has_config()
+
+            assert result is True
+
+    @patch("adversary_mcp_server.credential_manager.keyring")
+    def test_has_config_with_file_config(self, mock_keyring):
+        """Test has_config returns True when config found in file."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            from keyring.errors import KeyringError
+
+            mock_keyring.get_password.side_effect = KeyringError("No keyring")
+
+            # Create file config
+            config = SecurityConfig(enable_llm_analysis=True)
+            manager._store_file_config(config)
+
+            # Clear cache
+            manager._config_cache = None
+            manager._cache_loaded = False
+
+            result = manager.has_config()
+
+            assert result is True
+
+    @patch("adversary_mcp_server.credential_manager.keyring")
+    def test_has_config_no_config_anywhere(self, mock_keyring):
+        """Test has_config returns False when no config found anywhere."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = CredentialManager(config_dir=Path(temp_dir))
+
+            from keyring.errors import KeyringError
+
+            mock_keyring.get_password.side_effect = KeyringError("No keyring")
+
+            # No file config, no cache
+            manager._config_cache = None
+            manager._cache_loaded = False
+
+            result = manager.has_config()
+
+            assert result is False

@@ -22,7 +22,7 @@ from adversary_mcp_server.server import (
     ScanRequest,
     ScanResult,
 )
-from adversary_mcp_server.threat_engine import Category, Language, Severity, ThreatMatch
+from adversary_mcp_server.types import Category, Language, Severity, ThreatMatch
 
 
 def _read_version_from_pyproject() -> str:
@@ -34,7 +34,7 @@ def _read_version_from_pyproject() -> str:
 
         if pyproject_path.exists():
             # Use tomllib for Python 3.11+ or simple parsing for older versions
-            if sys.version_info >= (3, 11):
+            if sys.version_info >= (3, 11) or sys.version_info >= (3, 12):
                 import tomllib
 
                 with open(pyproject_path, "rb") as f:
@@ -73,7 +73,7 @@ class TestAdversaryMCPServerExtended:
             "use_llm": False,
         }
 
-        with patch.object(server.ast_scanner, "scan_code") as mock_scan:
+        with patch.object(server.scan_engine, "scan_code") as mock_scan:
             threat = ThreatMatch(
                 rule_id="python_pickle",
                 rule_name="Unsafe Pickle",
@@ -83,7 +83,20 @@ class TestAdversaryMCPServerExtended:
                 file_path="test.py",
                 line_number=1,
             )
-            mock_scan.return_value = [threat]
+            # Mock the enhanced scanner to return an EnhancedScanResult
+            from adversary_mcp_server.scan_engine import EnhancedScanResult
+
+            mock_result = EnhancedScanResult(
+                llm_threats=[],
+                semgrep_threats=[threat],
+                file_path="test.py",
+                language=Language.PYTHON,
+                scan_metadata={
+                    "semgrep": {"findings": 1},
+                    "llm_analysis": {"findings": 0},
+                },
+            )
+            mock_scan.return_value = mock_result
 
             with patch.object(
                 server.exploit_generator, "generate_exploits", return_value=["exploit1"]
@@ -121,16 +134,14 @@ class TestAdversaryMCPServerExtended:
                 )
                 # Mock the enhanced scanner to return an EnhancedScanResult
                 from adversary_mcp_server.scan_engine import EnhancedScanResult
-                from adversary_mcp_server.threat_engine import Language
 
                 mock_result = EnhancedScanResult(
-                    rules_threats=[threat],
                     llm_threats=[],
-                    semgrep_threats=[],
+                    semgrep_threats=[threat],
                     file_path=temp_file,
                     language=Language.PYTHON,
                     scan_metadata={
-                        "rules_engine": {"findings": 1},
+                        "semgrep": {"findings": 1},
                         "llm_analysis": {"findings": 0},
                     },
                 )
@@ -179,16 +190,14 @@ class TestAdversaryMCPServerExtended:
                 )
                 # Mock the enhanced scanner to return a list of EnhancedScanResults
                 from adversary_mcp_server.scan_engine import EnhancedScanResult
-                from adversary_mcp_server.threat_engine import Language
 
                 mock_result = EnhancedScanResult(
-                    rules_threats=[threat],
                     llm_threats=[],
-                    semgrep_threats=[],
+                    semgrep_threats=[threat],
                     file_path=str(test_file),
                     language=Language.PYTHON,
                     scan_metadata={
-                        "rules_engine": {"findings": 1},
+                        "semgrep": {"findings": 1},
                         "llm_analysis": {"findings": 0},
                     },
                 )
@@ -232,65 +241,6 @@ class TestAdversaryMCPServerExtended:
         assert "OR '1'='1'" in result[0].text
 
     @pytest.mark.asyncio
-    async def test_call_tool_list_rules(self, server):
-        """Test list_rules tool call."""
-        arguments = {"category": "injection", "min_severity": "medium"}
-
-        with patch.object(server.threat_engine, "list_rules") as mock_list:
-            mock_list.return_value = [
-                {
-                    "id": "sql_injection",
-                    "name": "SQL Injection",
-                    "category": "injection",
-                    "severity": "high",
-                    "languages": ["python"],
-                    "description": "SQL injection vulnerability detection",
-                }
-            ]
-
-            result = await server._handle_list_rules(arguments)
-
-        assert len(result) == 1
-        assert "SQL Injection" in result[0].text
-
-    @pytest.mark.asyncio
-    async def test_call_tool_get_rule_details(self, server):
-        """Test get_rule_details tool call."""
-        arguments = {"rule_id": "sql_injection"}
-
-        mock_rule = Mock()
-        mock_rule.id = "sql_injection"
-        mock_rule.name = "SQL Injection"
-        mock_rule.description = "Detects SQL injection vulnerabilities"
-        mock_rule.category = Category.INJECTION
-        mock_rule.severity = Severity.HIGH
-        mock_rule.languages = [Language.PYTHON]
-        mock_rule.conditions = []
-        mock_rule.exploit_templates = []
-        mock_rule.remediation = "Use parameterized queries"
-        mock_rule.references = ["https://owasp.org/sql-injection"]
-        mock_rule.cwe_id = "CWE-89"
-        mock_rule.owasp_category = "A03"
-
-        with patch.object(
-            server.threat_engine, "get_rule_by_id", return_value=mock_rule
-        ):
-            result = await server._handle_get_rule_details(arguments)
-
-        assert len(result) == 1
-        assert "SQL Injection" in result[0].text
-        assert "CWE-89" in result[0].text
-
-    @pytest.mark.asyncio
-    async def test_call_tool_get_rule_details_not_found(self, server):
-        """Test get_rule_details with non-existent rule."""
-        arguments = {"rule_id": "nonexistent_rule"}
-
-        with patch.object(server.threat_engine, "get_rule_by_id", return_value=None):
-            with pytest.raises(AdversaryToolError, match="Rule not found"):
-                await server._handle_get_rule_details(arguments)
-
-    @pytest.mark.asyncio
     async def test_call_tool_configure_settings(self, server):
         """Test configure_settings tool call."""
         arguments = {
@@ -317,8 +267,7 @@ class TestAdversaryMCPServerExtended:
         with patch.object(
             server.credential_manager, "load_config", return_value=mock_config
         ):
-            with patch.object(server.threat_engine, "list_rules", return_value=[]):
-                result = await server._handle_get_status()
+            result = await server._handle_get_status()
 
         assert len(result) == 1
         assert "Adversary MCP Server Status" in result[0].text
@@ -440,7 +389,22 @@ class TestAdversaryMCPServerExtended:
             line_number=1,
         )
 
-        with patch.object(server.ast_scanner, "scan_code", return_value=[threat]):
+        with patch.object(server.scan_engine, "scan_code") as mock_scan:
+            # Mock the enhanced scanner to return an EnhancedScanResult
+            from adversary_mcp_server.scan_engine import EnhancedScanResult
+
+            mock_result = EnhancedScanResult(
+                llm_threats=[],
+                semgrep_threats=[threat],
+                file_path="test.py",
+                language=Language.PYTHON,
+                scan_metadata={
+                    "semgrep": {"findings": 1},
+                    "llm_analysis": {"findings": 0},
+                },
+            )
+            mock_scan.return_value = mock_result
+
             with patch.object(
                 server.exploit_generator,
                 "generate_exploits",
@@ -456,7 +420,19 @@ class TestAdversaryMCPServerExtended:
         # Test with minimal parameters
         arguments = {"content": "print('hello')", "language": "python"}
 
-        with patch.object(server.ast_scanner, "scan_code", return_value=[]):
+        with patch.object(server.scan_engine, "scan_code") as mock_scan:
+            # Mock the enhanced scanner to return an empty result
+            from adversary_mcp_server.scan_engine import EnhancedScanResult
+
+            mock_result = EnhancedScanResult(
+                llm_threats=[],
+                semgrep_threats=[],
+                file_path="test.py",
+                language=Language.PYTHON,
+                scan_metadata={},
+            )
+            mock_scan.return_value = mock_result
+
             result = await server._handle_scan_code(arguments)
             assert len(result) == 1
 
@@ -481,7 +457,19 @@ class TestAdversaryMCPServerExtended:
                 line_number=1,
             )
 
-            with patch.object(server.ast_scanner, "scan_file", return_value=[threat]):
+            with patch.object(server.scan_engine, "scan_file") as mock_scan:
+                # Mock the enhanced scanner
+                from adversary_mcp_server.scan_engine import EnhancedScanResult
+
+                mock_result = EnhancedScanResult(
+                    llm_threats=[],
+                    semgrep_threats=[threat],
+                    file_path=temp_file,
+                    language=Language.PYTHON,
+                    scan_metadata={},
+                )
+                mock_scan.return_value = mock_result
+
                 with patch.object(
                     server.exploit_generator,
                     "generate_exploits",
@@ -515,18 +503,16 @@ class TestAdversaryMCPServerExtended:
 
             # Mock the enhanced scanner to return a list of EnhancedScanResults
             from adversary_mcp_server.scan_engine import EnhancedScanResult
-            from adversary_mcp_server.threat_engine import Language
 
             mock_results = []
             for threat in threats:
                 mock_result = EnhancedScanResult(
-                    rules_threats=[threat],
                     llm_threats=[],
-                    semgrep_threats=[],
+                    semgrep_threats=[threat],
                     file_path=threat.file_path,
                     language=Language.PYTHON,
                     scan_metadata={
-                        "rules_engine": {"findings": 1},
+                        "semgrep": {"findings": 1},
                         "llm_analysis": {"findings": 0},
                     },
                 )
@@ -937,10 +923,8 @@ class TestAdversaryMCPServerVersionIntegration:
 
             with patch.object(server.scan_engine, "scan_code") as mock_scan:
                 from adversary_mcp_server.scan_engine import EnhancedScanResult
-                from adversary_mcp_server.threat_engine import Language
 
                 mock_result = EnhancedScanResult(
-                    rules_threats=[],
                     llm_threats=[],
                     semgrep_threats=[],
                     file_path="input.code",

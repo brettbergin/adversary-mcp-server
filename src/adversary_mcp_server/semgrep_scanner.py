@@ -9,8 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-# Import necessary types for compatibility with old interface
-from .threat_engine import Category, Language, Severity, ThreatMatch
+# Import necessary types for compatibility
+from .types import Category, Language, Severity, ThreatMatch
 
 
 class SemgrepError(Exception):
@@ -112,7 +112,7 @@ class OptimizedSemgrepScanner:
                     self._semgrep_path = path
                     print(f"🔍 Found Semgrep at: {path}")
                     return path
-            except (FileNotFoundError, asyncio.TimeoutError):
+            except (TimeoutError, FileNotFoundError):
                 continue
 
         raise RuntimeError("Semgrep not found in PATH or common locations")
@@ -628,10 +628,9 @@ class OptimizedSemgrepScanner:
                 return findings
             else:
                 error_msg = stderr.decode() if stderr else "Unknown error"
-                print(f"⚠️  Semgrep stderr: {error_msg}")
                 return []
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             print(f"⏰ Scan timed out after {timeout}s")
             if proc:
                 proc.kill()
@@ -694,10 +693,9 @@ class OptimizedSemgrepScanner:
                 return findings
             else:
                 error_msg = stderr.decode() if stderr else "Unknown error"
-                print(f"⚠️  Semgrep stderr: {error_msg}")
                 return []
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             print(f"⏰ Directory scan timed out after {timeout}s")
             if proc:
                 proc.kill()
@@ -728,7 +726,7 @@ class OptimizedSemgrepScanner:
         return ext_map.get(language.lower(), ".py")
 
     def _get_clean_env(self) -> dict[str, str]:
-        """Get clean environment for subprocess."""
+        """Get clean environment for subprocess using credential manager."""
         env = os.environ.copy()
 
         # Remove potentially conflicting vars
@@ -738,6 +736,15 @@ class OptimizedSemgrepScanner:
 
         # Set optimizations
         env["SEMGREP_USER_AGENT_APPEND"] = "adversary-mcp-server"
+
+        # Set API token from credential manager (remove env var fallback)
+        if self.credential_manager:
+            api_key = self.credential_manager.get_semgrep_api_key()
+            if api_key:
+                env["SEMGREP_APP_TOKEN"] = api_key
+            else:
+                # Remove any existing env var token to force credential manager usage
+                env.pop("SEMGREP_APP_TOKEN", None)
 
         return env
 
@@ -808,14 +815,14 @@ class OptimizedSemgrepScanner:
         }
 
     def _get_semgrep_env_info(self) -> dict[str, Any]:
-        """Get Semgrep environment information (compatibility method)."""
+        """Get Semgrep environment information using credential manager."""
+        has_token = False
+        if self.credential_manager:
+            has_token = self.credential_manager.get_semgrep_api_key() is not None
+
         return {
-            "has_token": (
-                "true" if os.getenv("SEMGREP_APP_TOKEN") is not None else "false"
-            ),
-            "semgrep_user_agent": os.getenv(
-                "SEMGREP_USER_AGENT_APPEND", "adversary-mcp-server"
-            ),
+            "has_token": "true" if has_token else "false",
+            "semgrep_user_agent": "adversary-mcp-server",
         }
 
     def _get_file_extension(self, language: Language) -> str:

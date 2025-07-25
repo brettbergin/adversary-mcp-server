@@ -11,14 +11,12 @@ from adversary_mcp_server.cli import (
     _display_scan_results,
     configure,
     demo,
-    list_rules,
     main,
     reset,
-    rule_details,
     scan,
     status,
 )
-from adversary_mcp_server.threat_engine import Category, Severity, ThreatMatch
+from adversary_mcp_server.types import Category, Severity, ThreatMatch
 
 
 class TestCLI:
@@ -37,8 +35,6 @@ class TestCLI:
         # Since these are typer commands, we mainly test they can be imported
         assert status is not None
         assert scan is not None
-        assert list_rules is not None
-        assert rule_details is not None
         assert demo is not None
         assert reset is not None
 

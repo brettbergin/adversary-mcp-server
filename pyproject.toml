@@ -1,12 +1,12 @@
 [project]
 name = "adversary-mcp-server"
-version = "0.9.1"
+version = "0.9.5"
 description = "MCP server for adversarial security analysis and vulnerability detection"
 readme = "README.md"
 authors = [
     { name = "Brett Bergin", email = "brettberginbc@yahoo.com" }
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.11,<3.13"
 license = { text = "MIT" }
 keywords = ["security", "mcp", "vulnerability", "adversary", "cursor", "red-team"]
 classifiers = [
@@ -15,10 +15,8 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
     "Topic :: Security",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Software Development :: Quality Assurance",
@@ -84,6 +82,7 @@ dev-dependencies = [
     "pytest-cov>=4.0.0",
     "pytest-asyncio>=0.21.0",
     "pytest-mock>=3.10.0",
+    "pytest-benchmark>=4.0.0",
     "responses>=0.24.0",
     "freezegun>=1.2.0",
     "ruff>=0.1.0",
@@ -96,7 +95,7 @@ dev-dependencies = [
 packages = ["src/adversary_mcp_server", "rules"]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.12"
 strict = false
 warn_return_any = false
 warn_unused_configs = false
@@ -120,7 +119,7 @@ disable_error_code = ["type-var", "var-annotated", "assignment", "attr-defined",
 
 [tool.black]
 line-length = 88
-target-version = ['py310']
+target-version = ['py311', 'py312']
 include = '\.pyi?$'
 extend-exclude = '''
 /(
@@ -147,7 +146,7 @@ ensure_newline_before_comments = true
 
 [tool.ruff]
 line-length = 88
-target-version = "py310"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = [
@@ -193,11 +192,12 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "--cov=adversary_mcp_server --cov-report=term-missing --cov-report=html --cov-report=json --cov-report=xml --cov-fail-under=80 --strict-markers"
+addopts = "--cov=adversary_mcp_server --cov-report=term-missing --cov-report=html --cov-report=json --cov-report=xml --cov-fail-under=80 --strict-markers --benchmark-skip"
 asyncio_mode = "auto"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks tests as integration tests",
     "unit: marks tests as unit tests",
     "security: marks tests as security-related tests",
+    "benchmark: marks tests as benchmarks",
 ]

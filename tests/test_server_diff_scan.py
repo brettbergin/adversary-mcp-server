@@ -11,7 +11,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from adversary_mcp_server.server import AdversaryMCPServer, AdversaryToolError
-from adversary_mcp_server.threat_engine import Category, Severity, ThreatMatch
+from adversary_mcp_server.types import Category, Severity, ThreatMatch
 
 
 class TestServerDiffScanIntegration:

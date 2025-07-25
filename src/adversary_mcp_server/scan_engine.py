@@ -1,33 +1,24 @@
-"""Enhanced scanner that combines AST-based rules with LLM analysis for comprehensive security scanning."""
+"""Enhanced scanner that combines Semgrep and LLM analysis for comprehensive security scanning."""
 
 from pathlib import Path
 from typing import Any
 
-from .ast_scanner import ASTScanner
 from .credential_manager import CredentialManager
-from .false_positive_manager import FalsePositiveManager
 from .llm_scanner import LLMScanner
 from .logging_config import get_logger
 from .semgrep_scanner import SemgrepScanner
-from .threat_engine import (
-    Language,
-    LanguageSupport,
-    Severity,
-    ThreatEngine,
-    ThreatMatch,
-)
+from .types import Language, LanguageSupport, Severity, ThreatMatch
 
 logger = get_logger("scan_engine")
 
 
 class EnhancedScanResult:
-    """Result of enhanced scanning combining rules and LLM analysis."""
+    """Result of enhanced scanning combining Semgrep and LLM analysis."""
 
     def __init__(
         self,
         file_path: str,
         language: Language,
-        rules_threats: list[ThreatMatch],
         llm_threats: list[ThreatMatch],
         semgrep_threats: list[ThreatMatch],
         scan_metadata: dict[str, Any],
@@ -37,14 +28,12 @@ class EnhancedScanResult:
         Args:
             file_path: Path to the scanned file
             language: Programming language
-            rules_threats: Threats found by rules engine
             llm_threats: Threats found by LLM analysis
             semgrep_threats: Threats found by Semgrep analysis
             scan_metadata: Metadata about the scan
         """
         self.file_path = file_path
         self.language = language
-        self.rules_threats = rules_threats
         self.llm_threats = llm_threats
         self.semgrep_threats = semgrep_threats
         self.scan_metadata = scan_metadata
@@ -62,31 +51,12 @@ class EnhancedScanResult:
             Combined list of unique threats
         """
         combined = []
-        seen_threats = set()
 
-        # Add rules-based threats first (they're more precise)
-        for threat in self.rules_threats:
-            threat_key = (threat.rule_id, threat.line_number, threat.code_snippet)
-            if threat_key not in seen_threats:
-                combined.append(threat)
-                seen_threats.add(threat_key)
-
-        # Add Semgrep threats next (they're also quite precise)
+        # Add Semgrep threats first (they're quite precise)
         for threat in self.semgrep_threats:
-            # Check for similar threats (same line, similar category)
-            is_duplicate = False
-            for existing in combined:
-                if (
-                    abs(threat.line_number - existing.line_number) <= 2
-                    and threat.category == existing.category
-                ):
-                    is_duplicate = True
-                    break
+            combined.append(threat)
 
-            if not is_duplicate:
-                combined.append(threat)
-
-        # Add LLM threats that don't duplicate other findings
+        # Add LLM threats that don't duplicate Semgrep findings
         for threat in self.llm_threats:
             # Check for similar threats (same line, similar category)
             is_duplicate = False
@@ -114,14 +84,12 @@ class EnhancedScanResult:
         """
         return {
             "total_threats": len(self.all_threats),
-            "rules_threats": len(self.rules_threats),
             "llm_threats": len(self.llm_threats),
             "semgrep_threats": len(self.semgrep_threats),
             "unique_threats": len(self.all_threats),
             "severity_counts": self._count_by_severity(),
             "category_counts": self._count_by_category(),
             "sources": {
-                "rules_engine": len(self.rules_threats) > 0,
                 "llm_analysis": len(self.llm_threats) > 0,
                 "semgrep_analysis": len(self.semgrep_threats) > 0,
             },
@@ -165,45 +133,43 @@ class EnhancedScanResult:
 
 
 class ScanEngine:
-    """Scan engine combining AST-based rules, Semgrep, and LLM analysis."""
+    """Scan engine combining Semgrep and LLM analysis."""
 
     def __init__(
         self,
-        threat_engine: ThreatEngine | None = None,
         credential_manager: CredentialManager | None = None,
-        enable_llm_analysis: bool = False,
+        enable_llm_analysis: bool = True,
+        enable_semgrep_analysis: bool = True,
     ):
         """Initialize enhanced scanner.
 
         Args:
-            threat_engine: Threat engine for rules-based scanning
             credential_manager: Credential manager for configuration
             enable_llm_analysis: Whether to enable LLM analysis
+            enable_semgrep_analysis: Whether to enable Semgrep analysis
         """
         logger.info("=== Initializing ScanEngine ===")
-        self.threat_engine = threat_engine or ThreatEngine()
         self.credential_manager = credential_manager or CredentialManager()
-        self.false_positive_manager = FalsePositiveManager()
         logger.debug("Initialized core components")
 
-        # Set LLM analysis based on parameter
+        # Set analysis parameters
         self.enable_llm_analysis = enable_llm_analysis
+        self.enable_semgrep_analysis = enable_semgrep_analysis
         logger.info(f"LLM analysis enabled: {self.enable_llm_analysis}")
-
-        # Initialize AST scanner
-        logger.debug("Initializing AST scanner...")
-        self.ast_scanner = ASTScanner(self.threat_engine)
+        logger.info(f"Semgrep analysis enabled: {self.enable_semgrep_analysis}")
 
         # Initialize Semgrep scanner
         logger.debug("Initializing Semgrep scanner...")
         self.semgrep_scanner = SemgrepScanner(
-            threat_engine=self.threat_engine, credential_manager=self.credential_manager
+            credential_manager=self.credential_manager
         )
 
-        # Check if Semgrep scanning is enabled in config
+        # Check if Semgrep scanning is available and enabled
         config = self.credential_manager.load_config()
         self.enable_semgrep_analysis = (
-            config.enable_semgrep_scanning and self.semgrep_scanner.is_available()
+            self.enable_semgrep_analysis
+            and config.enable_semgrep_scanning
+            and self.semgrep_scanner.is_available()
         )
         logger.info(f"Semgrep analysis enabled: {self.enable_semgrep_analysis}")
 
@@ -239,7 +205,10 @@ class ScanEngine:
             Detected language
         """
         language = LanguageSupport.detect_language(file_path)
-        logger.debug(f"Language detection: {file_path.suffix} -> {language.value}")
+        file_path_abs = str(Path(file_path).resolve())
+        logger.debug(
+            f"Language detection: {file_path_abs} ({file_path.suffix}) -> {language.value}"
+        )
         return language
 
     def _filter_by_severity(
@@ -288,20 +257,18 @@ class ScanEngine:
         logger.debug("Generating scanner statistics...")
 
         stats = {
-            "ast_scanner_available": self.ast_scanner is not None,
             "llm_analyzer_available": self.llm_analyzer is not None
             and self.llm_analyzer.is_available(),
             "semgrep_scanner_available": self.semgrep_scanner.is_available(),
             "llm_analysis_enabled": self.enable_llm_analysis,
             "semgrep_analysis_enabled": self.enable_semgrep_analysis,
-            "threat_engine_stats": self.threat_engine.get_rule_statistics(),
             "llm_stats": (
                 self.llm_analyzer.get_analysis_stats() if self.llm_analyzer else None
             ),
         }
 
         logger.debug(
-            f"Scanner stats generated - AST: {stats['ast_scanner_available']}, "
+            f"Scanner stats generated - "
             f"LLM: {stats['llm_analyzer_available']}, "
             f"Semgrep: {stats['semgrep_scanner_available']}"
         )
@@ -336,10 +303,6 @@ class ScanEngine:
         """Reload configuration and reinitialize components."""
         logger.info("Reloading scanner configuration...")
 
-        # Reload threat engine rules
-        logger.debug("Reloading threat engine rules...")
-        self.threat_engine.reload_rules()
-
         # Reinitialize LLM analyzer with new configuration
         if self.enable_llm_analysis:
             logger.debug("Reinitializing LLM analyzer...")
@@ -361,11 +324,11 @@ class ScanEngine:
         language: Language,
         use_llm: bool = True,
         use_semgrep: bool = True,
-        use_rules: bool = True,
         severity_threshold: Severity | None = None,
     ) -> EnhancedScanResult:
         """Synchronous wrapper for scan_code for CLI usage."""
-        logger.debug(f"Synchronous code scan wrapper called for: {file_path}")
+        file_path_abs = str(Path(file_path).resolve())
+        logger.debug(f"Synchronous code scan wrapper called for: {file_path_abs}")
         import asyncio
 
         return asyncio.run(
@@ -375,7 +338,6 @@ class ScanEngine:
                 language=language,
                 use_llm=use_llm,
                 use_semgrep=use_semgrep,
-                use_rules=use_rules,
                 severity_threshold=severity_threshold,
             )
         )
@@ -386,12 +348,14 @@ class ScanEngine:
         recursive: bool = True,
         use_llm: bool = True,
         use_semgrep: bool = True,
-        use_rules: bool = True,
         severity_threshold: Severity | None = None,
         max_files: int | None = None,
     ) -> list[EnhancedScanResult]:
         """Synchronous wrapper for scan_directory for CLI usage."""
-        logger.debug(f"Synchronous directory scan wrapper called for: {directory_path}")
+        directory_path_abs = str(Path(directory_path).resolve())
+        logger.debug(
+            f"Synchronous directory scan wrapper called for: {directory_path_abs}"
+        )
         import asyncio
 
         return asyncio.run(
@@ -400,7 +364,6 @@ class ScanEngine:
                 recursive=recursive,
                 use_llm=use_llm,
                 use_semgrep=use_semgrep,
-                use_rules=use_rules,
                 severity_threshold=severity_threshold,
                 max_files=max_files,
             )
@@ -412,11 +375,11 @@ class ScanEngine:
         language: Language | None = None,
         use_llm: bool = True,
         use_semgrep: bool = True,
-        use_rules: bool = True,
         severity_threshold: Severity | None = None,
     ) -> EnhancedScanResult:
         """Synchronous wrapper for scan_file for CLI usage."""
-        logger.debug(f"Synchronous file scan wrapper called for: {file_path}")
+        file_path_abs = str(Path(file_path).resolve())
+        logger.debug(f"Synchronous file scan wrapper called for: {file_path_abs}")
         import asyncio
 
         return asyncio.run(
@@ -425,7 +388,6 @@ class ScanEngine:
                 language=language,
                 use_llm=use_llm,
                 use_semgrep=use_semgrep,
-                use_rules=use_rules,
                 severity_threshold=severity_threshold,
             )
         )
@@ -437,10 +399,9 @@ class ScanEngine:
         language: Language,
         use_llm: bool = True,
         use_semgrep: bool = True,
-        use_rules: bool = True,
         severity_threshold: Severity | None = None,
     ) -> EnhancedScanResult:
-        """Scan source code using rules, Semgrep, and LLM analysis.
+        """Scan source code using Semgrep and LLM analysis.
 
         Args:
             source_code: Source code to scan
@@ -448,16 +409,16 @@ class ScanEngine:
             language: Programming language
             use_llm: Whether to use LLM analysis
             use_semgrep: Whether to use Semgrep analysis
-            use_rules: Whether to use rules-based scanner
             severity_threshold: Minimum severity threshold for filtering
 
         Returns:
             Enhanced scan result
         """
-        logger.info(f"=== Starting code scan for {file_path} ===")
+        file_path_abs = str(Path(file_path).resolve())
+        logger.info(f"=== Starting code scan for {file_path_abs} ===")
         logger.debug(
             f"Scan parameters - Language: {language.value}, "
-            f"LLM: {use_llm}, Semgrep: {use_semgrep}, Rules: {use_rules}, "
+            f"LLM: {use_llm}, Semgrep: {use_semgrep}, "
             f"Severity threshold: {severity_threshold}"
         )
 
@@ -466,7 +427,6 @@ class ScanEngine:
             "language": language.value,
             "use_llm": use_llm and self.enable_llm_analysis,
             "use_semgrep": use_semgrep and self.enable_semgrep_analysis,
-            "use_rules": use_rules,
             "source_lines": len(source_code.split("\n")),
             "source_size": len(source_code),
         }
@@ -475,36 +435,9 @@ class ScanEngine:
             f"Size: {scan_metadata['source_size']} chars"
         )
 
-        # Perform AST-based rules scanning if enabled
-        rules_threats = []
-        if use_rules:
-            logger.info("Starting rules-based scanning...")
-            # Skip AST scanning for generic files to avoid hangs
-            if language == Language.GENERIC:
-                logger.info(f"Skipping AST scanning for generic file: {file_path}")
-                scan_metadata["rules_scan_success"] = True
-                scan_metadata["rules_scan_reason"] = "skipped_generic_file"
-            else:
-                try:
-                    logger.debug("Calling AST scanner...")
-                    rules_threats = self.ast_scanner.scan_code(
-                        source_code, file_path, language
-                    )
-                    logger.info(
-                        f"Rules scan completed - found {len(rules_threats)} threats"
-                    )
-                    scan_metadata["rules_scan_success"] = True
-                    scan_metadata["rules_scan_reason"] = "analysis_completed"
-                except Exception as e:
-                    logger.error(f"Rules-based scan failed for {file_path}: {e}")
-                    logger.debug("Rules scan error details", exc_info=True)
-                    scan_metadata["rules_scan_success"] = False
-                    scan_metadata["rules_scan_error"] = str(e)
-                    scan_metadata["rules_scan_reason"] = "scan_failed"
-        else:
-            logger.debug("Rules-based scanning disabled by user request")
-            scan_metadata["rules_scan_success"] = False
-            scan_metadata["rules_scan_reason"] = "disabled_by_user"
+        # Initialize threat lists
+        llm_threats = []
+        semgrep_threats = []
 
         # Perform Semgrep scanning if enabled
         semgrep_threats = []
@@ -512,6 +445,18 @@ class ScanEngine:
         semgrep_status = self.semgrep_scanner.get_status()
         scan_metadata["semgrep_status"] = semgrep_status
         logger.debug(f"Semgrep status: {semgrep_status}")
+
+        # Store LLM status for consistency with semgrep
+        if self.llm_analyzer:
+            llm_status = self.llm_analyzer.get_status()
+            scan_metadata["llm_status"] = llm_status
+            logger.debug(f"LLM status: {llm_status}")
+        else:
+            scan_metadata["llm_status"] = {
+                "available": False,
+                "installation_status": "not_initialized",
+                "description": "LLM analyzer not initialized",
+            }
 
         if use_semgrep and self.enable_semgrep_analysis:
             if not semgrep_status["available"]:
@@ -558,7 +503,7 @@ class ScanEngine:
                         }
                     )
                 except Exception as e:
-                    logger.error(f"Semgrep scan failed for {file_path}: {e}")
+                    logger.error(f"Semgrep scan failed for {file_path_abs}: {e}")
                     logger.debug("Semgrep scan error details", exc_info=True)
                     scan_metadata.update(
                         {
@@ -632,43 +577,36 @@ class ScanEngine:
 
         # Filter by severity threshold if specified
         original_counts = {
-            "rules": len(rules_threats),
             "semgrep": len(semgrep_threats),
             "llm": len(llm_threats),
         }
 
         if severity_threshold:
             logger.info(f"Applying severity filter: {severity_threshold.value}")
-            rules_threats = self._filter_by_severity(rules_threats, severity_threshold)
             llm_threats = self._filter_by_severity(llm_threats, severity_threshold)
             semgrep_threats = self._filter_by_severity(
                 semgrep_threats, severity_threshold
             )
 
             filtered_counts = {
-                "rules": len(rules_threats),
                 "semgrep": len(semgrep_threats),
                 "llm": len(llm_threats),
             }
 
             logger.info(
                 f"Severity filtering results - "
-                f"Rules: {original_counts['rules']} -> {filtered_counts['rules']}, "
                 f"Semgrep: {original_counts['semgrep']} -> {filtered_counts['semgrep']}, "
                 f"LLM: {original_counts['llm']} -> {filtered_counts['llm']}"
             )
 
         # # Apply false positive filtering
         # logger.debug("Applying false positive filtering...")
-        # original_total = len(rules_threats) + len(llm_threats) + len(semgrep_threats)
-        # rules_threats = self.false_positive_manager.filter_false_positives(
-        #     rules_threats
-        # )
+        # original_total = len(llm_threats) + len(semgrep_threats)
         # llm_threats = self.false_positive_manager.filter_false_positives(llm_threats)
         # semgrep_threats = self.false_positive_manager.filter_false_positives(
         #     semgrep_threats
         # )
-        # final_total = len(rules_threats) + len(llm_threats) + len(semgrep_threats)
+        # final_total = len(llm_threats) + len(semgrep_threats)
 
         # if original_total != final_total:
         #     logger.info(
@@ -678,7 +616,6 @@ class ScanEngine:
         result = EnhancedScanResult(
             file_path=file_path,
             language=language,
-            rules_threats=rules_threats,
             llm_threats=llm_threats,
             semgrep_threats=semgrep_threats,
             scan_metadata=scan_metadata,
@@ -697,7 +634,6 @@ class ScanEngine:
         language: Language | None = None,
         use_llm: bool = True,
         use_semgrep: bool = True,
-        use_rules: bool = True,
         severity_threshold: Severity | None = None,
     ) -> EnhancedScanResult:
         """Scan a single file using enhanced scanning.
@@ -707,21 +643,21 @@ class ScanEngine:
             language: Programming language (auto-detected if not provided)
             use_llm: Whether to use LLM analysis
             use_semgrep: Whether to use Semgrep analysis
-            use_rules: Whether to use rules-based scanner
             severity_threshold: Minimum severity threshold for filtering
 
         Returns:
             Enhanced scan result
         """
-        logger.info(f"=== Starting file scan: {file_path} ===")
+        file_path_abs = str(Path(file_path).resolve())
+        logger.info(f"=== Starting file scan: {file_path_abs} ===")
 
         if not file_path.exists():
-            logger.error(f"File not found: {file_path}")
+            logger.error(f"File not found: {file_path_abs}")
             raise FileNotFoundError(f"File not found: {file_path}")
 
         # Detect language if not provided
         if language is None:
-            logger.debug(f"Detecting language for: {file_path}")
+            logger.debug(f"Detecting language for: {file_path_abs}")
             language = self._detect_language(file_path)
             logger.info(f"Detected language: {language.value}")
         else:
@@ -732,7 +668,6 @@ class ScanEngine:
             "language": language.value,
             "use_llm": use_llm and self.enable_llm_analysis,
             "use_semgrep": use_semgrep and self.enable_semgrep_analysis,
-            "use_rules": use_rules,
         }
 
         # Initialize threat lists
@@ -740,49 +675,23 @@ class ScanEngine:
         semgrep_threats = []
         llm_threats = []
 
-        # Perform AST-based rules scanning if enabled
-        if use_rules:
-            logger.info("Starting rules-based scanning...")
-            # Skip AST scanning for generic files to avoid hangs
-            if language == Language.GENERIC:
-                logger.info(f"Skipping AST scanning for generic file: {file_path}")
-                scan_metadata["rules_scan_success"] = True
-                scan_metadata["rules_scan_reason"] = "skipped_generic_file"
-            else:
-                try:
-                    logger.debug("Calling AST scanner...")
-                    # Read file for AST scanning
-                    with open(file_path, encoding="utf-8") as f:
-                        source_code = f.read()
-
-                    rules_threats = self.ast_scanner.scan_code(
-                        source_code, str(file_path), language
-                    )
-                    logger.info(
-                        f"Rules scan completed - found {len(rules_threats)} threats"
-                    )
-                    scan_metadata["rules_scan_success"] = True
-                    scan_metadata["rules_scan_reason"] = "analysis_completed"
-                except UnicodeDecodeError:
-                    logger.warning(f"Skipping binary file for rules scan: {file_path}")
-                    scan_metadata["rules_scan_success"] = False
-                    scan_metadata["rules_scan_reason"] = "binary_file_skipped"
-                except Exception as e:
-                    logger.error(f"Rules-based scan failed for {file_path}: {e}")
-                    logger.debug("Rules scan error details", exc_info=True)
-                    scan_metadata["rules_scan_success"] = False
-                    scan_metadata["rules_scan_error"] = str(e)
-                    scan_metadata["rules_scan_reason"] = "scan_failed"
-        else:
-            logger.debug("Rules-based scanning disabled by user request")
-            scan_metadata["rules_scan_success"] = False
-            scan_metadata["rules_scan_reason"] = "disabled_by_user"
-
         # Perform Semgrep scanning if enabled
         logger.debug("Checking Semgrep status...")
         semgrep_status = self.semgrep_scanner.get_status()
         scan_metadata["semgrep_status"] = semgrep_status
         logger.debug(f"Semgrep status: {semgrep_status}")
+
+        # Store LLM status for consistency with semgrep
+        if self.llm_analyzer:
+            llm_status = self.llm_analyzer.get_status()
+            scan_metadata["llm_status"] = llm_status
+            logger.debug(f"LLM status: {llm_status}")
+        else:
+            scan_metadata["llm_status"] = {
+                "available": False,
+                "installation_status": "not_initialized",
+                "description": "LLM analyzer not initialized",
+            }
 
         if use_semgrep and self.enable_semgrep_analysis:
             if not semgrep_status["available"]:
@@ -827,7 +736,7 @@ class ScanEngine:
                         }
                     )
                 except Exception as e:
-                    logger.error(f"Semgrep scan failed for {file_path}: {e}")
+                    logger.error(f"Semgrep scan failed for {file_path_abs}: {e}")
                     logger.debug("Semgrep scan error details", exc_info=True)
                     scan_metadata.update(
                         {
@@ -870,7 +779,7 @@ class ScanEngine:
                 scan_metadata["llm_scan_reason"] = "analysis_completed"
 
             except Exception as e:
-                logger.error(f"LLM analysis failed for {file_path}: {e}")
+                logger.error(f"LLM analysis failed for {file_path_abs}: {e}")
                 logger.debug("LLM analysis error details", exc_info=True)
                 scan_metadata["llm_scan_success"] = False
                 scan_metadata["llm_scan_error"] = str(e)
@@ -896,7 +805,6 @@ class ScanEngine:
         result = EnhancedScanResult(
             file_path=str(file_path),
             language=language,
-            rules_threats=rules_threats,
             llm_threats=llm_threats,
             semgrep_threats=semgrep_threats,
             scan_metadata=scan_metadata,
@@ -915,7 +823,6 @@ class ScanEngine:
         recursive: bool = True,
         use_llm: bool = True,
         use_semgrep: bool = True,
-        use_rules: bool = True,
         severity_threshold: Severity | None = None,
         max_files: int | None = None,
     ) -> list[EnhancedScanResult]:
@@ -926,22 +833,22 @@ class ScanEngine:
             recursive: Whether to scan subdirectories
             use_llm: Whether to use LLM analysis
             use_semgrep: Whether to use Semgrep analysis
-            use_rules: Whether to use rules-based scanner
             severity_threshold: Minimum severity threshold for filtering
             max_files: Maximum number of files to scan
 
         Returns:
             List of enhanced scan results
         """
-        logger.info(f"=== Starting directory scan: {directory_path} ===")
+        directory_path_abs = str(Path(directory_path).resolve())
+        logger.info(f"=== Starting directory scan: {directory_path_abs} ===")
         logger.debug(
             f"Directory scan parameters - Recursive: {recursive}, "
             f"Max files: {max_files}, LLM: {use_llm}, "
-            f"Semgrep: {use_semgrep}, Rules: {use_rules}"
+            f"Semgrep: {use_semgrep}"
         )
 
         if not directory_path.exists():
-            logger.error(f"Directory not found: {directory_path}")
+            logger.error(f"Directory not found: {directory_path_abs}")
             raise FileNotFoundError(f"Directory not found: {directory_path}")
 
         # Get supported file extensions from centralized language support
@@ -967,9 +874,11 @@ class ScanEngine:
         directory_semgrep_threats = {}  # Map file_path -> list[ThreatMatch]
         semgrep_scan_metadata = {}
 
+        # Always get semgrep status for metadata consistency
+        semgrep_status = self.semgrep_scanner.get_status()
+
         if use_semgrep and self.enable_semgrep_analysis:
             logger.info("Starting directory-level Semgrep scan...")
-            semgrep_status = self.semgrep_scanner.get_status()
             if semgrep_status["available"]:
                 try:
                     logger.debug("Running single Semgrep scan for entire directory")
@@ -1068,9 +977,13 @@ class ScanEngine:
                     threat = finding.to_threat_match(finding.file_path)
                     all_llm_threats.append(threat)
                     file_path = finding.file_path
+                    logger.debug(f"Processing LLM finding for file: {file_path}")
                     if file_path not in directory_llm_threats:
                         directory_llm_threats[file_path] = []
                     directory_llm_threats[file_path].append(threat)
+                    logger.debug(
+                        f"Added threat to directory_llm_threats[{file_path}], now has {len(directory_llm_threats[file_path])} threats"
+                    )
 
                 logger.info(
                     f"Directory LLM analysis complete: found {len(all_llm_threats)} threats across {len(directory_llm_threats)} files"
@@ -1115,7 +1028,10 @@ class ScanEngine:
 
         for i, file_path in enumerate(files_to_scan):
             try:
-                logger.debug(f"Processing file {i+1}/{len(files_to_scan)}: {file_path}")
+                file_path_abs = str(Path(file_path).resolve())
+                logger.debug(
+                    f"Processing file {i+1}/{len(files_to_scan)}: {file_path_abs}"
+                )
 
                 # Detect language
                 language = self._detect_language(file_path)
@@ -1134,7 +1050,6 @@ class ScanEngine:
                     "language": language.value,
                     "use_llm": use_llm and self.enable_llm_analysis,
                     "use_semgrep": use_semgrep and self.enable_semgrep_analysis,
-                    "use_rules": use_rules,
                     "directory_scan": True,
                     "semgrep_source": "directory_scan",
                     "llm_source": "directory_scan",
@@ -1144,46 +1059,22 @@ class ScanEngine:
                 scan_metadata.update(semgrep_scan_metadata)
                 scan_metadata.update(llm_scan_metadata)
 
-                # Perform rules-based scanning for this file if enabled
-                rules_threats = []
-                if use_rules:
-                    # Skip AST scanning for generic files to avoid hangs
-                    if language == Language.GENERIC:
-                        logger.debug(
-                            f"Skipping AST scanning for generic file: {file_path}"
-                        )
-                        scan_metadata["rules_scan_success"] = True
-                        scan_metadata["rules_scan_reason"] = "skipped_generic_file"
-                    else:
-                        try:
-                            logger.debug(f"Running rules scan for {file_path.name}")
-                            # Read file for AST scanning
-                            with open(file_path, encoding="utf-8") as f:
-                                source_code = f.read()
+                # Add semgrep status (missing from directory scans, but present in single file scans)
+                scan_metadata["semgrep_status"] = semgrep_status
 
-                            rules_threats = self.ast_scanner.scan_code(
-                                source_code, str(file_path), language
-                            )
-                            logger.debug(
-                                f"Rules scan for {file_path.name}: found {len(rules_threats)} threats"
-                            )
-                            scan_metadata["rules_scan_success"] = True
-                            scan_metadata["rules_scan_reason"] = "analysis_completed"
-                        except UnicodeDecodeError:
-                            logger.debug(
-                                f"Skipping binary file for rules scan: {file_path}"
-                            )
-                            scan_metadata["rules_scan_success"] = False
-                            scan_metadata["rules_scan_reason"] = "binary_file_skipped"
-                        except Exception as e:
-                            logger.debug(f"Rules scan failed for {file_path}: {e}")
-                            scan_metadata["rules_scan_success"] = False
-                            scan_metadata["rules_scan_error"] = str(e)
-                            scan_metadata["rules_scan_reason"] = "scan_failed"
+                # Add LLM status for consistency with single file scans
+                if self.llm_analyzer:
+                    llm_status = self.llm_analyzer.get_status()
+                    scan_metadata["llm_status"] = llm_status
                 else:
-                    logger.debug(f"Rules scanning disabled for {file_path.name}")
-                    scan_metadata["rules_scan_success"] = False
-                    scan_metadata["rules_scan_reason"] = "disabled_by_user"
+                    scan_metadata["llm_status"] = {
+                        "available": False,
+                        "installation_status": "not_initialized",
+                        "description": "LLM analyzer not initialized",
+                    }
+
+                # Initialize rules_threats as empty (AST scanning removed)
+                rules_threats = []
 
                 # Filter by severity threshold if specified
                 if severity_threshold:
@@ -1196,12 +1087,10 @@ class ScanEngine:
                     file_semgrep_threats = self._filter_by_severity(
                         file_semgrep_threats, severity_threshold
                     )
-
                 # Create result for this file
                 result = EnhancedScanResult(
                     file_path=str(file_path),
                     language=language,
-                    rules_threats=rules_threats,
                     llm_threats=file_llm_threats,
                     semgrep_threats=file_semgrep_threats,
                     scan_metadata=scan_metadata,
@@ -1214,7 +1103,7 @@ class ScanEngine:
                     logger.info(f"Progress: {i+1}/{len(files_to_scan)} files processed")
 
             except Exception as e:
-                logger.error(f"Failed to process {file_path}: {e}")
+                logger.error(f"Failed to process {file_path_abs}: {e}")
                 logger.debug(
                     f"File processing error details for {file_path}", exc_info=True
                 )
@@ -1222,7 +1111,6 @@ class ScanEngine:
                 error_result = EnhancedScanResult(
                     file_path=str(file_path),
                     language=Language.GENERIC,  # Default for failed detection
-                    rules_threats=[],
                     llm_threats=[],
                     semgrep_threats=[],
                     scan_metadata={

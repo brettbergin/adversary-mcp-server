@@ -15,7 +15,6 @@ from mcp.types import ServerCapabilities, Tool, ToolsCapability
 from pydantic import BaseModel
 
 from . import get_version
-from .ast_scanner import ASTScanner
 from .credential_manager import CredentialManager
 from .diff_scanner import GitDiffScanner
 from .exploit_generator import ExploitGenerator
@@ -24,14 +23,7 @@ from .false_positive_manager import FalsePositiveManager
 # Set up centralized logging
 from .logging_config import get_logger
 from .scan_engine import EnhancedScanResult, ScanEngine
-from .threat_engine import (
-    Category,
-    Language,
-    LanguageSupport,
-    Severity,
-    ThreatEngine,
-    ThreatMatch,
-)
+from .types import Category, Language, LanguageSupport, Severity, ThreatMatch
 
 logger = get_logger("server")
 
@@ -71,28 +63,18 @@ class AdversaryMCPServer:
         self.credential_manager = CredentialManager()
         logger.debug("Created credential manager")
 
-        # Initialize core components
-        logger.info("Initializing threat engine...")
-        self.threat_engine = ThreatEngine()
-        logger.info(
-            f"Threat engine initialized with {len(self.threat_engine.rules)} rules"
-        )
-
-        logger.debug("Initializing AST scanner...")
-        self.ast_scanner = ASTScanner(self.threat_engine)
-
-        # Get configuration to determine LLM analysis setting
+        # Get configuration to determine scanner settings
         logger.debug("Loading configuration...")
         config = self.credential_manager.load_config()
         logger.info(
-            f"Configuration loaded - LLM analysis: {config.enable_llm_analysis}"
+            f"Configuration loaded - LLM analysis: {config.enable_llm_analysis}, Semgrep: {config.enable_semgrep_scanning}"
         )
 
         logger.info("Initializing scan engine...")
         self.scan_engine = ScanEngine(
-            self.threat_engine,
             self.credential_manager,
             enable_llm_analysis=config.enable_llm_analysis,
+            enable_semgrep_analysis=config.enable_semgrep_scanning,
         )
         logger.debug("Scan engine initialized")
 
@@ -103,7 +85,6 @@ class AdversaryMCPServer:
         self.diff_scanner = GitDiffScanner(self.scan_engine)
 
         logger.debug("Initializing false positive manager...")
-        self.false_positive_manager = FalsePositiveManager()
 
         # Set up server handlers
         logger.debug("Setting up server handlers...")
@@ -153,11 +134,6 @@ class AdversaryMCPServer:
                                 "description": "Whether to include Semgrep analysis",
                                 "default": True,
                             },
-                            "use_rules": {
-                                "type": "boolean",
-                                "description": "Whether to include rules-based threat detection",
-                                "default": True,
-                            },
                             "output_format": {
                                 "type": "string",
                                 "description": "Output format for results",
@@ -201,11 +177,6 @@ class AdversaryMCPServer:
                             "use_semgrep": {
                                 "type": "boolean",
                                 "description": "Whether to include Semgrep analysis",
-                                "default": True,
-                            },
-                            "use_rules": {
-                                "type": "boolean",
-                                "description": "Whether to include rules-based threat detection",
                                 "default": True,
                             },
                             "output_format": {
@@ -256,11 +227,6 @@ class AdversaryMCPServer:
                             "use_semgrep": {
                                 "type": "boolean",
                                 "description": "Whether to include Semgrep analysis",
-                                "default": True,
-                            },
-                            "use_rules": {
-                                "type": "boolean",
-                                "description": "Whether to include rules-based threat detection",
                                 "default": True,
                             },
                             "output_format": {
@@ -317,11 +283,6 @@ class AdversaryMCPServer:
                                 "description": "Whether to include Semgrep analysis",
                                 "default": True,
                             },
-                            "use_rules": {
-                                "type": "boolean",
-                                "description": "Whether to include rules-based threat detection",
-                                "default": True,
-                            },
                             "output_format": {
                                 "type": "string",
                                 "description": "Output format for results",
@@ -362,44 +323,6 @@ class AdversaryMCPServer:
                             "code_context",
                             "target_language",
                         ],
-                    },
-                ),
-                Tool(
-                    name="adv_list_rules",
-                    description="List all available threat detection rules",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "category": {
-                                "type": "string",
-                                "description": "Filter by category (optional)",
-                            },
-                            "severity": {
-                                "type": "string",
-                                "description": "Filter by minimum severity (optional)",
-                                "enum": ["low", "medium", "high", "critical"],
-                            },
-                            "language": {
-                                "type": "string",
-                                "description": "Filter by language (optional)",
-                                "enum": LanguageSupport.get_language_enum_values(),
-                            },
-                        },
-                        "required": [],
-                    },
-                ),
-                Tool(
-                    name="adv_get_rule_details",
-                    description="Get detailed information about a specific rule",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "rule_id": {
-                                "type": "string",
-                                "description": "ID of the rule to get details for",
-                            },
-                        },
-                        "required": ["rule_id"],
                     },
                 ),
                 Tool(
@@ -457,16 +380,16 @@ class AdversaryMCPServer:
                                 "type": "string",
                                 "description": "UUID of the finding to mark as false positive",
                             },
+                            "adversary_file_path": {
+                                "type": "string",
+                                "description": "Path to the .adversary.json file containing the finding",
+                            },
                             "reason": {
                                 "type": "string",
                                 "description": "Reason for marking as false positive",
                             },
-                            "working_directory": {
-                                "type": "string",
-                                "description": "Project directory containing .adversary.json files (optional, defaults to current directory)",
-                            },
                         },
-                        "required": ["finding_uuid"],
+                        "required": ["finding_uuid", "adversary_file_path"],
                     },
                 ),
                 Tool(
@@ -479,12 +402,12 @@ class AdversaryMCPServer:
                                 "type": "string",
                                 "description": "UUID of the finding to unmark",
                             },
-                            "working_directory": {
+                            "adversary_file_path": {
                                 "type": "string",
-                                "description": "Project directory containing .adversary.json files (optional, defaults to current directory)",
+                                "description": "Path to the .adversary.json file containing the finding",
                             },
                         },
-                        "required": ["finding_uuid"],
+                        "required": ["finding_uuid", "adversary_file_path"],
                     },
                 ),
                 Tool(
@@ -493,12 +416,12 @@ class AdversaryMCPServer:
                     inputSchema={
                         "type": "object",
                         "properties": {
-                            "working_directory": {
+                            "adversary_file_path": {
                                 "type": "string",
-                                "description": "Project directory containing .adversary.json files (optional, defaults to current directory)",
+                                "description": "Path to the .adversary.json file to list false positives from",
                             },
                         },
-                        "required": [],
+                        "required": ["adversary_file_path"],
                     },
                 ),
             ]
@@ -531,14 +454,6 @@ class AdversaryMCPServer:
                 elif name == "adv_generate_exploit":
                     logger.info("Handling generate_exploit request")
                     return await self._handle_generate_exploit(arguments)
-
-                elif name == "adv_list_rules":
-                    logger.info("Handling list_rules request")
-                    return await self._handle_list_rules(arguments)
-
-                elif name == "adv_get_rule_details":
-                    logger.info("Handling get_rule_details request")
-                    return await self._handle_get_rule_details(arguments)
 
                 elif name == "adv_configure_settings":
                     logger.info("Handling configure_settings request")
@@ -589,14 +504,29 @@ class AdversaryMCPServer:
             include_exploits = arguments.get("include_exploits", True)
             use_llm = arguments.get("use_llm", False)
             use_semgrep = arguments.get("use_semgrep", True)
-            use_rules = arguments.get("use_rules", True)
             output_format = arguments.get("output_format", "text")
             output_path = arguments.get("output")
+            # For scan_code operations, use user data directory since there's no specific project context
+            default_directory = str(
+                Path.home() / ".local" / "share" / "adversary-mcp-server"
+            )
+            working_directory = arguments.get("working_directory", default_directory)
+            # Convert to absolute path for better logging
+            working_directory_abs = str(Path(working_directory).resolve())
+            logger.info(f"Code scan - working_directory: {working_directory_abs}")
+
+            # Resolve output path if provided
+            output_path_resolved = None
+            if output_path:
+                output_path_resolved = self._resolve_file_path(
+                    output_path, "output path"
+                )
+                logger.info(f"Code scan - output_path resolved: {output_path_resolved}")
 
             logger.debug(
                 f"Code scan parameters - Language: {language_str}, "
                 f"Severity: {severity_threshold}, LLM: {use_llm}, "
-                f"Semgrep: {use_semgrep}, Rules: {use_rules}"
+                f"Semgrep: {use_semgrep}"
             )
 
             # Convert language string to enum
@@ -613,7 +543,6 @@ class AdversaryMCPServer:
                 language=language,
                 use_llm=use_llm,
                 use_semgrep=use_semgrep,
-                use_rules=use_rules,
                 severity_threshold=severity_enum,
             )
             logger.info(
@@ -643,9 +572,11 @@ class AdversaryMCPServer:
             # Format results based on output format
             if output_format == "json":
                 logger.debug("Formatting results as JSON")
-                result = self._format_json_scan_results(scan_result, "code")
+                result = self._format_json_scan_results(
+                    scan_result, "code", working_directory
+                )
                 # Save JSON results to custom path or default location
-                save_path = output_path if output_path else "."
+                save_path = output_path_resolved if output_path_resolved else "."
                 saved_path = self._save_scan_results_json(result, save_path)
                 if saved_path:
                     logger.info(f"JSON results saved to: {saved_path}")
@@ -670,6 +601,19 @@ class AdversaryMCPServer:
                             scan_result.all_threats, content
                         )
 
+                # Auto-save JSON results (regardless of output format)
+                # Use output_path_resolved if provided, otherwise use working_directory (user data directory)
+                save_location = (
+                    output_path_resolved if output_path_resolved else working_directory
+                )
+                logger.info(
+                    f"🔧 adv_scan_code auto-save: output_path_resolved={output_path_resolved}, working_directory={working_directory_abs}, save_location={save_location}"
+                )
+                json_result = self._format_json_scan_results(
+                    scan_result, "code", working_directory
+                )
+                self._save_scan_results_json(json_result, save_location)
+
             logger.info("Code scan completed successfully")
             return [types.TextContent(type="text", text=result)]
 
@@ -685,19 +629,39 @@ class AdversaryMCPServer:
         try:
             logger.info("Starting file scan")
 
-            file_path = Path(arguments["file_path"]).resolve()
+            # Get initial file path and working directory
+            input_file_path = arguments["file_path"]
+            working_directory = arguments.get("working_directory", str(Path.cwd()))
+
+            # Resolve file path relative to working directory if it's relative
+            file_path = Path(input_file_path)
+            if not file_path.is_absolute():
+                file_path = Path(working_directory) / file_path
+            file_path = file_path.resolve()
+
             severity_threshold = arguments.get("severity_threshold", "medium")
             include_exploits = arguments.get("include_exploits", True)
             use_llm = arguments.get("use_llm", False)
             use_semgrep = arguments.get("use_semgrep", True)
-            use_rules = arguments.get("use_rules", True)
             output_format = arguments.get("output_format", "text")
             output_path = arguments.get("output")
+
+            # Convert to absolute path for better logging
+            working_directory_abs = str(Path(working_directory).resolve())
+            logger.info(f"File scan - working_directory: {working_directory_abs}")
+
+            # Resolve output path if provided
+            output_path_resolved = None
+            if output_path:
+                output_path_resolved = self._resolve_file_path(
+                    output_path, "output path"
+                )
+                logger.info(f"File scan - output_path resolved: {output_path_resolved}")
 
             logger.info(f"Scanning file: {file_path}")
             logger.debug(
                 f"File scan parameters - Severity: {severity_threshold}, "
-                f"LLM: {use_llm}, Semgrep: {use_semgrep}, Rules: {use_rules}"
+                f"LLM: {use_llm}, Semgrep: {use_semgrep}"
             )
 
             if not file_path.exists():
@@ -713,7 +677,6 @@ class AdversaryMCPServer:
                 file_path=file_path,
                 use_llm=use_llm,
                 use_semgrep=use_semgrep,
-                use_rules=use_rules,
                 severity_threshold=severity_enum,
             )
             logger.info(
@@ -751,9 +714,11 @@ class AdversaryMCPServer:
             # Format results based on output format
             if output_format == "json":
                 logger.debug("Formatting results as JSON")
-                result = self._format_json_scan_results(scan_result, str(file_path))
+                result = self._format_json_scan_results(
+                    scan_result, str(file_path), working_directory
+                )
                 # Save JSON results to custom path or default location
-                save_path = output_path if output_path else "."
+                save_path = output_path_resolved if output_path_resolved else "."
                 saved_path = self._save_scan_results_json(result, save_path)
                 if saved_path:
                     logger.info(f"JSON results saved to: {saved_path}")
@@ -790,6 +755,15 @@ class AdversaryMCPServer:
                         logger.warning(f"Could not read file for LLM analysis: {e}")
                         result += f"\n\n⚠️ **LLM Analysis:** Could not read file for LLM analysis: {e}\n"
 
+                # Auto-save JSON results to project root (regardless of output format)
+                logger.info(
+                    f"🔧 adv_scan_file auto-save: file_path={file_path}, working_directory={working_directory_abs}"
+                )
+                json_result = self._format_json_scan_results(
+                    scan_result, str(file_path), working_directory
+                )
+                self._save_scan_results_json(json_result, working_directory)
+
             logger.info("File scan completed successfully")
             return [types.TextContent(type="text", text=result)]
 
@@ -810,15 +784,24 @@ class AdversaryMCPServer:
             include_exploits = arguments.get("include_exploits", True)
             use_llm = arguments.get("use_llm", False)
             use_semgrep = arguments.get("use_semgrep", True)
-            use_rules = arguments.get("use_rules", True)
             output_format = arguments.get("output_format", "text")
             output_path = arguments.get("output")
+
+            # Resolve output path if provided
+            output_path_resolved = None
+            if output_path:
+                output_path_resolved = self._resolve_file_path(
+                    output_path, "output path"
+                )
+                logger.info(
+                    f"Directory scan - output_path resolved: {output_path_resolved}"
+                )
 
             logger.info(f"Scanning directory: {directory_path}")
             logger.debug(
                 f"Directory scan parameters - Recursive: {recursive}, "
                 f"Severity: {severity_threshold}, LLM: {use_llm}, "
-                f"Semgrep: {use_semgrep}, Rules: {use_rules}"
+                f"Semgrep: {use_semgrep}"
             )
 
             if not directory_path.exists():
@@ -835,7 +818,6 @@ class AdversaryMCPServer:
                 recursive=recursive,
                 use_llm=use_llm,
                 use_semgrep=use_semgrep,
-                use_rules=use_rules,
                 severity_threshold=severity_enum,
                 max_files=50,  # Limit files for performance
             )
@@ -877,10 +859,10 @@ class AdversaryMCPServer:
             if output_format == "json":
                 logger.debug("Formatting results as JSON")
                 result = self._format_json_directory_results(
-                    scan_results, str(directory_path)
+                    scan_results, str(directory_path), str(directory_path)
                 )
                 # Save JSON results to custom path or default location
-                save_path = output_path if output_path else "."
+                save_path = output_path_resolved if output_path_resolved else "."
                 saved_path = self._save_scan_results_json(result, save_path)
                 if saved_path:
                     logger.info(f"JSON results saved to: {saved_path}")
@@ -929,6 +911,15 @@ class AdversaryMCPServer:
                             )
                             result += f"⚠️ Could not read {scan_result.file_path} for LLM analysis: {e}\n\n"
 
+                # Auto-save JSON results to project root (regardless of output format)
+                logger.info(
+                    f"🔧 adv_scan_folder auto-save: directory_path={directory_path}"
+                )
+                json_result = self._format_json_directory_results(
+                    scan_results, str(directory_path), str(directory_path)
+                )
+                self._save_scan_results_json(json_result, str(directory_path))
+
             logger.info("Directory scan completed successfully")
             return [types.TextContent(type="text", text=result)]
 
@@ -945,11 +936,13 @@ class AdversaryMCPServer:
             source_branch = arguments["source_branch"]
             target_branch = arguments["target_branch"]
             working_directory = arguments.get("working_directory", ".")
+            # Convert to absolute path for better logging
+            working_directory_abs = str(Path(working_directory).resolve())
+            logger.info(f"Diff scan - working_directory: {working_directory_abs}")
             severity_threshold = arguments.get("severity_threshold", "medium")
             include_exploits = arguments.get("include_exploits", True)
             use_llm = arguments.get("use_llm", False)
             use_semgrep = arguments.get("use_semgrep", True)
-            use_rules = arguments.get("use_rules", True)
             output_format = arguments.get("output_format", "text")
 
             # Convert severity threshold to enum
@@ -976,7 +969,6 @@ class AdversaryMCPServer:
                 working_dir=working_dir_path,
                 use_llm=use_llm,
                 use_semgrep=use_semgrep,
-                use_rules=use_rules,
                 severity_threshold=severity_enum,
             )
 
@@ -1155,102 +1147,6 @@ class AdversaryMCPServer:
             logger.debug("Exploit generation error details", exc_info=True)
             raise AdversaryToolError(f"Exploit generation failed: {e}")
 
-    async def _handle_list_rules(
-        self, arguments: dict[str, Any]
-    ) -> list[types.TextContent]:
-        """Handle list rules request."""
-        try:
-            category = arguments.get("category")
-            severity = arguments.get("severity")
-            language = arguments.get("language")
-
-            # Get all rules
-            rules = self.threat_engine.list_rules(
-                category=category,
-                min_severity=Severity(severity) if severity else None,
-                language=Language(language) if language else None,
-            )
-
-            # Format results
-            result = "# Threat Detection Rules\n\n"
-            result += f"**Total Rules:** {len(rules)}\n"
-
-            if category:
-                result += f"**Category Filter:** {category}\n"
-            if severity:
-                result += f"**Minimum Severity:** {severity}\n"
-            if language:
-                result += f"**Language Filter:** {language}\n"
-
-            result += "\n## Rules\n\n"
-
-            # Group rules by category
-            categories = {}
-            for rule in rules:
-                cat = rule["category"]
-                if cat not in categories:
-                    categories[cat] = []
-                categories[cat].append(rule)
-
-            for category, cat_rules in categories.items():
-                result += f"### {category}\n\n"
-                for rule in cat_rules:
-                    result += (
-                        f"- **{rule['id']}**: {rule['name']} ({rule['severity']})\n"
-                    )
-                    result += f"  - Languages: {', '.join(rule['languages'])}\n"
-                    result += f"  - {rule['description']}\n\n"
-
-            logger.info("Rules list retrieved successfully")
-            return [types.TextContent(type="text", text=result)]
-
-        except Exception as e:
-            logger.error(f"Failed to list rules: {e}")
-            logger.debug("Rules listing error details", exc_info=True)
-            raise AdversaryToolError(f"Failed to list rules: {e}")
-
-    async def _handle_get_rule_details(
-        self, arguments: dict[str, Any]
-    ) -> list[types.TextContent]:
-        """Handle get rule details request."""
-        try:
-            rule_id = arguments["rule_id"]
-
-            # Get rule details
-            rule = self.threat_engine.get_rule_details(rule_id)
-            if not rule:
-                raise AdversaryToolError(f"Rule not found: {rule_id}")
-
-            # Format results
-            result = f"# Rule Details: {rule['name']}\n\n"
-            result += f"**ID:** {rule['id']}\n"
-            result += f"**Category:** {rule['category']}\n"
-            result += f"**Severity:** {rule['severity']}\n"
-            result += f"**Languages:** {', '.join(rule['languages'])}\n\n"
-            result += f"**Description:** {rule['description']}\n\n"
-
-            if rule.get("pattern"):
-                result += f"**Pattern:** `{rule['pattern']}`\n\n"
-
-            if rule.get("cwe_id"):
-                result += f"**CWE ID:** {rule['cwe_id']}\n"
-
-            if rule.get("owasp_category"):
-                result += f"**OWASP Category:** {rule['owasp_category']}\n"
-
-            if rule.get("references"):
-                result += "**References:**\n"
-                for ref in rule["references"]:
-                    result += f"- {ref}\n"
-
-            logger.info("Rule details retrieved successfully")
-            return [types.TextContent(type="text", text=result)]
-
-        except Exception as e:
-            logger.error(f"Failed to get rule details: {e}")
-            logger.debug("Rule details retrieval error details", exc_info=True)
-            raise AdversaryToolError(f"Failed to get rule details: {e}")
-
     async def _handle_configure_settings(
         self, arguments: dict[str, Any]
     ) -> list[types.TextContent]:
@@ -1304,9 +1200,9 @@ class AdversaryMCPServer:
             logger.debug("Reinitializing components with new configuration...")
             self.exploit_generator = ExploitGenerator(self.credential_manager)
             self.scan_engine = ScanEngine(
-                self.threat_engine,
                 self.credential_manager,
                 enable_llm_analysis=config.enable_llm_analysis,
+                enable_semgrep_analysis=config.enable_semgrep_scanning,
             )
             logger.info("Components reinitialized with new configuration")
 
@@ -1338,24 +1234,26 @@ class AdversaryMCPServer:
             result += f"- **LLM Analysis:** {'✓ Enabled' if config.enable_llm_analysis else '✗ Disabled'}\n"
             result += f"- **Exploit Generation:** {'✓ Enabled' if config.enable_exploit_generation else '✗ Disabled'}\n\n"
 
-            result += "## Threat Engine\n"
-            rules = self.threat_engine.list_rules()
-            result += f"- **Total Rules:** {len(rules)}\n"
+            result += "## Security Scanners\n"
 
-            # Count by language
-            lang_counts = {}
-            for rule in rules:
-                for lang in rule["languages"]:
-                    lang_counts[lang] = lang_counts.get(lang, 0) + 1
+            # Semgrep status
+            if self.scan_engine.semgrep_scanner.is_available():
+                semgrep_status = self.scan_engine.semgrep_scanner.get_status()
+                result += f"- **Semgrep Scanner:** ✓ Available (Version: {semgrep_status.get('version', 'unknown')})\n"
+            else:
+                result += "- **Semgrep Scanner:** ✗ Not Available\n"
 
-            for lang, count in lang_counts.items():
-                result += f"- **{lang.capitalize()} Rules:** {count}\n"
+            # LLM status
+            if self.scan_engine.enable_llm_analysis:
+                result += "- **LLM Scanner:** ✓ Enabled (Client-based)\n"
+            else:
+                result += "- **LLM Scanner:** ✗ Disabled\n"
 
             result += "\n## Components\n"
-            result += "- **AST Scanner:** ✓ Active\n"
+            result += "- **Scan Engine:** ✓ Active\n"
             result += "- **Exploit Generator:** ✓ Active\n"
             result += "- **LLM Integration:** ✓ Client-based (no API key required)\n"
-            result += "- **Scan Engine:** ✓ Active\n"
+            result += "- **False Positive Manager:** ✓ Active\n"
 
             logger.info("Status retrieved successfully")
             return [types.TextContent(type="text", text=result)]
@@ -1373,7 +1271,15 @@ class AdversaryMCPServer:
             result += f"**Version:** {version}\n"
             result += "**LLM Integration:** Client-based (no API key required)\n"
             result += "**Supported Languages:** Python, JavaScript, TypeScript\n"
-            result += f"**Security Rules:** {len(self.threat_engine.list_rules())}\n"
+
+            # Count available scanners instead of rules
+            scanner_count = 0
+            if self.scan_engine.semgrep_scanner.is_available():
+                scanner_count += 1
+            if self.scan_engine.enable_llm_analysis:
+                scanner_count += 1
+
+            result += f"**Active Scanners:** {scanner_count}\n"
 
             logger.info("Version information retrieved successfully")
             return [types.TextContent(type="text", text=result)]
@@ -1386,6 +1292,46 @@ class AdversaryMCPServer:
     def _get_version(self) -> str:
         """Get the current version."""
         return get_version()
+
+    def _resolve_file_path(
+        self, file_path: str, path_description: str = "file path"
+    ) -> str:
+        """Resolve relative file path to absolute path.
+
+        Args:
+            file_path: Path to file or directory (may be relative)
+            path_description: Description of the path type for error messages
+
+        Returns:
+            Absolute path to the file or directory
+        """
+        from pathlib import Path
+
+        # Handle empty or whitespace-only paths
+        if not file_path or not file_path.strip():
+            raise AdversaryToolError(f"{path_description} cannot be empty")
+
+        path = Path(file_path.strip())
+
+        # If it's already absolute, return as-is
+        if path.is_absolute():
+            return str(path)
+
+        # For relative paths, resolve against the current working directory
+        # This assumes the MCP client is running from the project directory
+        resolved_path = Path.cwd() / path
+        return str(resolved_path.resolve())
+
+    def _resolve_adversary_file_path(self, adversary_file_path: str) -> str:
+        """Resolve relative adversary file path to absolute path.
+
+        Args:
+            adversary_file_path: Path to .adversary.json file (may be relative)
+
+        Returns:
+            Absolute path to the .adversary.json file
+        """
+        return self._resolve_file_path(adversary_file_path, "adversary_file_path")
 
     def _filter_threats_by_severity(
         self, threats: list[ThreatMatch], min_severity: Severity
@@ -1486,16 +1432,12 @@ class AdversaryMCPServer:
             result += "🎉 **No security vulnerabilities found!**\n\n"
             # Still show analysis overview
             result += "## Analysis Overview\n\n"
-            result += (
-                f"**Rules Engine:** {scan_result.stats['rules_threats']} findings\n"
-            )
             result += f"**LLM Analysis:** {scan_result.stats['llm_threats']} findings\n"
             result += f"**Language:** {scan_result.language.value}\n\n"
             return result
 
         # Analysis overview
         result += "## Analysis Overview\n\n"
-        result += f"**Rules Engine:** {scan_result.stats['rules_threats']} findings\n"
         result += f"**LLM Analysis:** {scan_result.stats['llm_threats']} findings\n"
         result += f"**Total Unique:** {scan_result.stats['unique_threats']} findings\n"
         result += f"**Language:** {scan_result.language.value}\n\n"
@@ -1517,7 +1459,6 @@ class AdversaryMCPServer:
         metadata = scan_result.scan_metadata
         if metadata.get("llm_scan_success") is not None:
             result += "## Scan Details\n\n"
-            result += f"**Rules Scan:** {'✅ Success' if metadata.get('rules_scan_success') else '❌ Failed'}\n"
             result += f"**LLM Scan:** {'✅ Success' if metadata.get('llm_scan_success') else '❌ Failed'}\n"
             if metadata.get("source_lines"):
                 result += f"**Source Lines:** {metadata['source_lines']}\n"
@@ -1775,7 +1716,10 @@ class AdversaryMCPServer:
         return result
 
     def _format_json_scan_results(
-        self, scan_result: EnhancedScanResult, scan_target: str
+        self,
+        scan_result: EnhancedScanResult,
+        scan_target: str,
+        working_directory: str = ".",
     ) -> str:
         """Format enhanced scan results as JSON.
 
@@ -1792,8 +1736,12 @@ class AdversaryMCPServer:
         threats_data = []
         for threat in scan_result.all_threats:
             # Get complete false positive information
-            false_positive_data = (
-                self.false_positive_manager.get_false_positive_details(threat.uuid, ".")
+            adversary_file_path = str(Path(working_directory) / ".adversary.json")
+            project_fp_manager = FalsePositiveManager(
+                adversary_file_path=adversary_file_path
+            )
+            false_positive_data = project_fp_manager.get_false_positive_details(
+                threat.uuid
             )
 
             threat_data = {
@@ -1832,9 +1780,6 @@ class AdversaryMCPServer:
                 "total_threats": len(scan_result.all_threats),
             },
             "scan_configuration": {
-                "rules_scan_enabled": scan_result.scan_metadata.get(
-                    "rules_scan_success", False
-                ),
                 "llm_scan_enabled": scan_result.scan_metadata.get(
                     "llm_scan_success", False
                 ),
@@ -1845,16 +1790,6 @@ class AdversaryMCPServer:
             "statistics": scan_result.stats,
             "threats": threats_data,
             "scanner_execution_status": {
-                "rules_scanner": {
-                    "executed": scan_result.scan_metadata.get(
-                        "rules_scan_success", False
-                    ),
-                    "reason": scan_result.scan_metadata.get(
-                        "rules_scan_reason", "unknown"
-                    ),
-                    "error": scan_result.scan_metadata.get("rules_scan_error", None),
-                    "threats_found": scan_result.stats.get("rules_threats", 0),
-                },
                 "llm_scanner": {
                     "executed": scan_result.scan_metadata.get(
                         "llm_scan_success", False
@@ -1877,9 +1812,6 @@ class AdversaryMCPServer:
                 },
             },
             "scan_details": {
-                "rules_scan_success": scan_result.scan_metadata.get(
-                    "rules_scan_success", False
-                ),
                 "llm_scan_success": scan_result.scan_metadata.get(
                     "llm_scan_success", False
                 ),
@@ -1894,7 +1826,10 @@ class AdversaryMCPServer:
         return json.dumps(result_data, indent=2)
 
     def _format_json_directory_results(
-        self, scan_results: list[EnhancedScanResult], scan_target: str
+        self,
+        scan_results: list[EnhancedScanResult],
+        scan_target: str,
+        working_directory: str = ".",
     ) -> str:
         """Format directory scan results as JSON.
 
@@ -1928,10 +1863,12 @@ class AdversaryMCPServer:
 
             for threat in scan_result.all_threats:
                 # Get complete false positive information
-                false_positive_data = (
-                    self.false_positive_manager.get_false_positive_details(
-                        threat.uuid, "."
-                    )
+                adversary_file_path = str(Path(working_directory) / ".adversary.json")
+                project_fp_manager = FalsePositiveManager(
+                    adversary_file_path=adversary_file_path
+                )
+                false_positive_data = project_fp_manager.get_false_positive_details(
+                    threat.uuid
                 )
 
                 threat_data = {
@@ -1973,27 +1910,6 @@ class AdversaryMCPServer:
                 "files_scanned": len(files_scanned),
             },
             "scanner_execution_summary": {
-                "rules_scanner": {
-                    "files_processed": len(
-                        [
-                            f
-                            for f in scan_results
-                            if f.scan_metadata.get("rules_scan_success", False)
-                        ]
-                    ),
-                    "files_failed": len(
-                        [
-                            f
-                            for f in scan_results
-                            if not f.scan_metadata.get("rules_scan_success", False)
-                            and f.scan_metadata.get("rules_scan_reason")
-                            not in ["disabled", "not_available"]
-                        ]
-                    ),
-                    "total_threats": sum(
-                        f.stats.get("rules_threats", 0) for f in scan_results
-                    ),
-                },
                 "semgrep_scanner": self._get_semgrep_summary(scan_results),
                 "llm_scanner": {
                     "files_processed": len(
@@ -2138,14 +2054,6 @@ class AdversaryMCPServer:
             if guidance:
                 status_lines.append(f"  💡 {guidance}")
 
-        # Rules scanner status
-        rules_success = any(
-            r.scan_metadata.get("rules_scan_success", False) for r in scan_results
-        )
-        status_lines.append(
-            f"**Rules Scanner:** {'✅ Available' if rules_success else '❌ Disabled'}"
-        )
-
         # LLM scanner status
         llm_success = any(
             r.scan_metadata.get("llm_scan_success", False) for r in scan_results
@@ -2186,10 +2094,14 @@ class AdversaryMCPServer:
                 file_threat_count += len(scan_result.all_threats)
                 for threat in scan_result.all_threats:
                     # Get complete false positive information
-                    false_positive_data = (
-                        self.false_positive_manager.get_false_positive_details(
-                            threat.uuid, working_directory
-                        )
+                    adversary_file_path = str(
+                        Path(working_directory) / ".adversary.json"
+                    )
+                    project_fp_manager = FalsePositiveManager(
+                        adversary_file_path=adversary_file_path
+                    )
+                    false_positive_data = project_fp_manager.get_false_positive_details(
+                        threat.uuid
                     )
 
                     threat_data = {
@@ -2257,6 +2169,120 @@ class AdversaryMCPServer:
 
         return json.dumps(result_data, indent=2)
 
+    def _preserve_uuids_and_false_positives(
+        self, new_threats: list[dict], adversary_file_path: Path
+    ) -> list[dict]:
+        """Preserve UUIDs and false positive markings from existing scan results.
+
+        Args:
+            new_threats: List of new threat dictionaries from current scan
+            adversary_file_path: Path to existing .adversary.json file
+
+        Returns:
+            List of threats with preserved UUIDs and false positive markings
+        """
+        import json
+        from pathlib import Path
+
+        if not adversary_file_path.exists():
+            logger.debug("No existing .adversary.json found, using new UUIDs")
+            return new_threats
+
+        try:
+            # Load existing threats with their UUIDs and false positive markings
+            with open(adversary_file_path, encoding="utf-8") as f:
+                existing_data = json.load(f)
+
+            existing_threats = existing_data.get("threats", [])
+            logger.info(
+                f"Loaded {len(existing_threats)} existing threats for UUID preservation"
+            )
+
+            # Create fingerprint-to-threat mapping from existing data
+            existing_fingerprints = {}
+            for threat in existing_threats:
+                # Reconstruct fingerprint from existing threat data
+                rule_id = threat.get("rule_id", "")
+                file_path = threat.get("file_path", "")
+                line_number = threat.get("line_number", 0)
+
+                if rule_id and file_path:
+                    # Normalize path like in ThreatMatch.get_fingerprint()
+                    normalized_path = str(Path(file_path).resolve())
+                    fingerprint = f"{rule_id}:{normalized_path}:{line_number}"
+                    existing_fingerprints[fingerprint] = {
+                        "uuid": threat.get("uuid"),
+                        "is_false_positive": threat.get("is_false_positive", False),
+                        "false_positive_reason": threat.get("false_positive_reason"),
+                        "false_positive_marked_date": threat.get(
+                            "false_positive_marked_date"
+                        ),
+                        "false_positive_last_updated": threat.get(
+                            "false_positive_last_updated"
+                        ),
+                        "false_positive_marked_by": threat.get(
+                            "false_positive_marked_by"
+                        ),
+                    }
+
+            logger.debug(
+                f"Built fingerprint map with {len(existing_fingerprints)} entries"
+            )
+
+            # Process new threats and preserve UUIDs where possible
+            preserved_count = 0
+            new_count = 0
+
+            for threat in new_threats:
+                rule_id = threat.get("rule_id", "")
+                file_path = threat.get("file_path", "")
+                line_number = threat.get("line_number", 0)
+
+                if rule_id and file_path:
+                    # Generate fingerprint for this new threat
+                    normalized_path = str(Path(file_path).resolve())
+                    fingerprint = f"{rule_id}:{normalized_path}:{line_number}"
+
+                    if fingerprint in existing_fingerprints:
+                        # Preserve existing UUID and false positive data
+                        existing_data = existing_fingerprints[fingerprint]
+                        threat["uuid"] = existing_data["uuid"]
+                        threat["is_false_positive"] = existing_data["is_false_positive"]
+
+                        # Preserve false positive metadata if marked
+                        if existing_data["is_false_positive"]:
+                            threat["false_positive_reason"] = existing_data[
+                                "false_positive_reason"
+                            ]
+                            threat["false_positive_marked_date"] = existing_data[
+                                "false_positive_marked_date"
+                            ]
+                            threat["false_positive_last_updated"] = existing_data[
+                                "false_positive_last_updated"
+                            ]
+                            threat["false_positive_marked_by"] = existing_data[
+                                "false_positive_marked_by"
+                            ]
+
+                        preserved_count += 1
+                        logger.debug(
+                            f"Preserved UUID for {fingerprint}: {existing_data['uuid']}"
+                        )
+                    else:
+                        # New finding, keep the generated UUID
+                        new_count += 1
+                        logger.debug(f"New finding with UUID: {threat.get('uuid')}")
+
+            logger.info(
+                f"UUID preservation complete: {preserved_count} preserved, {new_count} new"
+            )
+            return new_threats
+
+        except Exception as e:
+            logger.warning(f"Failed to preserve UUIDs from existing file: {e}")
+            logger.debug("UUID preservation error details", exc_info=True)
+            return new_threats
+
     def _save_scan_results_json(
         self, json_data: str, output_path: str = "."
     ) -> str | None:
@@ -2270,29 +2296,68 @@ class AdversaryMCPServer:
             Path to saved file or None if save failed
         """
         try:
-            logger.debug(f"Saving scan results to: {output_path}")
-            from pathlib import Path
+            # Convert to absolute path for logging
+            output_path_abs = str(Path(output_path).resolve())
+            logger.info(f"💾 Saving scan results - input path: {output_path_abs}")
 
             path = Path(output_path)
+            path_abs = str(path.resolve())
+            logger.debug(
+                f"Resolved path object: {path_abs} (exists: {path.exists()}, is_dir: {path.is_dir() if path.exists() else 'unknown'})"
+            )
 
             # If output_path is a directory, append the default filename
             if path.is_dir() or (not path.suffix and not path.exists()):
                 final_path = path / ".adversary.json"
+                logger.info(f"📁 Treating as directory, using: {final_path}")
             else:
                 # output_path is a full file path
                 final_path = path
+                logger.info(f"📄 Treating as file path, using: {final_path}")
 
             # Ensure parent directory exists
             final_path.parent.mkdir(parents=True, exist_ok=True)
-            logger.debug(f"Writing scan results to: {final_path}")
+            logger.debug(f"📂 Ensured parent directory exists: {final_path.parent}")
+
+            # Parse JSON data and preserve UUIDs from existing file
+            import json as json_lib
+
+            try:
+                data = json_lib.loads(json_data)
+                threats = data.get("threats", [])
+
+                # Only attempt UUID preservation if we have threats
+                if threats and len(threats) > 0:
+                    logger.info(
+                        f"🔄 Preserving UUIDs for {len(threats)} threats before saving"
+                    )
+                    preserved_threats = self._preserve_uuids_and_false_positives(
+                        threats, final_path
+                    )
+                    data["threats"] = preserved_threats
+
+                    # Re-serialize with preserved data
+                    json_data = json_lib.dumps(data, indent=2)
+                    logger.info(
+                        f"💾 Writing {len(preserved_threats)} threats with preserved UUIDs to: {final_path}"
+                    )
+                else:
+                    logger.debug(f"💾 Writing data without threats to: {final_path}")
+
+            except Exception as json_error:
+                logger.warning(
+                    f"Failed to parse JSON for UUID preservation: {json_error}"
+                )
+                logger.debug("JSON parsing error details", exc_info=True)
+                logger.info(f"💾 Writing original JSON data to: {final_path}")
 
             with open(final_path, "w", encoding="utf-8") as f:
                 f.write(json_data)
 
-            logger.info(f"Scan results saved successfully to {final_path}")
+            logger.info(f"✅ Scan results saved successfully to {final_path}")
             return str(final_path)
         except Exception as e:
-            logger.error(f"Failed to save scan results JSON to {output_path}: {e}")
+            logger.error(f"❌ Failed to save scan results JSON to {output_path}: {e}")
             logger.debug("Save error details", exc_info=True)
             return None
 
@@ -2360,19 +2425,42 @@ class AdversaryMCPServer:
         """Handle mark false positive request."""
         try:
             finding_uuid = arguments.get("finding_uuid")
+            adversary_file_path = arguments.get("adversary_file_path")
             reason = arguments.get("reason", "Marked as false positive via MCP")
-            working_directory = arguments.get("working_directory", ".")
+            marked_by = arguments.get("marked_by", "user")
 
             if not finding_uuid:
                 raise AdversaryToolError("finding_uuid is required")
+            if not adversary_file_path:
+                raise AdversaryToolError("adversary_file_path is required")
 
-            success = self.false_positive_manager.mark_false_positive(
-                finding_uuid, reason, "user", working_directory
-            )
+            # Resolve relative path to absolute path
+            resolved_path = self._resolve_adversary_file_path(adversary_file_path)
 
-            result = "✅ **Finding marked as false positive**\n\n"
-            result += f"**UUID:** {finding_uuid}\n"
-            result += f"**Reason:** {reason}\n"
+            # Create false positive manager with resolved file path
+            fp_manager = FalsePositiveManager(adversary_file_path=resolved_path)
+
+            success = fp_manager.mark_false_positive(finding_uuid, reason, marked_by)
+
+            if success:
+                logger.info(
+                    f"✅ Successfully marked finding {finding_uuid} as false positive in {resolved_path}"
+                )
+                result = "✅ **Finding marked as false positive**\n\n"
+                result += f"**UUID:** {finding_uuid}\n"
+                result += f"**Reason:** {reason}\n"
+                result += f"**File:** {resolved_path}\n"
+            else:
+                logger.warning(
+                    f"❌ Failed to mark finding {finding_uuid} as false positive - not found in {resolved_path}"
+                )
+                result = "⚠️ **Finding not found**\n\n"
+                result += f"**UUID:** {finding_uuid}\n"
+                result += f"**File checked:** {resolved_path}\n"
+                result += "The threat with this UUID was not found in the .adversary.json file.\n"
+                result += (
+                    "Make sure you've run a scan that generated this finding first.\n"
+                )
 
             return [types.TextContent(type="text", text=result)]
 
@@ -2386,21 +2474,34 @@ class AdversaryMCPServer:
         """Handle unmark false positive request."""
         try:
             finding_uuid = arguments.get("finding_uuid")
-            working_directory = arguments.get("working_directory", ".")
+            adversary_file_path = arguments.get("adversary_file_path")
 
             if not finding_uuid:
                 raise AdversaryToolError("finding_uuid is required")
+            if not adversary_file_path:
+                raise AdversaryToolError("adversary_file_path is required")
 
-            success = self.false_positive_manager.unmark_false_positive(
-                finding_uuid, working_directory
-            )
+            # Resolve relative path to absolute path
+            resolved_path = self._resolve_adversary_file_path(adversary_file_path)
+
+            # Create false positive manager with resolved file path
+            fp_manager = FalsePositiveManager(adversary_file_path=resolved_path)
+            success = fp_manager.unmark_false_positive(finding_uuid)
 
             if success:
+                logger.info(
+                    f"✅ Successfully unmarked finding {finding_uuid} from {resolved_path}"
+                )
                 result = "✅ **Finding unmarked as false positive**\n\n"
                 result += f"**UUID:** {finding_uuid}\n"
+                result += f"**File:** {resolved_path}\n"
             else:
+                logger.warning(
+                    f"❌ Finding {finding_uuid} not found in false positives in {resolved_path}"
+                )
                 result = "⚠️ **Finding not found in false positives**\n\n"
                 result += f"**UUID:** {finding_uuid}\n"
+                result += f"**File checked:** {resolved_path}\n"
 
             return [types.TextContent(type="text", text=result)]
 
@@ -2413,12 +2514,20 @@ class AdversaryMCPServer:
     ) -> list[types.TextContent]:
         """Handle list false positives request."""
         try:
-            working_directory = arguments.get("working_directory", ".")
-            false_positives = self.false_positive_manager.get_false_positives(
-                working_directory
-            )
+            adversary_file_path = arguments.get("adversary_file_path")
+
+            if not adversary_file_path:
+                raise AdversaryToolError("adversary_file_path is required")
+
+            # Resolve relative path to absolute path
+            resolved_path = self._resolve_adversary_file_path(adversary_file_path)
+
+            # Create false positive manager with resolved file path
+            fp_manager = FalsePositiveManager(adversary_file_path=resolved_path)
+            false_positives = fp_manager.get_false_positives()
 
             result = f"# False Positives ({len(false_positives)} found)\n\n"
+            result += f"**File:** {resolved_path}\n\n"
 
             if not false_positives:
                 result += "No false positives found.\n"

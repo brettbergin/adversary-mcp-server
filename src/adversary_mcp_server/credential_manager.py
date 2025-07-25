@@ -223,7 +223,7 @@ class CredentialManager:
             # Set restrictive permissions
             self.config_file.chmod(stat.S_IRUSR | stat.S_IWUSR)  # 600
 
-        except (OSError, json.JSONEncodeError) as e:
+        except OSError as e:
             raise CredentialStorageError(f"Failed to store configuration: {e}")
 
     def _load_file_config(self) -> SecurityConfig | None:
