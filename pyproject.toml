@@ -1,6 +1,6 @@
 [project]
 name = "adversary-mcp-server"
-version = "0.9.1"
+version = "0.9.3"
 description = "MCP server for adversarial security analysis and vulnerability detection"
 readme = "README.md"
 authors = [
@@ -84,6 +84,7 @@ dev-dependencies = [
     "pytest-cov>=4.0.0",
     "pytest-asyncio>=0.21.0",
     "pytest-mock>=3.10.0",
+    "pytest-benchmark>=4.0.0",
     "responses>=0.24.0",
     "freezegun>=1.2.0",
     "ruff>=0.1.0",
@@ -193,11 +194,12 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "--cov=adversary_mcp_server --cov-report=term-missing --cov-report=html --cov-report=json --cov-report=xml --cov-fail-under=80 --strict-markers"
+addopts = "--cov=adversary_mcp_server --cov-report=term-missing --cov-report=html --cov-report=json --cov-report=xml --cov-fail-under=80 --strict-markers --benchmark-skip"
 asyncio_mode = "auto"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks tests as integration tests",
     "unit: marks tests as unit tests",
     "security: marks tests as security-related tests",
+    "benchmark: marks tests as benchmarks",
 ]

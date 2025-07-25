@@ -24,6 +24,31 @@ from adversary_mcp_server.server import (
 from adversary_mcp_server.types import Category, Language, Severity, ThreatMatch
 
 
+@pytest.fixture(autouse=True, scope="function")
+def mock_adversary_json_file_access():
+    """Automatically mock .adversary.json file access during tests only to prevent test interference."""
+    # Only apply this mock during actual test execution
+    import os
+
+    if "PYTEST_CURRENT_TEST" not in os.environ:
+        yield  # Not in a test, don't apply the mock
+        return
+
+    # Store the original exists method
+    original_exists = Path.exists
+
+    def mock_path_exists(self):
+        """Mock Path.exists() to simulate .adversary.json exists without real file access."""
+        if self.name == ".adversary.json":
+            # For tests, always return True to avoid smart search traversal
+            return True
+        # For other files, use the original exists method
+        return original_exists(self)
+
+    with patch.object(Path, "exists", mock_path_exists):
+        yield
+
+
 class TestAdversaryMCPServer:
     """Test cases for AdversaryMCPServer class."""
 
@@ -34,7 +59,6 @@ class TestAdversaryMCPServer:
         assert server.exploit_generator is not None
         assert server.scan_engine is not None
         assert server.diff_scanner is not None
-        assert server.false_positive_manager is not None
 
     def test_server_filtering_methods(self):
         """Test server utility methods."""
@@ -672,42 +696,60 @@ class TestMCPToolHandlers:
         arguments = {
             "finding_uuid": "test-uuid-123",
             "reason": "False positive",
-            "working_directory": ".",
+            "adversary_file_path": ".adversary.json",
         }
 
-        with patch.object(
-            server.false_positive_manager, "mark_false_positive", return_value=True
-        ) as mock_mark:
-            result = await server._handle_mark_false_positive(arguments)
+        with patch("adversary_mcp_server.server.FalsePositiveManager") as mock_fp_class:
+            mock_fp_instance = Mock()
+            mock_fp_instance.mark_false_positive.return_value = True
+            mock_fp_class.return_value = mock_fp_instance
+
+            # Mock Path.cwd() to avoid using actual working directory
+            with patch("adversary_mcp_server.server.Path.cwd") as mock_cwd:
+                mock_cwd.return_value = Path("/mock/working/dir")
+                result = await server._handle_mark_false_positive(arguments)
 
         assert len(result) == 1
         assert isinstance(result[0], types.TextContent)
         assert "marked as false positive" in result[0].text
-        mock_mark.assert_called_once()
+        # Path should be resolved to absolute path using mocked working directory
+        expected_path = "/mock/working/dir/.adversary.json"
+        mock_fp_class.assert_called_once_with(adversary_file_path=expected_path)
+        mock_fp_instance.mark_false_positive.assert_called_once_with(
+            "test-uuid-123", "False positive", "user"
+        )
 
     @pytest.mark.asyncio
     async def test_handle_unmark_false_positive(self, server):
         """Test unmark_false_positive tool handler."""
         arguments = {
             "finding_uuid": "test-uuid-123",
-            "working_directory": ".",
+            "adversary_file_path": ".adversary.json",
         }
 
-        with patch.object(
-            server.false_positive_manager, "unmark_false_positive", return_value=True
-        ) as mock_unmark:
-            result = await server._handle_unmark_false_positive(arguments)
+        with patch("adversary_mcp_server.server.FalsePositiveManager") as mock_fp_class:
+            mock_fp_instance = Mock()
+            mock_fp_instance.unmark_false_positive.return_value = True
+            mock_fp_class.return_value = mock_fp_instance
+
+            # Mock Path.cwd() to avoid using actual working directory
+            with patch("adversary_mcp_server.server.Path.cwd") as mock_cwd:
+                mock_cwd.return_value = Path("/mock/working/dir")
+                result = await server._handle_unmark_false_positive(arguments)
 
         assert len(result) == 1
         assert isinstance(result[0], types.TextContent)
         assert "unmarked as false positive" in result[0].text
-        mock_unmark.assert_called_once()
+        # Path should be resolved to absolute path using mocked working directory
+        expected_path = "/mock/working/dir/.adversary.json"
+        mock_fp_class.assert_called_once_with(adversary_file_path=expected_path)
+        mock_fp_instance.unmark_false_positive.assert_called_once_with("test-uuid-123")
 
     @pytest.mark.asyncio
     async def test_handle_list_false_positives(self, server):
         """Test list_false_positives tool handler."""
         arguments = {
-            "working_directory": ".",
+            "adversary_file_path": ".adversary.json",
         }
 
         mock_false_positives = [
@@ -721,16 +763,23 @@ class TestMCPToolHandlers:
             }
         ]
 
-        with patch.object(
-            server.false_positive_manager,
-            "get_false_positives",
-            return_value=mock_false_positives,
-        ):
-            result = await server._handle_list_false_positives(arguments)
+        with patch("adversary_mcp_server.server.FalsePositiveManager") as mock_fp_class:
+            mock_fp_instance = Mock()
+            mock_fp_instance.get_false_positives.return_value = mock_false_positives
+            mock_fp_class.return_value = mock_fp_instance
+
+            # Mock Path.cwd() to avoid using actual working directory
+            with patch("adversary_mcp_server.server.Path.cwd") as mock_cwd:
+                mock_cwd.return_value = Path("/mock/working/dir")
+                result = await server._handle_list_false_positives(arguments)
 
         assert len(result) == 1
         assert isinstance(result[0], types.TextContent)
         assert "test-uuid-123" in result[0].text
+        # Path should be resolved to absolute path using mocked working directory
+        expected_path = "/mock/working/dir/.adversary.json"
+        mock_fp_class.assert_called_once_with(adversary_file_path=expected_path)
+        mock_fp_instance.get_false_positives.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_handle_scan_code_exception_handling(self, server):
@@ -763,7 +812,6 @@ class TestServerIntegration:
         assert hasattr(server, "credential_manager")
         assert hasattr(server, "scan_engine")
         assert hasattr(server, "diff_scanner")
-        assert hasattr(server, "false_positive_manager")
 
     def test_list_tools(self):
         """Test list_tools functionality."""
@@ -926,11 +974,11 @@ class TestServerUtilityMethods:
 
     def test_format_json_scan_results(self, server, mock_scan_result):
         """Test _format_json_scan_results utility method."""
-        with patch.object(
-            server.false_positive_manager,
-            "get_false_positive_details",
-            return_value=None,
-        ):
+        with patch("adversary_mcp_server.server.FalsePositiveManager") as mock_fp_class:
+            mock_fp_instance = Mock()
+            mock_fp_instance.get_false_positive_details.return_value = None
+            mock_fp_class.return_value = mock_fp_instance
+
             result = server._format_json_scan_results(mock_scan_result, "test.py")
 
         # Parse JSON to verify structure
@@ -951,11 +999,13 @@ class TestServerUtilityMethods:
             "marked_at": "2023-01-01T00:00:00Z",
         }
 
-        with patch.object(
-            server.false_positive_manager,
-            "get_false_positive_details",
-            return_value=false_positive_data,
-        ):
+        with patch("adversary_mcp_server.server.FalsePositiveManager") as mock_fp_class:
+            mock_fp_instance = Mock()
+            mock_fp_instance.get_false_positive_details.return_value = (
+                false_positive_data
+            )
+            mock_fp_class.return_value = mock_fp_instance
+
             result = server._format_json_scan_results(mock_scan_result, "test.py")
 
         data = json.loads(result)
@@ -964,11 +1014,11 @@ class TestServerUtilityMethods:
 
     def test_format_json_directory_results(self, server, mock_scan_result):
         """Test _format_json_directory_results utility method."""
-        with patch.object(
-            server.false_positive_manager,
-            "get_false_positive_details",
-            return_value=None,
-        ):
+        with patch("adversary_mcp_server.server.FalsePositiveManager") as mock_fp_class:
+            mock_fp_instance = Mock()
+            mock_fp_instance.get_false_positive_details.return_value = None
+            mock_fp_class.return_value = mock_fp_instance
+
             with patch.object(
                 server, "_get_semgrep_summary", return_value={"files_processed": 1}
             ):
@@ -996,11 +1046,11 @@ class TestServerUtilityMethods:
             "lines_removed": 5,
         }
 
-        with patch.object(
-            server.false_positive_manager,
-            "get_false_positive_details",
-            return_value=None,
-        ):
+        with patch("adversary_mcp_server.server.FalsePositiveManager") as mock_fp_class:
+            mock_fp_instance = Mock()
+            mock_fp_instance.get_false_positive_details.return_value = None
+            mock_fp_class.return_value = mock_fp_instance
+
             result = server._format_json_diff_results(
                 scan_results, diff_summary, "main..feature", "."
             )
@@ -1420,12 +1470,14 @@ class TestServerUtilityMethods:
     async def test_handle_list_false_positives_empty_result(self, server):
         """Test list_false_positives with empty result."""
         arguments = {
-            "working_directory": ".",
+            "adversary_file_path": ".adversary.json",
         }
 
-        with patch.object(
-            server.false_positive_manager, "get_false_positives", return_value=[]
-        ):
+        with patch("adversary_mcp_server.server.FalsePositiveManager") as mock_fp_class:
+            mock_fp_instance = Mock()
+            mock_fp_instance.get_false_positives.return_value = []
+            mock_fp_class.return_value = mock_fp_instance
+
             result = await server._handle_list_false_positives(arguments)
 
         assert len(result) == 1

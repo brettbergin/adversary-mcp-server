@@ -77,8 +77,6 @@ Once configured, you can use these MCP tools in Cursor:
 - `adv_scan_file` - file scanning with LLM support
 - `adv_scan_folder` - folder scanning
 - `adv_diff_scan` - **🆕 Git diff-aware scanning** - scans only changed files between branches
-- `adv_list_rules` - List all 95+ security rules
-- `adv_get_rule_details` - Get details about specific rules
 - `adv_generate_exploit` - exploit generation
 - `adv_configure_settings` - Configuration management
 - `adv_get_status` - Check server status and AI availability
@@ -155,8 +153,6 @@ adversary-mcp-cli status
 | `adv_scan_folder` | **🆕 Intelligent** folder scanning | ✅ Batch LLM prompts, statistical insights |
 | `adv_diff_scan` | **🆕 Git diff-aware scanning** - scans only newly added lines | ✅ Smart change detection, branch comparison, requires `working_directory` |
 | `adv_generate_exploit` | **🆕 AI-enhanced** exploit generation | ✅ Context-aware prompts, safety mode |
-| `adv_list_rules` | List all 95+ threat detection rules | Enhanced with AI rule categories |
-| `adv_get_rule_details` | Get detailed rule information | Improved formatting and examples |
 | `adv_configure_settings` | **🆕 Advanced** configuration management | ✅ LLM settings, validation |
 | `adv_get_status` | Get server status and **🆕 AI availability** | ✅ LLM configuration status |
 | `adv_get_version` | Get version information | Shows AI capabilities |
@@ -460,7 +456,7 @@ The server automatically loads built-in rules from the rule directory structure.
 
 | Command | Description |
 |---------|-------------|
-| `adversary-mcp-cli configure` | Configure server settings and security thresholds |
+| `adversary-mcp-cli configure` | Configure server settings, security thresholds, and Semgrep API key |
 | `adversary-mcp-cli status` | Show current server status and configuration |
 | `adversary-mcp-cli scan [TARGET]` | Scan files/directories for vulnerabilities |
 | `adversary-mcp-cli demo` | Run demonstration of vulnerability scanner |
@@ -468,6 +464,7 @@ The server automatically loads built-in rules from the rule directory structure.
 | `adversary-mcp-cli unmark-false-positive <UUID>` | Remove false positive marking |
 | `adversary-mcp-cli list-false-positives` | List all false positive findings |
 | `adversary-mcp-cli reset` | Reset all configuration and credentials |
+| `adversary-mcp-cli reset-semgrep-key` | Remove stored Semgrep API key from keyring |
 
 ### False Positive Management
 

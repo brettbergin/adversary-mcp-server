@@ -13,78 +13,43 @@ logger = get_logger("false_positive_manager")
 class FalsePositiveManager:
     """Manager for tracking and handling false positive vulnerability findings.
 
-    This class now manages false positives by storing them directly within
-    .adversary.json files alongside the threats they represent, providing
-    better project-specific tracking and consolidation.
+    This class manages false positives by storing them directly within
+    .adversary.json files alongside the threats they represent.
     """
 
-    def __init__(self, working_directory: str | None = None):
+    def __init__(self, adversary_file_path: str):
         """Initialize false positive manager.
 
         Args:
-            working_directory: Project directory to search for .adversary.json files.
-                              If None, uses current working directory.
+            adversary_file_path: Path to the .adversary.json file to manage.
         """
-        self.working_directory = (
-            Path(working_directory) if working_directory else Path.cwd()
-        )
-
-        # Legacy support - keep the old config dir for migration
-        self.config_dir = Path.home() / ".local" / "share" / "adversary-mcp-server"
-        self.config_dir.mkdir(parents=True, exist_ok=True)
-        self.false_positives_file = self.config_dir / "false_positives.json"
+        self.adversary_file = Path(adversary_file_path)
 
         # Performance optimization: Cache for false positive lookups
         self._fp_cache: dict[str, dict[str, Any] | None] = {}
-        self._cache_working_dir: str | None = None
-        self._cache_file_mtimes: dict[Path, float] = {}
+        self._cache_file_mtime: float = 0
 
-    def _invalidate_cache_if_needed(self, working_directory: str | None = None) -> None:
-        """Invalidate cache if working directory changed or files were modified."""
-        current_wd = working_directory or str(self.working_directory)
+    def _invalidate_cache_if_needed(self) -> None:
+        """Invalidate cache if .adversary.json file was modified."""
+        try:
+            if self.adversary_file.exists():
+                current_mtime = self.adversary_file.stat().st_mtime
+                if current_mtime != self._cache_file_mtime:
+                    logger.debug(
+                        f"Cache invalidated: {self.adversary_file} was modified"
+                    )
+                    self._fp_cache.clear()
+                    self._cache_file_mtime = 0
+        except OSError:
+            # File might have been deleted or is inaccessible
+            if self._cache_file_mtime > 0:
+                logger.debug(
+                    f"Cache invalidated: {self.adversary_file} is no longer accessible"
+                )
+                self._fp_cache.clear()
+                self._cache_file_mtime = 0
 
-        # Check if working directory changed
-        if self._cache_working_dir != current_wd:
-            logger.debug(
-                f"Cache invalidated: working directory changed from {self._cache_working_dir} to {current_wd}"
-            )
-            self._fp_cache.clear()
-            self._cache_working_dir = current_wd
-            self._cache_file_mtimes.clear()
-            return
-
-        # Check if any .adversary.json files were modified
-        adversary_files = self._find_adversary_json_files(working_directory)
-        cache_invalid = False
-
-        for file_path in adversary_files:
-            try:
-                current_mtime = file_path.stat().st_mtime
-                cached_mtime = self._cache_file_mtimes.get(file_path, 0)
-
-                if current_mtime != cached_mtime:
-                    logger.debug(f"Cache invalidated: {file_path} was modified")
-                    cache_invalid = True
-                    break
-            except OSError:
-                # File might have been deleted
-                if file_path in self._cache_file_mtimes:
-                    logger.debug(f"Cache invalidated: {file_path} was deleted")
-                    cache_invalid = True
-                    break
-
-        # Check for deleted files
-        for cached_file in list(self._cache_file_mtimes.keys()):
-            if cached_file not in adversary_files:
-                logger.debug(f"Cache invalidated: {cached_file} no longer exists")
-                cache_invalid = True
-                break
-
-        if cache_invalid:
-            self._fp_cache.clear()
-            self._cache_file_mtimes.clear()
-
-    def _build_false_positive_cache(self, working_directory: str | None = None) -> None:
+    def _build_false_positive_cache(self) -> None:
         """Build cache of all false positive UUIDs and their metadata."""
         if self._fp_cache:
             return  # Cache already built and valid
@@ -92,149 +57,88 @@ class FalsePositiveManager:
         logger.debug("Building false positive cache...")
         start_time = datetime.now()
 
-        # Load from .adversary.json files
-        adversary_files = self._find_adversary_json_files(working_directory)
-
-        for file_path in adversary_files:
-            try:
-                # Track file modification time for cache invalidation
-                self._cache_file_mtimes[file_path] = file_path.stat().st_mtime
-
-                data = self._load_adversary_json(file_path)
-                if not data or "threats" not in data:
-                    continue
-
-                for threat in data["threats"]:
-                    threat_uuid = threat.get("uuid")
-                    if threat_uuid and threat.get("false_positive_metadata"):
-                        self._fp_cache[threat_uuid] = threat["false_positive_metadata"]
-
-            except Exception as e:
-                logger.warning(f"Failed to process {file_path} for cache: {e}")
-                continue
-
-        # Load from legacy system
+        # Load from .adversary.json file in project root
         try:
-            legacy_data = self._load_false_positives()
-            for fp in legacy_data.get("false_positives", []):
-                uuid = fp.get("uuid")
-                if (
-                    uuid and uuid not in self._fp_cache
-                ):  # Don't override new system data
-                    self._fp_cache[uuid] = {
-                        "uuid": fp["uuid"],
-                        "reason": fp.get("reason", ""),
-                        "marked_date": fp.get("marked_date", ""),
-                        "last_updated": fp.get("last_updated", ""),
-                        "marked_by": fp.get("marked_by", "system"),
-                        "source": "legacy",
-                    }
+            if self.adversary_file.exists():
+                # Track file modification time for cache invalidation
+                self._cache_file_mtime = self.adversary_file.stat().st_mtime
+
+                data = self._load_adversary_json()
+                if data and "threats" in data:
+                    for threat in data["threats"]:
+                        threat_uuid = threat.get("uuid")
+                        if threat_uuid and threat.get("is_false_positive"):
+                            self._fp_cache[threat_uuid] = {
+                                "uuid": threat_uuid,
+                                "reason": threat.get("false_positive_reason", ""),
+                                "marked_date": threat.get(
+                                    "false_positive_marked_date", ""
+                                ),
+                                "last_updated": threat.get(
+                                    "false_positive_last_updated", ""
+                                ),
+                                "marked_by": threat.get(
+                                    "false_positive_marked_by", "system"
+                                ),
+                                "source": "project",
+                            }
         except Exception as e:
-            logger.warning(f"Failed to load legacy false positives for cache: {e}")
+            logger.warning(f"Failed to load .adversary.json for cache: {e}")
 
         build_time = (datetime.now() - start_time).total_seconds()
         logger.info(
             f"False positive cache built: {len(self._fp_cache)} entries in {build_time:.3f}s"
         )
 
-    def _find_adversary_json_files(
-        self, working_directory: str | None = None
-    ) -> list[Path]:
-        """Find all .adversary.json files in the specified directory and subdirectories.
-
-        Args:
-            working_directory: Directory to search in, defaults to instance working_directory
-
-        Returns:
-            List of paths to .adversary.json files
-        """
-        search_dir = (
-            Path(working_directory) if working_directory else self.working_directory
-        )
-        adversary_files = []
-
-        # Search in working directory and subdirectories
-        for pattern in [".adversary.json", "*.adversary.json", "adversary*.json"]:
-            adversary_files.extend(search_dir.rglob(pattern))
-
-        return adversary_files
-
-    def _load_adversary_json(self, file_path: Path) -> dict[str, Any] | None:
-        """Load and parse a .adversary.json file.
-
-        Args:
-            file_path: Path to the .adversary.json file
+    def _load_adversary_json(self) -> dict[str, Any] | None:
+        """Load and parse the .adversary.json file.
 
         Returns:
             Parsed JSON data or None if file cannot be loaded
         """
-        try:
-            with open(file_path, encoding="utf-8") as f:
-                return json.load(f)
-        except (OSError, json.JSONDecodeError) as e:
-            logger.warning(f"Failed to load adversary JSON file {file_path}: {e}")
+        if not self.adversary_file.exists():
             return None
 
-    def _save_adversary_json(self, file_path: Path, data: dict[str, Any]) -> bool:
-        """Save data to a .adversary.json file.
+        try:
+            with open(self.adversary_file, encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            logger.warning(
+                f"Failed to load .adversary.json file {self.adversary_file}: {e}"
+            )
+            return None
+
+    def _save_adversary_json(self, data: dict[str, Any]) -> bool:
+        """Save data to the .adversary.json file.
 
         Args:
-            file_path: Path to the .adversary.json file
             data: Data to save
 
         Returns:
             True if saved successfully, False otherwise
         """
         try:
-            with open(file_path, "w", encoding="utf-8") as f:
+            with open(self.adversary_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
             return True
         except OSError as e:
-            logger.error(f"Failed to save adversary JSON file {file_path}: {e}")
+            logger.error(
+                f"Failed to save .adversary.json file {self.adversary_file}: {e}"
+            )
             return False
 
-    def _load_false_positives(self) -> dict[str, Any]:
-        """Load false positives from legacy file (for migration support).
-
-        Returns:
-            Dictionary of false positive data
-        """
-        if not self.false_positives_file.exists():
-            return {"false_positives": [], "version": "1.0"}
-
-        try:
-            with open(self.false_positives_file) as f:
-                return json.load(f)
-        except (OSError, json.JSONDecodeError):
-            return {"false_positives": [], "version": "1.0"}
-
-    def _save_false_positives(self, data: dict[str, Any]) -> None:
-        """Save false positives to file.
-
-        Args:
-            data: False positive data to save
-        """
-        try:
-            with open(self.false_positives_file, "w") as f:
-                json.dump(data, f, indent=2)
-        except OSError as e:
-            raise RuntimeError(f"Failed to save false positives: {e}")
-
-    def get_false_positive_details(
-        self, finding_uuid: str, working_directory: str | None = None
-    ) -> dict[str, Any] | None:
+    def get_false_positive_details(self, finding_uuid: str) -> dict[str, Any] | None:
         """Get complete false positive details for a finding.
 
         Args:
             finding_uuid: UUID of the finding to check
-            working_directory: Directory to search for .adversary.json files
 
         Returns:
             False positive metadata dict if marked, None otherwise
         """
         # Use cached lookup for performance
-        self._invalidate_cache_if_needed(working_directory)
-        self._build_false_positive_cache(working_directory)
+        self._invalidate_cache_if_needed()
+        self._build_false_positive_cache()
 
         return self._fp_cache.get(finding_uuid)
 
@@ -243,245 +147,170 @@ class FalsePositiveManager:
         finding_uuid: str,
         reason: str = "",
         marked_by: str = "user",
-        working_directory: str | None = None,
     ) -> bool:
-        """Mark a finding as a false positive in .adversary.json files.
+        """Mark a finding as a false positive in .adversary.json file.
 
         Args:
             finding_uuid: UUID of the finding to mark
             reason: Reason for marking as false positive
             marked_by: Who marked it as false positive
-            working_directory: Directory to search for .adversary.json files
 
         Returns:
             True if marked successfully, False if finding not found
         """
-        # Find and update the threat in .adversary.json files
-        adversary_files = self._find_adversary_json_files(working_directory)
+        # Ensure cache is up-to-date before loading data
+        self._invalidate_cache_if_needed()
+
+        # Load .adversary.json data
+        data = self._load_adversary_json()
+        if not data or "threats" not in data:
+            logger.warning(f"No .adversary.json file found for {finding_uuid}")
+            return False
+
+        # Find and update the threat
         updated = False
+        for threat in data["threats"]:
+            if threat.get("uuid") == finding_uuid:
+                # Create or update false positive fields
+                current_time = datetime.now().isoformat()
 
-        for file_path in adversary_files:
-            data = self._load_adversary_json(file_path)
-            if not data or "threats" not in data:
-                continue
+                threat["is_false_positive"] = True
+                threat["false_positive_reason"] = reason
+                threat["false_positive_marked_by"] = marked_by
+                threat["false_positive_last_updated"] = current_time
 
-            for threat in data["threats"]:
-                if threat.get("uuid") == finding_uuid:
-                    # Create or update false positive metadata
-                    current_time = datetime.now().isoformat()
-                    false_positive_metadata = {
-                        "uuid": finding_uuid,
-                        "reason": reason,
-                        "marked_date": threat.get("false_positive_metadata", {}).get(
-                            "marked_date", current_time
-                        ),
-                        "last_updated": current_time,
-                        "marked_by": marked_by,
-                        "source": "project",
-                    }
+                # Set marked_date if not already set
+                if not threat.get("false_positive_marked_date"):
+                    threat["false_positive_marked_date"] = current_time
 
-                    threat["is_false_positive"] = True
-                    threat["false_positive_metadata"] = false_positive_metadata
-
-                    if self._save_adversary_json(file_path, data):
-                        updated = True
-                        # Invalidate cache since we modified the data
-                        self._fp_cache.clear()
-                        self._cache_file_mtimes.clear()
-                        logger.info(
-                            f"Marked threat {finding_uuid} as false positive in {file_path}"
-                        )
-                    else:
-                        logger.error(
-                            f"Failed to save false positive update to {file_path}"
-                        )
+                if self._save_adversary_json(data):
+                    updated = True
+                    # Invalidate cache since we modified the data
+                    self._fp_cache.clear()
+                    self._cache_file_mtime = 0
+                    adversary_file_abs = str(self.adversary_file.resolve())
+                    logger.info(
+                        f"Marked threat {finding_uuid} as false positive in {adversary_file_abs}"
+                    )
+                else:
+                    adversary_file_abs = str(self.adversary_file.resolve())
+                    logger.error(
+                        f"Failed to save false positive update to {adversary_file_abs}"
+                    )
+                break
 
         if not updated:
-            # Fallback to legacy system if threat not found in any .adversary.json
-            logger.warning(
-                f"Threat {finding_uuid} not found in any .adversary.json files, using legacy fallback"
-            )
-            data = self._load_false_positives()
-
-            # Check if already marked in legacy system
-            for fp in data["false_positives"]:
-                if fp["uuid"] == finding_uuid:
-                    fp["reason"] = reason
-                    fp["last_updated"] = datetime.now().isoformat()
-                    fp["marked_by"] = marked_by
-                    self._save_false_positives(data)
-                    return True
-
-            # Add new false positive to legacy system
-            false_positive = {
-                "uuid": finding_uuid,
-                "reason": reason,
-                "marked_date": datetime.now().isoformat(),
-                "last_updated": datetime.now().isoformat(),
-                "marked_by": marked_by,
-            }
-
-            data["false_positives"].append(false_positive)
-            try:
-                self._save_false_positives(data)
-                # Invalidate cache since we modified legacy data
-                self._fp_cache.clear()
-                self._cache_file_mtimes.clear()
-                return True
-            except RuntimeError:
-                return False
+            logger.warning(f"Threat {finding_uuid} not found in .adversary.json")
 
         return updated
 
-    def unmark_false_positive(
-        self, finding_uuid: str, working_directory: str | None = None
-    ) -> bool:
-        """Remove false positive marking from a finding in .adversary.json files.
+    def unmark_false_positive(self, finding_uuid: str) -> bool:
+        """Remove false positive marking from a finding.
 
         Args:
             finding_uuid: UUID of the finding to unmark
-            working_directory: Directory to search for .adversary.json files
 
         Returns:
             True if finding was unmarked, False if not found
         """
-        # Find and update the threat in .adversary.json files
-        adversary_files = self._find_adversary_json_files(working_directory)
+        # Ensure cache is up-to-date before loading data
+        self._invalidate_cache_if_needed()
+
+        # Load .adversary.json file
+        data = self._load_adversary_json()
+        if not data or "threats" not in data:
+            logger.warning(
+                f"No .adversary.json file found for unmarking {finding_uuid}"
+            )
+            return False
+
         updated = False
+        for threat in data["threats"]:
+            if threat.get("uuid") == finding_uuid and threat.get("is_false_positive"):
+                # Remove false positive marking
+                threat["is_false_positive"] = False
+                threat["false_positive_reason"] = None
+                threat["false_positive_marked_date"] = None
+                threat["false_positive_last_updated"] = None
+                threat["false_positive_marked_by"] = None
 
-        for file_path in adversary_files:
-            data = self._load_adversary_json(file_path)
-            if not data or "threats" not in data:
-                continue
-
-            for threat in data["threats"]:
-                if threat.get("uuid") == finding_uuid and threat.get(
-                    "is_false_positive"
-                ):
-                    # Remove false positive marking
-                    threat["is_false_positive"] = False
-                    threat["false_positive_metadata"] = None
-
-                    if self._save_adversary_json(file_path, data):
-                        updated = True
-                        # Invalidate cache since we modified the data
-                        self._fp_cache.clear()
-                        self._cache_file_mtimes.clear()
-                        logger.info(
-                            f"Unmarked threat {finding_uuid} as false positive in {file_path}"
-                        )
-                    else:
-                        logger.error(
-                            f"Failed to save false positive removal to {file_path}"
-                        )
-
-        # Also remove from legacy system if present
-        data = self._load_false_positives()
-        original_count = len(data["false_positives"])
-        data["false_positives"] = [
-            fp for fp in data["false_positives"] if fp["uuid"] != finding_uuid
-        ]
-
-        if len(data["false_positives"]) < original_count:
-            try:
-                self._save_false_positives(data)
-                # Invalidate cache since we modified legacy data
-                self._fp_cache.clear()
-                self._cache_file_mtimes.clear()
-                updated = True
-            except RuntimeError:
-                pass  # Log but don't fail the operation
+                if self._save_adversary_json(data):
+                    updated = True
+                    # Invalidate cache since we modified the data
+                    self._fp_cache.clear()
+                    self._cache_file_mtime = 0
+                    adversary_file_abs = str(self.adversary_file.resolve())
+                    logger.info(
+                        f"Unmarked threat {finding_uuid} as false positive in {adversary_file_abs}"
+                    )
+                else:
+                    adversary_file_abs = str(self.adversary_file.resolve())
+                    logger.error(
+                        f"Failed to save false positive removal to {adversary_file_abs}"
+                    )
+                break
 
         return updated
 
-    def is_false_positive(
-        self, finding_uuid: str, working_directory: str | None = None
-    ) -> bool:
+    def is_false_positive(self, finding_uuid: str) -> bool:
         """Check if a finding is marked as false positive.
 
         Args:
             finding_uuid: UUID of the finding to check
-            working_directory: Directory to search for .adversary.json files
 
         Returns:
             True if marked as false positive, False otherwise
         """
-        # Use the new method that checks both systems
-        return (
-            self.get_false_positive_details(finding_uuid, working_directory) is not None
-        )
+        return self.get_false_positive_details(finding_uuid) is not None
 
-    def get_false_positives(
-        self, working_directory: str | None = None
-    ) -> list[dict[str, Any]]:
-        """Get all false positive findings from both new and legacy systems.
-
-        Args:
-            working_directory: Directory to search for .adversary.json files
+    def get_false_positives(self) -> list[dict[str, Any]]:
+        """Get all false positive findings from .adversary.json file.
 
         Returns:
             List of false positive findings
         """
         false_positives = []
-        seen_uuids = set()
 
-        # Get false positives from .adversary.json files (new system)
-        adversary_files = self._find_adversary_json_files(working_directory)
-        for file_path in adversary_files:
-            data = self._load_adversary_json(file_path)
-            if not data or "threats" not in data:
-                continue
+        # Ensure cache is up-to-date before loading data
+        self._invalidate_cache_if_needed()
 
+        # Get false positives from .adversary.json file
+        data = self._load_adversary_json()
+        if data and "threats" in data:
             for threat in data["threats"]:
-                if (
-                    threat.get("is_false_positive")
-                    and threat.get("false_positive_metadata")
-                    and threat.get("uuid") not in seen_uuids
-                ):
-
-                    fp_data = threat["false_positive_metadata"].copy()
-                    fp_data["file_source"] = str(file_path)
+                if threat.get("is_false_positive"):
+                    fp_data = {
+                        "uuid": threat.get("uuid"),
+                        "reason": threat.get("false_positive_reason", ""),
+                        "marked_date": threat.get("false_positive_marked_date", ""),
+                        "last_updated": threat.get("false_positive_last_updated", ""),
+                        "marked_by": threat.get("false_positive_marked_by", "system"),
+                        "source": "project",
+                        "file_source": str(self.adversary_file),
+                    }
                     false_positives.append(fp_data)
-                    seen_uuids.add(threat.get("uuid"))
-
-        # Get false positives from legacy system
-        legacy_data = self._load_false_positives()
-        for fp in legacy_data.get("false_positives", []):
-            if fp["uuid"] not in seen_uuids:
-                fp_copy = fp.copy()
-                fp_copy["source"] = "legacy"
-                false_positives.append(fp_copy)
-                seen_uuids.add(fp["uuid"])
 
         return false_positives
 
-    def get_false_positive_uuids(
-        self, working_directory: str | None = None
-    ) -> set[str]:
+    def get_false_positive_uuids(self) -> set[str]:
         """Get set of all false positive UUIDs for quick lookup.
-
-        Args:
-            working_directory: Directory to search for .adversary.json files
 
         Returns:
             Set of false positive UUIDs
         """
-        false_positives = self.get_false_positives(working_directory)
+        false_positives = self.get_false_positives()
         return {fp["uuid"] for fp in false_positives}
 
-    def filter_false_positives(
-        self, threats: list, working_directory: str | None = None
-    ) -> list:
+    def filter_false_positives(self, threats: list) -> list:
         """Filter out false positives from a list of threat matches.
 
         Args:
             threats: List of ThreatMatch objects
-            working_directory: Directory to search for .adversary.json files
 
         Returns:
             List of threats with false positives filtered out
         """
-        false_positive_uuids = self.get_false_positive_uuids(working_directory)
+        false_positive_uuids = self.get_false_positive_uuids()
 
         filtered_threats = []
         for threat in threats:
@@ -493,40 +322,35 @@ class FalsePositiveManager:
 
         return filtered_threats
 
-    def clear_all_false_positives(self, working_directory: str | None = None) -> None:
-        """Clear all false positive markings from both new and legacy systems.
+    def clear_all_false_positives(self) -> None:
+        """Clear all false positive markings from .adversary.json file."""
+        # Ensure cache is up-to-date before loading data
+        self._invalidate_cache_if_needed()
 
-        Args:
-            working_directory: Directory to search for .adversary.json files
-        """
-        # Clear from .adversary.json files
-        adversary_files = self._find_adversary_json_files(working_directory)
-        for file_path in adversary_files:
-            data = self._load_adversary_json(file_path)
-            if not data or "threats" not in data:
-                continue
+        # Clear from .adversary.json file
+        data = self._load_adversary_json()
+        if not data or "threats" not in data:
+            logger.info("No .adversary.json file found to clear false positives from")
+            return
 
-            updated = False
-            for threat in data["threats"]:
-                if threat.get("is_false_positive"):
-                    threat["is_false_positive"] = False
-                    threat["false_positive_metadata"] = None
-                    updated = True
+        updated = False
+        for threat in data["threats"]:
+            if threat.get("is_false_positive"):
+                threat["is_false_positive"] = False
+                threat["false_positive_reason"] = None
+                threat["false_positive_marked_date"] = None
+                threat["false_positive_last_updated"] = None
+                threat["false_positive_marked_by"] = None
+                updated = True
 
-            if updated:
-                self._save_adversary_json(file_path, data)
-                logger.info(f"Cleared false positives from {file_path}")
-
-        # Clear legacy system
-        data = {"false_positives": [], "version": "1.0"}
-        try:
-            self._save_false_positives(data)
-        except RuntimeError:
-            pass  # Log but don't fail
+        if updated:
+            self._save_adversary_json(data)
+            adversary_file_abs = str(self.adversary_file.resolve())
+            logger.info(f"Cleared false positives from {adversary_file_abs}")
 
         # Invalidate cache since we cleared all data
         self._fp_cache.clear()
-        self._cache_file_mtimes.clear()
+        self._cache_file_mtime = 0
 
     def export_false_positives(self, output_path: Path) -> None:
         """Export false positives to a file.
@@ -534,33 +358,7 @@ class FalsePositiveManager:
         Args:
             output_path: Path to export file
         """
-        data = self._load_false_positives()
+        false_positives = self.get_false_positives()
+        data = {"false_positives": false_positives, "version": "2.0"}
         with open(output_path, "w") as f:
             json.dump(data, f, indent=2)
-
-    def import_false_positives(self, input_path: Path, merge: bool = True) -> None:
-        """Import false positives from a file.
-
-        Args:
-            input_path: Path to import file
-            merge: If True, merge with existing; if False, replace
-        """
-        with open(input_path) as f:
-            imported_data = json.load(f)
-
-        if merge:
-            existing_data = self._load_false_positives()
-            existing_uuids = {fp["uuid"] for fp in existing_data["false_positives"]}
-
-            # Add only new false positives
-            for fp in imported_data.get("false_positives", []):
-                if fp["uuid"] not in existing_uuids:
-                    existing_data["false_positives"].append(fp)
-
-            self._save_false_positives(existing_data)
-        else:
-            self._save_false_positives(imported_data)
-
-        # Invalidate cache since we imported new data
-        self._fp_cache.clear()
-        self._cache_file_mtimes.clear()

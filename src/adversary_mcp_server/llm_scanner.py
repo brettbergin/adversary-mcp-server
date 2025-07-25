@@ -2,6 +2,7 @@
 
 import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from .credential_manager import CredentialManager
@@ -29,18 +30,25 @@ class LLMSecurityFinding:
     explanation: str
     recommendation: str
     confidence: float
+    file_path: str = ""  # Path to the file containing this finding
     cwe_id: str | None = None
     owasp_category: str | None = None
 
-    def to_threat_match(self, file_path: str) -> ThreatMatch:
+    def to_threat_match(self, file_path: str | None = None) -> ThreatMatch:
         """Convert to ThreatMatch for compatibility with existing code.
 
         Args:
-            file_path: Path to the analyzed file
+            file_path: Path to the analyzed file (optional if finding has file_path)
 
         Returns:
             ThreatMatch object
         """
+        # Use provided file_path or fall back to the finding's file_path
+        effective_file_path = file_path or self.file_path
+        if not effective_file_path:
+            raise ValueError(
+                "file_path must be provided either as parameter or in finding"
+            )
         logger.debug(
             f"Converting LLMSecurityFinding to ThreatMatch: {self.finding_type} ({self.severity})"
         )
@@ -121,7 +129,7 @@ class LLMSecurityFinding:
             description=self.description,
             category=category,
             severity=severity,
-            file_path=file_path,
+            file_path=effective_file_path,
             line_number=self.line_number,
             code_snippet=self.code_snippet,
             confidence=self.confidence,
@@ -148,7 +156,8 @@ class LLMAnalysisPrompt:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
-        logger.debug(f"Converting LLMAnalysisPrompt to dict for {self.file_path}")
+        file_path_abs = str(Path(self.file_path).resolve())
+        logger.debug(f"Converting LLMAnalysisPrompt to dict for {file_path_abs}")
         result = {
             "system_prompt": self.system_prompt,
             "user_prompt": self.user_prompt,
@@ -191,6 +200,20 @@ class LLMScanner:
         )
         return True
 
+    def get_status(self) -> dict[str, Any]:
+        """Get LLM status information (for consistency with semgrep scanner).
+
+        Returns:
+            Dict containing LLM status information
+        """
+        return {
+            "available": True,
+            "version": "client-based",
+            "installation_status": "available",
+            "mode": "client-based",
+            "description": "Uses client-side LLM for analysis",
+        }
+
     def create_analysis_prompt(
         self,
         source_code: str,
@@ -209,7 +232,8 @@ class LLMScanner:
         Returns:
             LLMAnalysisPrompt object
         """
-        logger.info(f"Creating analysis prompt for {file_path} ({language.value})")
+        file_path_abs = str(Path(file_path).resolve())
+        logger.info(f"Creating analysis prompt for {file_path_abs} ({language.value})")
         logger.debug(
             f"Source code length: {len(source_code)} characters, max_findings: {max_findings}"
         )
@@ -230,10 +254,10 @@ class LLMScanner:
                 language=language,
                 max_findings=max_findings,
             )
-            logger.info(f"Successfully created analysis prompt for {file_path}")
+            logger.info(f"Successfully created analysis prompt for {file_path_abs}")
             return prompt
         except Exception as e:
-            logger.error(f"Failed to create analysis prompt for {file_path}: {e}")
+            logger.error(f"Failed to create analysis prompt for {file_path_abs}: {e}")
             raise
 
     def parse_analysis_response(
@@ -248,11 +272,12 @@ class LLMScanner:
         Returns:
             List of LLMSecurityFinding objects
         """
-        logger.info(f"Parsing LLM analysis response for {file_path}")
+        file_path_abs = str(Path(file_path).resolve())
+        logger.info(f"Parsing LLM analysis response for {file_path_abs}")
         logger.debug(f"Response text length: {len(response_text)} characters")
 
         if not response_text or not response_text.strip():
-            logger.warning(f"Empty or whitespace-only response for {file_path}")
+            logger.warning(f"Empty or whitespace-only response for {file_path_abs}")
             return []
 
         try:
@@ -309,13 +334,15 @@ class LLMScanner:
             return findings
 
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse LLM response as JSON for {file_path}: {e}")
+            logger.error(
+                f"Failed to parse LLM response as JSON for {file_path_abs}: {e}"
+            )
             logger.debug(
                 f"Response text preview (first 500 chars): {response_text[:500]}"
             )
             raise LLMAnalysisError(f"Invalid JSON response from LLM: {e}")
         except Exception as e:
-            logger.error(f"Error parsing LLM response for {file_path}: {e}")
+            logger.error(f"Error parsing LLM response for {file_path_abs}: {e}")
             logger.debug(
                 f"Response text preview (first 500 chars): {response_text[:500]}"
             )
@@ -453,7 +480,8 @@ Response format:
         Returns:
             Empty list (client-based LLM doesn't do analysis here)
         """
-        logger.info(f"analyze_code called for {file_path} ({language.value})")
+        file_path_abs = str(Path(file_path).resolve())
+        logger.info(f"analyze_code called for {file_path_abs} ({language.value})")
         logger.debug(
             "Client-based LLM approach - returning empty list (analysis done by client)"
         )
@@ -480,7 +508,8 @@ Response format:
         Returns:
             Empty list (client-based LLM doesn't do analysis here)
         """
-        logger.info(f"analyze_file called for {file_path} ({language.value})")
+        file_path_abs = str(Path(file_path).resolve())
+        logger.info(f"analyze_file called for {file_path_abs} ({language.value})")
         logger.debug(
             "Client-based LLM approach - returning empty list (analysis done by client)"
         )

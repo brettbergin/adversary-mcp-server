@@ -40,6 +40,23 @@ test-integration: ## Run only integration tests
 test-security: ## Run only security-related tests
 	python -m pytest -m "security" -v
 
+benchmark: ## Run performance benchmarks
+	uv run pytest -m "benchmark" --benchmark-verbose
+
+benchmark-save: ## Run benchmarks and save results to .benchmarks/
+	@mkdir -p .benchmarks
+	uv run pytest -m "benchmark" --benchmark-json=.benchmarks/benchmark_$(shell date +%Y%m%d_%H%M%S).json --benchmark-verbose
+
+benchmark-compare: ## Run benchmarks and compare with previous results
+	@mkdir -p .benchmarks
+	uv run pytest -m "benchmark" --benchmark-compare --benchmark-compare-fail=mean:5% --benchmark-json=.benchmarks/latest.json
+
+benchmark-only: ## Run only the benchmark tests without any other tests
+	uv run pytest tests/test_benchmarks.py -v --benchmark-verbose
+
+benchmark-skip: ## Run all tests except benchmarks (this is the default behavior)
+	uv run pytest -m "not benchmark" -v
+
 lint: ## Run all linting tools
 	python -m ruff check src/ tests/
 	python -m mypy src/

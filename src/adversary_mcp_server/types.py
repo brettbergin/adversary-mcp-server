@@ -214,3 +214,18 @@ class ThreatMatch:
     confidence: float = 1.0  # 0.0 to 1.0
     source: str = "rules"  # Scanner source: "rules", "semgrep", "llm"
     is_false_positive: bool = False  # False positive tracking
+
+    def get_fingerprint(self) -> str:
+        """Generate a unique fingerprint for this finding.
+
+        Used to identify the same logical finding across multiple scans
+        to preserve UUIDs and false positive markings.
+
+        Returns:
+            Unique fingerprint string based on rule_id, file_path, and line_number
+        """
+        from pathlib import Path
+
+        # Normalize file path to handle relative vs absolute paths
+        normalized_path = str(Path(self.file_path).resolve())
+        return f"{self.rule_id}:{normalized_path}:{self.line_number}"

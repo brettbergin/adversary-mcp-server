@@ -7,7 +7,7 @@ from pathlib import Path
 
 import click
 from rich.console import Console
-from rich.prompt import Confirm
+from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
 from . import get_version
@@ -48,7 +48,7 @@ def cli():
     help="Enable/disable exploit safety mode",
 )
 def configure(severity_threshold: str | None, enable_safety_mode: bool):
-    """Configure the Adversary MCP server settings."""
+    """Configure the Adversary MCP server settings including Semgrep API key."""
     logger.info("=== Starting configuration command ===")
     console.print("🔧 [bold]Adversary MCP Server Configuration[/bold]")
 
@@ -68,8 +68,47 @@ def configure(severity_threshold: str | None, enable_safety_mode: bool):
         config_updated = True
         logger.info(f"Exploit safety mode set to: {enable_safety_mode}")
 
+        # Only prompt for Semgrep API key if not already configured
+        existing_key = credential_manager.get_semgrep_api_key()
+        if not existing_key:
+            console.print("\n🔑 [bold]Semgrep API Key Configuration[/bold]")
+            console.print("ℹ️  No Semgrep API key found", style="yellow")
+            configure_key = Confirm.ask(
+                "Would you like to configure your Semgrep API key now?", default=True
+            )
+
+            if configure_key:
+                console.print("\n📝 Enter your Semgrep API key:")
+                console.print(
+                    "   • Get your API key from: https://semgrep.dev/orgs/-/settings/tokens"
+                )
+                console.print("   • Leave blank to skip configuration")
+
+                api_key = Prompt.ask("SEMGREP_API_KEY", password=True, default="")
+
+                if api_key.strip():
+                    try:
+                        credential_manager.store_semgrep_api_key(api_key.strip())
+                        console.print(
+                            "✅ Semgrep API key stored securely in keyring!",
+                            style="green",
+                        )
+                        logger.info("Semgrep API key configured successfully")
+                    except Exception as e:
+                        console.print(
+                            f"❌ Failed to store Semgrep API key: {e}", style="red"
+                        )
+                        logger.error(f"Failed to store Semgrep API key: {e}")
+                else:
+                    console.print(
+                        "⏭️  Skipped Semgrep API key configuration", style="yellow"
+                    )
+        else:
+            # Key exists - just show a brief confirmation without prompting
+            console.print("\n🔑 Semgrep API key: ✅ Configured", style="green")
+
         if config_updated:
-            credential_manager.save_config(config)
+            credential_manager.store_config(config)
             console.print("✅ Configuration updated successfully!", style="green")
 
         logger.info("=== Configuration command completed successfully ===")
@@ -263,11 +302,12 @@ def scan(
                 sys.exit(1)
 
             target_path = Path(target)
-            logger.info(f"Starting traditional scan of: {target_path}")
+            target_path_abs = str(target_path.resolve())
+            logger.info(f"Starting traditional scan of: {target_path_abs}")
 
             if target_path.is_file():
                 # Single file scan
-                logger.info(f"Scanning single file: {target_path}")
+                logger.info(f"Scanning single file: {target_path_abs}")
 
                 # Auto-detect language if not provided
                 if not language:
@@ -306,12 +346,12 @@ def scan(
 
             elif target_path.is_dir():
                 # Directory scan
-                logger.info(f"Scanning directory: {target_path}")
+                logger.info(f"Scanning directory: {target_path_abs}")
 
                 severity_enum = Severity(severity) if severity else None
 
                 # Perform directory scan
-                logger.debug(f"Scanning directory {target_path}")
+                logger.debug(f"Scanning directory {target_path_abs}")
                 scan_results = scan_engine.scan_directory_sync(
                     target_path,
                     recursive=True,
@@ -457,8 +497,18 @@ const PASSWORD = "admin123";
 @cli.command()
 @click.argument("finding_uuid")
 @click.option("--reason", type=str, help="Reason for marking as false positive")
-@click.option("--reviewer", type=str, help="Name of reviewer")
-def mark_false_positive(finding_uuid: str, reason: str | None, reviewer: str | None):
+@click.option("--marked-by", type=str, help="Name of person marking as false positive")
+@click.option(
+    "--working-directory",
+    type=click.Path(exists=True),
+    help="Working directory to search for .adversary.json",
+)
+def mark_false_positive(
+    finding_uuid: str,
+    reason: str | None,
+    marked_by: str | None,
+    working_directory: str | None,
+):
     """Mark a finding as a false positive by UUID."""
     logger.info(
         f"=== Starting mark-false-positive command for finding: {finding_uuid} ==="
@@ -467,19 +517,66 @@ def mark_false_positive(finding_uuid: str, reason: str | None, reviewer: str | N
     try:
         from .false_positive_manager import FalsePositiveManager
 
-        fp_manager = FalsePositiveManager()
+        # Smart search for .adversary.json file like the MCP server does
+        project_root = working_directory or "."
+        from pathlib import Path
+
+        current_dir = Path(project_root)
+        adversary_file = current_dir / ".adversary.json"
+
+        # Convert to absolute path for better logging
+        project_root_abs = str(Path(project_root).resolve())
+        logger.info(f"Starting mark-false-positive in directory: {project_root_abs}")
+
+        # If .adversary.json doesn't exist in working_directory, search up the directory tree
+        if not adversary_file.exists():
+            logger.info(
+                f".adversary.json not found at {adversary_file}, searching parent directories..."
+            )
+            search_dir = current_dir.resolve()
+            home_dir = Path.home().resolve()
+
+            found = False
+            while search_dir != search_dir.parent and search_dir >= home_dir:
+                test_file = search_dir / ".adversary.json"
+                if test_file.exists():
+                    project_root = str(search_dir)
+                    logger.info(
+                        f"✅ Found .adversary.json in parent directory: {project_root}"
+                    )
+                    found = True
+                    break
+                search_dir = search_dir.parent
+
+            if not found:
+                console.print(
+                    "❌ No .adversary.json file found in directory tree", style="red"
+                )
+                sys.exit(1)
+
+        adversary_file_path = str(Path(project_root) / ".adversary.json")
+        fp_manager = FalsePositiveManager(adversary_file_path=adversary_file_path)
 
         # Mark as false positive
-        fp_manager.mark_false_positive(
-            finding_uuid=finding_uuid,
-            reason=reason or "Manually marked as false positive",
-            reviewer=reviewer or "CLI User",
+        success = fp_manager.mark_false_positive(
+            finding_uuid,
+            reason or "Manually marked as false positive via CLI",
+            marked_by or "CLI User",
         )
 
-        console.print(
-            f"✅ Finding {finding_uuid} marked as false positive", style="green"
-        )
-        logger.info(f"Finding {finding_uuid} successfully marked as false positive")
+        if success:
+            console.print(
+                f"✅ Finding {finding_uuid} marked as false positive", style="green"
+            )
+            console.print(
+                f"📁 File: {Path(project_root) / '.adversary.json'}", style="dim"
+            )
+            logger.info(f"Finding {finding_uuid} successfully marked as false positive")
+        else:
+            console.print(
+                f"❌ Finding {finding_uuid} not found in scan results", style="red"
+            )
+            sys.exit(1)
 
     except Exception as e:
         logger.error(f"Mark-false-positive command failed: {e}")
@@ -492,7 +589,12 @@ def mark_false_positive(finding_uuid: str, reason: str | None, reviewer: str | N
 
 @cli.command()
 @click.argument("finding_uuid")
-def unmark_false_positive(finding_uuid: str):
+@click.option(
+    "--working-directory",
+    type=click.Path(exists=True),
+    help="Working directory to search for .adversary.json",
+)
+def unmark_false_positive(finding_uuid: str, working_directory: str | None):
     """Remove false positive marking from a finding by UUID."""
     logger.info(
         f"=== Starting unmark-false-positive command for finding: {finding_uuid} ==="
@@ -501,13 +603,61 @@ def unmark_false_positive(finding_uuid: str):
     try:
         from .false_positive_manager import FalsePositiveManager
 
-        fp_manager = FalsePositiveManager()
-        fp_manager.unmark_false_positive(finding_uuid)
+        # Smart search for .adversary.json file like the MCP server does
+        project_root = working_directory or "."
+        from pathlib import Path
 
-        console.print(
-            f"✅ False positive marking removed from {finding_uuid}", style="green"
-        )
-        logger.info(f"False positive marking removed from {finding_uuid}")
+        current_dir = Path(project_root)
+        adversary_file = current_dir / ".adversary.json"
+
+        # Convert to absolute path for better logging
+        project_root_abs = str(Path(project_root).resolve())
+        logger.info(f"Starting unmark-false-positive in directory: {project_root_abs}")
+
+        # If .adversary.json doesn't exist in working_directory, search up the directory tree
+        if not adversary_file.exists():
+            logger.info(
+                f".adversary.json not found at {adversary_file}, searching parent directories..."
+            )
+            search_dir = current_dir.resolve()
+            home_dir = Path.home().resolve()
+
+            found = False
+            while search_dir != search_dir.parent and search_dir >= home_dir:
+                test_file = search_dir / ".adversary.json"
+                if test_file.exists():
+                    project_root = str(search_dir)
+                    logger.info(
+                        f"✅ Found .adversary.json in parent directory: {project_root}"
+                    )
+                    found = True
+                    break
+                search_dir = search_dir.parent
+
+            if not found:
+                console.print(
+                    "❌ No .adversary.json file found in directory tree", style="red"
+                )
+                sys.exit(1)
+
+        adversary_file_path = str(Path(project_root) / ".adversary.json")
+        fp_manager = FalsePositiveManager(adversary_file_path=adversary_file_path)
+        success = fp_manager.unmark_false_positive(finding_uuid)
+
+        if success:
+            console.print(
+                f"✅ False positive marking removed from {finding_uuid}", style="green"
+            )
+            console.print(
+                f"📁 File: {Path(project_root) / '.adversary.json'}", style="dim"
+            )
+            logger.info(f"False positive marking removed from {finding_uuid}")
+        else:
+            console.print(
+                f"❌ Finding {finding_uuid} was not marked as false positive",
+                style="red",
+            )
+            sys.exit(1)
 
     except Exception as e:
         logger.error(f"Unmark-false-positive command failed: {e}")
@@ -519,36 +669,87 @@ def unmark_false_positive(finding_uuid: str):
 
 
 @cli.command()
-def list_false_positives():
+@click.option(
+    "--working-directory",
+    type=click.Path(exists=True),
+    help="Working directory to search for .adversary.json",
+)
+def list_false_positives(working_directory: str | None):
     """List all findings marked as false positives."""
     logger.info("=== Starting list-false-positives command ===")
 
     try:
         from .false_positive_manager import FalsePositiveManager
 
-        fp_manager = FalsePositiveManager()
-        false_positives = fp_manager.list_false_positives()
+        # Smart search for .adversary.json file like the MCP server does
+        project_root = working_directory or "."
+        from pathlib import Path
+
+        current_dir = Path(project_root)
+        adversary_file = current_dir / ".adversary.json"
+
+        # Convert to absolute path for better logging
+        project_root_abs = str(Path(project_root).resolve())
+        logger.info(f"Starting list-false-positives in directory: {project_root_abs}")
+
+        # If .adversary.json doesn't exist in working_directory, search up the directory tree
+        if not adversary_file.exists():
+            logger.info(
+                f".adversary.json not found at {adversary_file}, searching parent directories..."
+            )
+            search_dir = current_dir.resolve()
+            home_dir = Path.home().resolve()
+
+            found = False
+            while search_dir != search_dir.parent and search_dir >= home_dir:
+                test_file = search_dir / ".adversary.json"
+                if test_file.exists():
+                    project_root = str(search_dir)
+                    logger.info(
+                        f"✅ Found .adversary.json in parent directory: {project_root}"
+                    )
+                    found = True
+                    break
+                search_dir = search_dir.parent
+
+            if not found:
+                console.print(
+                    "❌ No .adversary.json file found in directory tree", style="red"
+                )
+                sys.exit(1)
+
+        adversary_file_path = str(Path(project_root) / ".adversary.json")
+        fp_manager = FalsePositiveManager(adversary_file_path=adversary_file_path)
+        false_positives = fp_manager.get_false_positives()
 
         if not false_positives:
             console.print("No false positives found.", style="yellow")
+            console.print(
+                f"📁 Checked: {Path(project_root) / '.adversary.json'}", style="dim"
+            )
             return
 
         # Create table
         table = Table(title=f"False Positives ({len(false_positives)} found)")
         table.add_column("UUID", style="cyan")
         table.add_column("Reason", style="magenta")
-        table.add_column("Reviewer", style="green")
+        table.add_column("Marked By", style="green")
         table.add_column("Date", style="yellow")
+        table.add_column("Source", style="blue")
 
         for fp in false_positives:
             table.add_row(
-                fp.get("finding_uuid", "Unknown"),
+                fp.get("uuid", "Unknown"),
                 fp.get("reason", "No reason provided"),
-                fp.get("reviewer", "Unknown"),
-                fp.get("created_at", "Unknown"),
+                fp.get("marked_by", "Unknown"),
+                fp.get("marked_date", "Unknown"),
+                fp.get("source", "Unknown"),
             )
 
         console.print(table)
+        console.print(
+            f"📁 Source: {Path(project_root) / '.adversary.json'}", style="dim"
+        )
         logger.info("=== List-false-positives command completed successfully ===")
 
     except Exception as e:
@@ -567,8 +768,19 @@ def reset():
         try:
             logger.debug("User confirmed configuration reset")
             credential_manager = CredentialManager()
-            credential_manager.reset_config()
-            console.print("✅ Configuration reset successfully!", style="green")
+
+            # Delete main configuration
+            credential_manager.delete_config()
+            console.print("✅ Main configuration deleted", style="green")
+
+            # Delete Semgrep API key
+            api_key_deleted = credential_manager.delete_semgrep_api_key()
+            if api_key_deleted:
+                console.print("✅ Semgrep API key deleted", style="green")
+            else:
+                console.print("ℹ️  No Semgrep API key found to delete", style="yellow")
+
+            console.print("✅ All configuration reset successfully!", style="green")
             logger.info("Configuration reset completed")
         except Exception as e:
             logger.error(f"Reset command failed: {e}")
@@ -687,6 +899,44 @@ def _save_results_to_file(threats, output_file):
         logger.error(f"Failed to save results: {e}")
         logger.debug("Save results error details", exc_info=True)
         console.print(f"❌ Failed to save results: {e}", style="red")
+
+
+@cli.command()
+def reset_semgrep_key():
+    """Remove the stored Semgrep API key from keyring."""
+    logger.info("=== Starting reset-semgrep-key command ===")
+
+    try:
+        credential_manager = CredentialManager()
+        existing_key = credential_manager.get_semgrep_api_key()
+
+        if not existing_key:
+            console.print("ℹ️  No Semgrep API key found in keyring", style="yellow")
+            return
+
+        console.print("🔑 Found existing Semgrep API key in keyring")
+        if Confirm.ask(
+            "Are you sure you want to remove the Semgrep API key?", default=False
+        ):
+            success = credential_manager.delete_semgrep_api_key()
+
+            if success:
+                console.print("✅ Semgrep API key removed from keyring!", style="green")
+                logger.info("Semgrep API key successfully removed")
+            else:
+                console.print("❌ Failed to remove Semgrep API key", style="red")
+                logger.error("Failed to remove Semgrep API key from keyring")
+                sys.exit(1)
+        else:
+            console.print("⏭️  Cancelled - API key remains in keyring", style="yellow")
+
+    except Exception as e:
+        logger.error(f"Reset-semgrep-key command failed: {e}")
+        logger.debug("Reset-semgrep-key error details", exc_info=True)
+        console.print(f"❌ Failed to reset Semgrep API key: {e}", style="red")
+        sys.exit(1)
+
+    logger.info("=== Reset-semgrep-key command completed successfully ===")
 
 
 def main():

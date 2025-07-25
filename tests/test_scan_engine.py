@@ -1428,6 +1428,11 @@ class TestLanguageSupport:
         # Mock Semgrep scanner
         mock_semgrep_instance = Mock()
         mock_semgrep_instance.is_available.return_value = False
+        mock_semgrep_instance.get_status.return_value = {
+            "available": False,
+            "error": "Semgrep not found",
+            "installation_status": "not_installed",
+        }
         mock_semgrep_scanner.return_value = mock_semgrep_instance
 
         # Mock LLM scanner
@@ -1435,17 +1440,12 @@ class TestLanguageSupport:
 
         mock_llm_instance = Mock()
         mock_llm_instance.is_available.return_value = True
-        mock_finding = LLMSecurityFinding(
-            finding_type="test",
-            severity="high",
-            description="Test finding",
-            line_number=10,
-            code_snippet="test code",
-            explanation="Test explanation",
-            recommendation="Test recommendation",
-            confidence=0.9,
-        )
-        mock_llm_instance.analyze_directory = AsyncMock(return_value=[mock_finding])
+        mock_llm_instance.get_status.return_value = {
+            "available": True,
+            "version": "client-based",
+            "installation_status": "available",
+            "mode": "client-based",
+        }
         mock_llm_scanner.return_value = mock_llm_instance
 
         scanner = ScanEngine(
@@ -1457,9 +1457,22 @@ class TestLanguageSupport:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             (temp_path / "test.py").write_text("print('test')")
-            mock_finding.file_path = str(
-                temp_path / "test.py"
-            )  # Add file_path attribute
+
+            # Create mock finding with the correct file path
+            mock_finding = LLMSecurityFinding(
+                finding_type="test",
+                severity="high",
+                description="Test finding",
+                line_number=10,
+                code_snippet="test code",
+                explanation="Test explanation",
+                recommendation="Test recommendation",
+                confidence=0.9,
+                file_path=str(
+                    temp_path / "test.py"
+                ),  # Include file_path in constructor
+            )
+            mock_llm_instance.analyze_directory = AsyncMock(return_value=[mock_finding])
 
             results = await scanner.scan_directory(
                 directory_path=temp_path,

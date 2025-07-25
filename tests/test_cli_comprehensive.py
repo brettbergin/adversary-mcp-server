@@ -22,11 +22,15 @@ class TestCLICommandsCoverage:
 
     @patch("adversary_mcp_server.cli.CredentialManager")
     @patch("adversary_mcp_server.cli.console")
-    def test_configure_command_basic(self, mock_console, mock_cred_manager):
+    @patch("adversary_mcp_server.cli.Confirm.ask")
+    def test_configure_command_basic(
+        self, mock_confirm, mock_console, mock_cred_manager
+    ):
         """Test configure command basic functionality."""
         mock_manager = Mock()
         mock_config = SecurityConfig()
         mock_manager.load_config.return_value = mock_config
+        mock_manager.get_semgrep_api_key.return_value = "existing-key"  # Key exists
         mock_cred_manager.return_value = mock_manager
 
         result = self.runner.invoke(
@@ -40,10 +44,13 @@ class TestCLICommandsCoverage:
         )
 
         assert result.exit_code == 0
-        # The actual save_config method is called, not store_config
-        mock_manager.save_config.assert_called_once()
+        # The actual store_config method is called, not save_config
+        mock_manager.store_config.assert_called_once()
+        # Confirm should not be called when key exists
+        mock_confirm.assert_not_called()
 
-    def test_configure_command_with_existing_config(self):
+    @patch("adversary_mcp_server.cli.Confirm.ask")
+    def test_configure_command_with_existing_config(self, mock_confirm):
         """Test configure command with existing config."""
         with patch("adversary_mcp_server.cli.CredentialManager") as mock_manager:
             mock_instance = mock_manager.return_value
@@ -51,6 +58,9 @@ class TestCLICommandsCoverage:
                 enable_llm_analysis=True, severity_threshold="high"
             )
             mock_instance.load_config.return_value = mock_config
+            mock_instance.get_semgrep_api_key.return_value = (
+                "existing-key"  # Key exists
+            )
 
             runner = CliRunner()
             result = runner.invoke(
@@ -58,7 +68,9 @@ class TestCLICommandsCoverage:
             )
 
             assert result.exit_code == 0
-            mock_instance.save_config.assert_called_once()
+            mock_instance.store_config.assert_called_once()
+            # Confirm should not be called when key exists
+            mock_confirm.assert_not_called()
 
     @patch("adversary_mcp_server.cli.CredentialManager")
     @patch("adversary_mcp_server.cli.console")
@@ -82,17 +94,23 @@ class TestCLICommandsCoverage:
 
     @patch("adversary_mcp_server.cli.CredentialManager")
     @patch("adversary_mcp_server.cli.console")
-    def test_configure_command_store_error(self, mock_console, mock_cred_manager):
+    @patch("adversary_mcp_server.cli.Confirm.ask")
+    def test_configure_command_store_error(
+        self, mock_confirm, mock_console, mock_cred_manager
+    ):
         """Test configure command with store error."""
         mock_manager = Mock()
         mock_config = SecurityConfig()
         mock_manager.load_config.return_value = mock_config
-        mock_manager.save_config.side_effect = Exception("Store failed")
+        mock_manager.get_semgrep_api_key.return_value = "existing-key"  # Key exists
+        mock_manager.store_config.side_effect = Exception("Store failed")
         mock_cred_manager.return_value = mock_manager
 
         result = self.runner.invoke(cli, ["configure", "--severity-threshold", "high"])
 
         assert result.exit_code == 1
+        # Confirm should not be called when key exists
+        mock_confirm.assert_not_called()
 
     @patch("adversary_mcp_server.cli.ScanEngine")
     @patch("adversary_mcp_server.cli.CredentialManager")
@@ -145,12 +163,16 @@ class TestCLICommandsCoverage:
     def test_reset_command_confirmed(self, mock_console, mock_cred_manager):
         """Test reset command with confirmation."""
         mock_manager = Mock()
+        mock_manager.delete_semgrep_api_key.return_value = (
+            True  # Simulate successful deletion
+        )
         mock_cred_manager.return_value = mock_manager
 
         result = self.runner.invoke(cli, ["reset"], input="y\n")
 
         assert result.exit_code == 0
-        mock_manager.reset_config.assert_called_once()
+        mock_manager.delete_config.assert_called_once()
+        mock_manager.delete_semgrep_api_key.assert_called_once()
 
     @patch("adversary_mcp_server.cli.CredentialManager")
     @patch("adversary_mcp_server.cli.console")
@@ -162,14 +184,15 @@ class TestCLICommandsCoverage:
         result = self.runner.invoke(cli, ["reset"], input="n\n")
 
         assert result.exit_code == 0
-        mock_manager.reset_config.assert_not_called()
+        mock_manager.delete_config.assert_not_called()
+        mock_manager.delete_semgrep_api_key.assert_not_called()
 
     @patch("adversary_mcp_server.cli.CredentialManager")
     @patch("adversary_mcp_server.cli.console")
     def test_reset_command_error(self, mock_console, mock_cred_manager):
         """Test reset command error handling."""
         mock_manager = Mock()
-        mock_manager.reset_config.side_effect = Exception("Reset failed")
+        mock_manager.delete_config.side_effect = Exception("Reset failed")
         mock_cred_manager.return_value = mock_manager
 
         result = self.runner.invoke(cli, ["reset"], input="y\n")
