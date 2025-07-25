@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [
     { name = "Brett Bergin", email = "brettberginbc@yahoo.com" }
 ]
-requires-python = "3.11"
+requires-python = "==3.11"
 license = { text = "MIT" }
 keywords = ["security", "mcp", "vulnerability", "adversary", "cursor", "red-team"]
 classifiers = [

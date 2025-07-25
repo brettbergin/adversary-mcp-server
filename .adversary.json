@@ -1,9 +1,9 @@
 {
   "scan_metadata": {
-    "target": "/private/var/folders/s8/gqj6l5sx4j38y7dwq4dkxsjh0000gn/T/tmpyazud5f5.py",
-    "timestamp": "2025-07-25T03:02:44.878294Z",
+    "target": "/private/var/folders/s8/gqj6l5sx4j38y7dwq4dkxsjh0000gn/T/tmp9u1azbzk.py",
+    "timestamp": "2025-07-25T03:12:37.054382Z",
     "language": "python",
-    "file_path": "/var/folders/s8/gqj6l5sx4j38y7dwq4dkxsjh0000gn/T/tmpyazud5f5.py",
+    "file_path": "/var/folders/s8/gqj6l5sx4j38y7dwq4dkxsjh0000gn/T/tmp9u1azbzk.py",
     "scan_type": "enhanced",
     "total_threats": 1
   },
@@ -32,13 +32,13 @@
   },
   "threats": [
     {
-      "uuid": "0de1fc93-65bb-4baa-808d-b76e2c358e01",
+      "uuid": "d895b53d-27a2-470b-870d-bfceefe1dba6",
       "rule_id": "test_rule",
       "rule_name": "Test Rule",
       "description": "Test",
       "category": "injection",
       "severity": "high",
-      "file_path": "/var/folders/s8/gqj6l5sx4j38y7dwq4dkxsjh0000gn/T/tmpyazud5f5.py",
+      "file_path": "/var/folders/s8/gqj6l5sx4j38y7dwq4dkxsjh0000gn/T/tmp9u1azbzk.py",
       "line_number": 1,
       "end_line_number": 1,
       "code_snippet": "",
