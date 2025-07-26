@@ -92,7 +92,7 @@ __description__ = (
     "MCP server for adversarial security analysis and vulnerability detection"
 )
 
-from .exploit_generator import ExploitGenerator
+from .scanner.exploit_generator import ExploitGenerator
 from .server import AdversaryMCPServer
 
 __all__ = [

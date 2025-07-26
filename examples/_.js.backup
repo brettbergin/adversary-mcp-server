@@ -1,0 +1,92 @@
+// Example: E-commerce Application with AWS Services
+
+import express from 'express';
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
+import { Entity } from 'electrodb';
+import stripe from 'stripe';
+import redis from 'ioredis';
+
+// Initialize AWS clients
+const dynamoClient = new DynamoDBClient({ region: 'us-east-1' });
+const docClient = DynamoDBDocumentClient.from(dynamoClient);
+const s3Client = new S3Client({ region: 'us-east-1' });
+const sqsClient = new SQSClient({ region: 'us-east-1' });
+
+// Initialize other services
+const cache = new redis();
+const stripeClient = stripe(process.env.STRIPE_KEY);
+
+// ElectroDB entity for products
+const Product = new Entity({
+  model: {
+    entity: 'Product',
+    service: 'EcommerceService',
+    version: '1'
+  },
+  attributes: {
+    productId: { type: 'string' },
+    name: { type: 'string' },
+    price: { type: 'number' },
+    inventory: { type: 'number' }
+  },
+  indexes: {
+    primary: {
+      pk: { field: 'pk', composite: ['productId'] },
+      sk: { field: 'sk', composite: [] }
+    }
+  }
+});
+
+const app = express();
+
+// API endpoint to create order
+app.post('/api/orders', async (req, res) => {
+  const { items, paymentToken } = req.body;
+
+  // Process payment with Stripe
+  const charge = await stripeClient.charges.create({
+    amount: calculateTotal(items),
+    currency: 'usd',
+    source: paymentToken
+  });
+
+  // Store order in DynamoDB
+  const order = await Order.put({
+    orderId: generateOrderId(),
+    items,
+    chargeId: charge.id,
+    status: 'processing'
+  }).go();
+
+  // Send order to fulfillment queue
+  await sqsClient.send(new SendMessageCommand({
+    QueueUrl: process.env.FULFILLMENT_QUEUE_URL,
+    MessageBody: JSON.stringify(order)
+  }));
+
+  // Cache order for quick retrieval
+  await cache.setex(`order:${order.orderId}`, 3600, JSON.stringify(order));
+
+  res.json({ success: true, orderId: order.orderId });
+});
+
+// Upload product images
+app.post('/api/products/:id/image', async (req, res) => {
+  const { id } = req.params;
+  const { image } = req.files;
+
+  // Upload to S3
+  await s3Client.send(new PutObjectCommand({
+    Bucket: 'product-images',
+    Key: `${id}/main.jpg`,
+    Body: image.data,
+    ContentType: 'image/jpeg'
+  }));
+
+  res.json({ success: true });
+});
+
+app.listen(3000);

@@ -2,8 +2,10 @@
 
 import asyncio
 import json
+import json as json_lib
 import sys
 import traceback
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -15,15 +17,17 @@ from mcp.types import ServerCapabilities, Tool, ToolsCapability
 from pydantic import BaseModel
 
 from . import get_version
-from .credential_manager import CredentialManager
-from .diff_scanner import GitDiffScanner
-from .exploit_generator import ExploitGenerator
-from .false_positive_manager import FalsePositiveManager
+from .credentials import CredentialManager
 
 # Set up centralized logging
-from .logging_config import get_logger
-from .scan_engine import EnhancedScanResult, ScanEngine
-from .types import Category, Language, LanguageSupport, Severity, ThreatMatch
+from .logger import get_logger
+from .scanner.diff_scanner import GitDiffScanner
+from .scanner.exploit_generator import ExploitGenerator
+from .scanner.false_positive_manager import FalsePositiveManager
+from .scanner.scan_engine import EnhancedScanResult, ScanEngine
+from .scanner.types import Category, Language, LanguageSupport, Severity, ThreatMatch
+from .threat_modeling import MermaidDiagramGenerator, ThreatModelBuilder
+from .threat_modeling.models import Severity as ThreatSeverity
 
 logger = get_logger("server")
 
@@ -424,6 +428,104 @@ class AdversaryMCPServer:
                         "required": ["adversary_file_path"],
                     },
                 ),
+                Tool(
+                    name="adv_threat_model",
+                    description="Generate STRIDE-based threat model from source code",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "repo_name": {
+                                "type": "string",
+                                "description": "Name of the repository/project to analyze (e.g., 'hello-world', 'my-app')",
+                            },
+                            "source_path": {
+                                "type": "string",
+                                "description": "Optional: explicit path to analyze (overrides repo_name discovery)",
+                            },
+                            "search_depth": {
+                                "type": "integer",
+                                "description": "Optional: maximum directory depth to search for repositories (default: 3)",
+                                "minimum": 1,
+                                "maximum": 5,
+                                "default": 3,
+                            },
+                            "output_file": {
+                                "type": "string",
+                                "description": "Optional: output file path (defaults to threat_model.{format} in project root)",
+                            },
+                            "include_threats": {
+                                "type": "boolean",
+                                "description": "Include STRIDE threat analysis in output",
+                                "default": True,
+                            },
+                            "severity_threshold": {
+                                "type": "string",
+                                "description": "Minimum severity threshold for threats",
+                                "enum": ["low", "medium", "high", "critical"],
+                                "default": "medium",
+                            },
+                            "output_format": {
+                                "type": "string",
+                                "description": "Output format for threat model",
+                                "enum": ["json", "markdown"],
+                                "default": "markdown",
+                            },
+                        },
+                        "anyOf": [
+                            {"required": ["repo_name"]},
+                            {"required": ["source_path"]},
+                        ],
+                    },
+                ),
+                Tool(
+                    name="adv_diagram",
+                    description="Generate Mermaid.js architecture diagram from threat model",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "repo_name": {
+                                "type": "string",
+                                "description": "Name of the repository/project to analyze (e.g., 'verisapi', 'my-app')",
+                            },
+                            "source_path": {
+                                "type": "string",
+                                "description": "Optional: explicit path to source file/directory OR path to existing threat model JSON file (overrides repo_name discovery)",
+                            },
+                            "search_depth": {
+                                "type": "integer",
+                                "description": "Optional: maximum directory depth to search for repositories (default: 3)",
+                                "minimum": 1,
+                                "maximum": 5,
+                                "default": 3,
+                            },
+                            "output_file": {
+                                "type": "string",
+                                "description": "Optional: path for Mermaid diagram output file (.mmd extension) (defaults to threat_diagram.mmd in project root)",
+                            },
+                            "diagram_type": {
+                                "type": "string",
+                                "description": "Type of Mermaid diagram to generate",
+                                "enum": ["flowchart", "graph", "sequence"],
+                                "default": "flowchart",
+                            },
+                            "show_threats": {
+                                "type": "boolean",
+                                "description": "Highlight components with threats in diagram",
+                                "default": True,
+                            },
+                            "layout_direction": {
+                                "type": "string",
+                                "description": "Layout direction for diagram",
+                                "enum": ["TD", "LR", "BT", "RL"],
+                                "default": "TD",
+                            },
+                        },
+                        "anyOf": [
+                            {"required": ["repo_name"]},
+                            {"required": ["source_path"]},
+                        ],
+                    },
+                ),
             ]
 
         @self.server.call_tool()
@@ -478,6 +580,14 @@ class AdversaryMCPServer:
                 elif name == "adv_list_false_positives":
                     logger.info("Handling list_false_positives request")
                     return await self._handle_list_false_positives(arguments)
+
+                elif name == "adv_threat_model":
+                    logger.info("Handling threat_model request")
+                    return await self._handle_generate_threat_model(arguments)
+
+                elif name == "adv_diagram":
+                    logger.info("Handling diagram request")
+                    return await self._handle_generate_diagram(arguments)
 
                 else:
                     logger.error(f"Unknown tool requested: {name}")
@@ -1293,6 +1403,18 @@ class AdversaryMCPServer:
         """Get the current version."""
         return get_version()
 
+    def _get_current_working_directory(self) -> Path:
+        """Get the current working directory.
+
+        This method exists to allow easy mocking in tests.
+
+        Returns:
+            Path object representing current working directory
+        """
+        from pathlib import Path
+
+        return Path.cwd()
+
     def _resolve_file_path(
         self, file_path: str, path_description: str = "file path"
     ) -> str:
@@ -1319,7 +1441,7 @@ class AdversaryMCPServer:
 
         # For relative paths, resolve against the current working directory
         # This assumes the MCP client is running from the project directory
-        resolved_path = Path.cwd() / path
+        resolved_path = self._get_current_working_directory() / path
         return str(resolved_path.resolve())
 
     def _resolve_adversary_file_path(self, adversary_file_path: str) -> str:
@@ -1840,7 +1962,6 @@ class AdversaryMCPServer:
         Returns:
             JSON formatted directory scan results
         """
-        from datetime import datetime
 
         # Combine all threats
         all_threats = []
@@ -2082,7 +2203,6 @@ class AdversaryMCPServer:
         Returns:
             JSON formatted diff scan results
         """
-        from datetime import datetime
 
         # Collect all threats from all files
         all_threats = []
@@ -2181,8 +2301,6 @@ class AdversaryMCPServer:
         Returns:
             List of threats with preserved UUIDs and false positive markings
         """
-        import json
-        from pathlib import Path
 
         if not adversary_file_path.exists():
             logger.debug("No existing .adversary.json found, using new UUIDs")
@@ -2318,9 +2436,6 @@ class AdversaryMCPServer:
             # Ensure parent directory exists
             final_path.parent.mkdir(parents=True, exist_ok=True)
             logger.debug(f"📂 Ensured parent directory exists: {final_path.parent}")
-
-            # Parse JSON data and preserve UUIDs from existing file
-            import json as json_lib
 
             try:
                 data = json_lib.loads(json_data)
@@ -2547,6 +2662,282 @@ class AdversaryMCPServer:
             logger.error(f"Error listing false positives: {e}")
             raise AdversaryToolError(f"Failed to list false positives: {str(e)}")
 
+    async def _handle_generate_threat_model(
+        self, arguments: dict[str, Any]
+    ) -> list[types.TextContent]:
+        """Handle threat model generation request."""
+        try:
+            logger.info("Starting threat model generation")
+
+            # Get parameters
+            repo_name = arguments.get("repo_name")
+            source_path_arg = arguments.get("source_path")
+            search_depth = arguments.get("search_depth", 3)
+            output_file = arguments.get("output_file")
+            include_threats = arguments.get("include_threats", True)
+            severity_threshold_str = arguments.get("severity_threshold", "medium")
+            output_format = arguments.get("output_format", "markdown")
+
+            # Determine source path
+            if source_path_arg:
+                # Explicit path provided
+                source_path = Path(source_path_arg)
+                logger.info(f"Using explicit source path: {source_path}")
+            elif repo_name:
+                # Find repo by name
+                source_path = self._find_repo_by_name(repo_name, max_depth=search_depth)
+                logger.info(f"Found repository '{repo_name}' at: {source_path}")
+            else:
+                raise AdversaryToolError(
+                    "Either 'repo_name' or 'source_path' must be provided"
+                )
+
+            # Set default output file in the project directory
+            if output_file is None:
+                extension = "json" if output_format == "json" else "md"
+                output_file = source_path / f"threat_model.{extension}"
+                logger.info(f"Using default output file: {output_file}")
+            else:
+                output_file = Path(output_file)
+
+            # Convert severity string to enum
+            severity_threshold = ThreatSeverity(severity_threshold_str.lower())
+
+            # Resolve paths
+            source_path_resolved = source_path.resolve()
+            output_file_resolved = output_file.resolve()
+
+            logger.info(f"Analyzing source: {source_path_resolved}")
+            logger.info(f"Output file: {output_file_resolved}")
+
+            # Validate source path exists
+            if not source_path_resolved.exists():
+                raise AdversaryToolError(f"Source path does not exist: {source_path}")
+
+            # Create threat model builder
+            builder = ThreatModelBuilder()
+
+            # Generate threat model
+            threat_model = builder.build_threat_model(
+                source_path=str(source_path_resolved),
+                include_threats=include_threats,
+                severity_threshold=severity_threshold,
+            )
+
+            # Save threat model
+            builder.save_threat_model(
+                threat_model=threat_model,
+                output_path=str(output_file_resolved),
+                format=output_format,
+            )
+
+            # Generate response
+            components = threat_model.components
+            result = "# Threat Model Generated\n\n"
+            result += f"**Source:** {source_path}\n"
+            result += f"**Output:** {output_file}\n"
+            result += f"**Format:** {output_format}\n\n"
+
+            result += "## Architecture Summary\n\n"
+            result += f"- **Trust Boundaries:** {len(components.boundaries)}\n"
+            result += f"- **External Entities:** {len(components.external_entities)}\n"
+            result += f"- **Processes:** {len(components.processes)}\n"
+            result += f"- **Data Stores:** {len(components.data_stores)}\n"
+            result += f"- **Data Flows:** {len(components.data_flows)}\n\n"
+
+            if include_threats:
+                result += f"- **Threats Identified:** {len(threat_model.threats)}\n\n"
+
+                # Show threat breakdown by severity
+                threat_counts = {}
+                for threat in threat_model.threats:
+                    severity = threat.severity.value
+                    threat_counts[severity] = threat_counts.get(severity, 0) + 1
+
+                if threat_counts:
+                    result += "### Threat Breakdown\n\n"
+                    for severity in ["critical", "high", "medium", "low"]:
+                        count = threat_counts.get(severity, 0)
+                        if count > 0:
+                            emoji = {
+                                "critical": "🔴",
+                                "high": "🟠",
+                                "medium": "🟡",
+                                "low": "🟢",
+                            }[severity]
+                            result += (
+                                f"- **{severity.capitalize()}:** {count} {emoji}\n"
+                            )
+                    result += "\n"
+
+            # Show component breakdown
+            if components.external_entities:
+                result += "### External Entities\n"
+                for entity in components.external_entities[:5]:  # Show first 5
+                    result += f"- {entity}\n"
+                if len(components.external_entities) > 5:
+                    result += (
+                        f"- ... and {len(components.external_entities) - 5} more\n"
+                    )
+                result += "\n"
+
+            if components.processes:
+                result += "### Processes\n"
+                for process in components.processes[:5]:  # Show first 5
+                    result += f"- {process}\n"
+                if len(components.processes) > 5:
+                    result += f"- ... and {len(components.processes) - 5} more\n"
+                result += "\n"
+
+            if components.data_stores:
+                result += "### Data Stores\n"
+                for store in components.data_stores[:5]:  # Show first 5
+                    result += f"- {store}\n"
+                if len(components.data_stores) > 5:
+                    result += f"- ... and {len(components.data_stores) - 5} more\n"
+                result += "\n"
+
+            result += f"✅ **Threat model saved to:** `{output_file}`\n\n"
+            result += "**Next Steps:**\n"
+            result += "- Use `adv_diagram` to create a visual diagram\n"
+            result += f"- Review the {output_format} file for detailed findings\n"
+
+            logger.info("Threat model generation completed successfully")
+            return [types.TextContent(type="text", text=result)]
+
+        except Exception as e:
+            logger.error(f"Threat model generation failed: {e}")
+            logger.debug("Threat model error details", exc_info=True)
+            raise AdversaryToolError(f"Threat model generation failed: {e}")
+
+    async def _handle_generate_diagram(
+        self, arguments: dict[str, Any]
+    ) -> list[types.TextContent]:
+        """Handle Mermaid diagram generation request."""
+        try:
+            logger.info("Starting diagram generation")
+
+            # Get parameters
+            repo_name = arguments.get("repo_name")
+            source_path_arg = arguments.get("source_path")
+            search_depth = arguments.get("search_depth", 3)
+            output_file = arguments.get("output_file")
+            diagram_type = arguments.get("diagram_type", "flowchart")
+            show_threats = arguments.get("show_threats", True)
+            layout_direction = arguments.get("layout_direction", "TD")
+
+            # Determine source path
+            if source_path_arg:
+                # Explicit path provided
+                source_path = Path(source_path_arg)
+                logger.info(f"Using explicit source path: {source_path}")
+            elif repo_name:
+                # Find repo by name
+                source_path = self._find_repo_by_name(repo_name, max_depth=search_depth)
+                logger.info(f"Found repository '{repo_name}' at: {source_path}")
+            else:
+                raise AdversaryToolError(
+                    "Either 'repo_name' or 'source_path' must be provided"
+                )
+
+            # Set default output file in the project directory
+            if output_file is None:
+                output_file = source_path / "threat_diagram.mmd"
+                logger.info(f"Using default output file: {output_file}")
+            else:
+                output_file = Path(output_file)
+
+            # Resolve paths
+            source_path_resolved = source_path.resolve()
+            output_file_resolved = output_file.resolve()
+
+            logger.info(f"Source: {source_path_resolved}")
+            logger.info(f"Output: {output_file_resolved}")
+
+            # Check if source is an existing threat model JSON file
+            if source_path_resolved.suffix.lower() == ".json":
+                logger.info("Using existing threat model JSON file")
+                try:
+                    with open(source_path_resolved, encoding="utf-8") as f:
+                        threat_model_data = json.load(f)
+
+                    # Generate diagram from JSON data
+                    generator = MermaidDiagramGenerator()
+                    diagram_content = generator.generate_from_components_dict(
+                        components_dict=threat_model_data,
+                        show_threats=show_threats,
+                        diagram_type=diagram_type,
+                    )
+
+                    # Update layout direction if different from default
+                    if layout_direction != "TD":
+                        lines = diagram_content.split("\n")
+                        if lines and lines[0].startswith(f"{diagram_type} TD"):
+                            lines[0] = f"{diagram_type} {layout_direction}"
+                            diagram_content = "\n".join(lines)
+
+                except (json.JSONDecodeError, KeyError) as e:
+                    raise AdversaryToolError(f"Invalid threat model JSON file: {e}")
+
+            else:
+                # Generate new threat model from source code
+                logger.info("Generating new threat model from source code")
+
+                if not source_path_resolved.exists():
+                    raise AdversaryToolError(
+                        f"Source path does not exist: {source_path}"
+                    )
+
+                # Create threat model builder
+                builder = ThreatModelBuilder()
+
+                # Generate threat model (include threats if show_threats is True)
+                threat_model = builder.build_threat_model(
+                    source_path=str(source_path_resolved),
+                    include_threats=show_threats,
+                    severity_threshold=ThreatSeverity.MEDIUM,
+                )
+
+                # Generate diagram
+                generator = MermaidDiagramGenerator()
+                diagram_content = generator.generate_diagram(
+                    threat_model=threat_model,
+                    diagram_type=diagram_type,
+                    show_threats=show_threats,
+                    layout_direction=layout_direction,
+                )
+
+            # Save diagram
+            generator.save_diagram(diagram_content, str(output_file_resolved))
+
+            # Generate response
+            result = "# Mermaid Diagram Generated\n\n"
+            result += f"**Source:** {source_path}\n"
+            result += f"**Output:** {output_file}\n"
+            result += f"**Diagram Type:** {diagram_type}\n"
+            result += f"**Layout:** {layout_direction}\n"
+            result += f"**Show Threats:** {show_threats}\n\n"
+
+            # Show full diagram for rendering in Cursor
+            result += "## Diagram Preview\n\n"
+            result += "```mermaid\n"
+            result += diagram_content
+            result += "\n```\n\n"
+
+            result += f"✅ **Diagram saved to:** `{output_file}`\n\n"
+            result += "**Usage:**\n"
+            result += "- Copy the `.mmd` file content to visualize in Mermaid-compatible tools\n"
+            result += "- Use with GitHub, GitLab, or online Mermaid editors\n"
+            result += "- Integrate into documentation or presentations\n"
+
+            logger.info("Diagram generation completed successfully")
+            return [types.TextContent(type="text", text=result)]
+
+        except Exception as e:
+            logger.error(f"Diagram generation failed: {e}")
+            logger.debug("Diagram error details", exc_info=True)
+            raise AdversaryToolError(f"Diagram generation failed: {e}")
+
     async def run(self) -> None:
         """Run the MCP server."""
         logger.info("Starting MCP server...")
@@ -2568,6 +2959,110 @@ class AdversaryMCPServer:
             logger.error(f"Server runtime error: {e}")
             logger.debug("Server error details", exc_info=True)
             raise
+
+    def _find_repo_by_name(self, repo_name: str, max_depth: int = 3) -> Path:
+        """Find a repository by name using recursive search from home directory."""
+
+        home = Path.home()
+        found_repos = []
+
+        # Directories to skip for performance and relevance
+        skip_dirs = {
+            ".git",
+            ".svn",
+            ".hg",  # Version control internals
+            "node_modules",
+            "venv",
+            ".venv",
+            "env",  # Dependencies/virtual envs
+            "__pycache__",
+            ".pytest_cache",
+            ".mypy_cache",  # Python cache
+            ".idea",
+            ".vscode",  # IDE directories
+            "target",
+            "build",
+            "dist",  # Build outputs
+            "vendor",
+            "bower_components",  # Package managers
+            ".npm",
+            ".yarn",
+            ".cargo",  # Package manager caches
+            "Library",
+            "Applications",
+            "Desktop",
+            "Downloads",  # macOS system dirs
+            "AppData",
+            "LocalAppData",  # Windows system dirs
+        }
+
+        def search_directory(current_path: Path, current_depth: int):
+            """Recursively search for repositories."""
+            if current_depth > max_depth:
+                return
+
+            try:
+                for item in current_path.iterdir():
+                    if not item.is_dir():
+                        continue
+
+                    # Skip hidden directories and known non-repo directories
+                    if item.name.startswith(".") or item.name in skip_dirs:
+                        continue
+
+                    # If directory name matches repo name, check if it's a valid project
+                    if item.name == repo_name and self._is_valid_project(item):
+                        found_repos.append(item)
+                        logger.debug(f"Found potential repo at: {item}")
+
+                    # Recurse into subdirectory if we haven't hit max depth
+                    if current_depth < max_depth:
+                        search_directory(item, current_depth + 1)
+
+            except (PermissionError, OSError, FileNotFoundError):
+                # Skip directories we can't access
+                logger.debug(f"Skipping inaccessible directory: {current_path}")
+                pass
+
+        logger.info(
+            f"Searching for repository '{repo_name}' in home directory (max depth: {max_depth})"
+        )
+        search_directory(home, 0)
+
+        if not found_repos:
+            raise AdversaryToolError(f"Repository '{repo_name}' not found.")
+
+        if len(found_repos) == 1:
+            logger.info(f"Found repository '{repo_name}' at: {found_repos[0]}")
+            return found_repos[0]
+
+        # Multiple matches - let user know and pick the first one
+        logger.warning(f"Multiple repositories named '{repo_name}' found:")
+        for repo in found_repos:
+            logger.warning(f"  - {repo}")
+        logger.info(f"Using first match: {found_repos[0]}")
+        return found_repos[0]
+
+    def _is_valid_project(self, path: Path) -> bool:
+        """Check if a directory looks like a valid project."""
+        project_indicators = [
+            ".git",  # Git repository
+            "package.json",  # Node.js project
+            "pyproject.toml",  # Python project
+            "Cargo.toml",  # Rust project
+            "pom.xml",  # Maven project
+            "build.gradle",  # Gradle project
+            "composer.json",  # PHP project
+            "go.mod",  # Go project
+            "requirements.txt",  # Python requirements
+            "yarn.lock",  # Yarn project
+            "package-lock.json",  # NPM project
+            "Gemfile",  # Ruby project
+            ".project",  # Eclipse project
+            "README.md",  # Documentation (least specific)
+        ]
+
+        return any((path / indicator).exists() for indicator in project_indicators)
 
 
 async def async_main() -> None:

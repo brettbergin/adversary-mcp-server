@@ -55,13 +55,14 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
-
+        exclude: '^(coverage\.json|coverage\.xml|htmlcov/)'
       - id: security-scan
         name: Security scanning
         entry: make security-scan
         language: system
         pass_filenames: false
         files: '\.py$'
+        exclude: '^(coverage\.json|coverage\.xml|htmlcov/)'
 
 # Optional: exclude certain files or directories
 exclude: |
