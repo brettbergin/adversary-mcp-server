@@ -6,9 +6,6 @@ help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-15s %s\n", $$1, $$2}'
 
 install: ## Install package in development mode with all dependencies
-	pip install -e ".[dev]"
-
-install-uv: ## Install package using uv (faster)
 	uv pip install -e ".[dev]"
 
 sync: ## Sync dependencies using uv
@@ -20,12 +17,6 @@ lock: ## Generate uv.lock file
 
 test: ## Run all tests with coverage and fail if coverage < 80%
 	python -m pytest --cov=adversary_mcp_server --cov-report=term-missing --cov-fail-under=80 -v
-
-test-fast: ## Run tests without coverage for faster feedback
-	python -m pytest -v --tb=short
-
-test-cov: ## Run tests with coverage report but don't fail on coverage threshold
-	python -m pytest --cov=adversary_mcp_server --cov-report=term-missing -v
 
 test-html: ## Run tests and generate HTML coverage report
 	python -m pytest --cov=adversary_mcp_server --cov-report=html --cov-report=term-missing -v

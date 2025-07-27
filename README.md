@@ -3,11 +3,11 @@
 <div align="center">
 
 [![PyPI version](https://badge.fury.io/py/adversary-mcp-server.svg)](https://badge.fury.io/py/adversary-mcp-server)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Tests](https://img.shields.io/badge/tests-332%20passed%20%7C%20100%25-brightgreen.svg)](https://github.com/brettbergin/adversary-mcp-server)
 [![Coverage](https://img.shields.io/badge/coverage-86.02%25-brightgreen.svg)](https://github.com/brettbergin/adversary-mcp-server)
-[![Version](https://img.shields.io/badge/version-v0.7.1-blue.svg)](https://pypi.org/project/adversary-mcp-server/)
+[![Version](https://img.shields.io/badge/version-v0.9.6-blue.svg)](https://pypi.org/project/adversary-mcp-server/)
 
 **Software security analysis with hybrid AI-powered threat detection and configurable built-in and custom rule management**
 
@@ -21,7 +21,7 @@
 
 ### Prerequisites
 
-- **Python 3.10+** (3.11+ recommended)
+- **Python 3.11+** (3.11+ recommended)
 - **Cursor IDE** with MCP support
 
 ### Quick Install
@@ -59,7 +59,7 @@ Create `.cursor/mcp.json` in your project or `~/.cursor/mcp.json` globally:
 {
   "mcpServers": {
     "adversary-security": {
-      "command": "/Users/<user>/envs/.venv/bin/python",
+      "command": "/Users/<user>/.venv/bin/python",
       "args": ["-m", "adversary_mcp_server.server"],
       "env": {
         "ADVERSARY_CONFIG_DIR": "~/.local/share/adversary-mcp-server"
@@ -76,7 +76,7 @@ Once configured, you can use these MCP tools in Cursor:
 - `adv_scan_code` - Hybrid scanning with rules + AI analysis
 - `adv_scan_file` - file scanning with LLM support
 - `adv_scan_folder` - folder scanning
-- `adv_diff_scan` - **🆕 Git diff-aware scanning** - scans only changed files between branches
+- `adv_diff_scan` - scans only changed files between branches
 - `adv_generate_exploit` - exploit generation
 - `adv_configure_settings` - Configuration management
 - `adv_get_status` - Check server status and AI availability
@@ -84,6 +84,8 @@ Once configured, you can use these MCP tools in Cursor:
 - `adv_mark_false_positive` - Mark false positive
 - `adv_unmark_false_positives` - Unmark false positive
 - `adv_list_false_postives` - List false positives
+- `adv_threat_model` - generates architecture analysis with structured output (🆕 **LLM-enhanced**)
+- `adv_diagram` - creates visual architecture diagrams (🆕 **LLM-enhanced**)
 
 ### 4. Run Demo (Optional)
 
@@ -108,37 +110,38 @@ adversary-mcp-cli scan --source-branch=main --target-branch=HEAD --severity=high
 
 ---
 
-### ** Scanning **
+### ** MCP Tool Scanning **
 
 ```bash
-# Scan with AI enhancement (hybrid mode)
-Use adv_scan_code with use_llm=true use_semgrep=true use_rules=true for comprehensive analysis
-
-# Traditional rules-only scanning
-Use adv_scan_code with use_rules=true for simple analysis
+# Scan with Semgrep + LLM
+adv_scan_folder
+  directory_path=@/path/to/repo
+  recursive=true
+  include_exploits=false
+  use_llm=true
+  use_semgrep=true
+  output_format=text
+  output=@/path/to/.adversary.json
+```
+```bash
+# Scan with Semgrep Only
+adv_scan_folder
+  directory_path=@/path/to/repo
+  recursive=true
+  include_exploits=false
+  use_llm=false
+  use_semgrep=true
+  output_format=text
+  output=@/path/to/.adversary.json
 ```
 
 ### **AI Analysis Features**
 
-- **🎯 Smart Threat Detection**: Identifies vulnerabilities that traditional rules miss
+- **🎯 Smart Threat Detection**: Identifies software vulnerabilities
 - **📊 Confidence Scoring**: Each finding includes AI-generated confidence levels
 - **🔍 Detailed Explanations**: Natural language descriptions of vulnerabilities
 - **🏷️ CWE/OWASP Mapping**: Automatic categorization with industry standards
 - **⚡ Intelligent Deduplication**: Merges similar findings from multiple engines
-
-### **LLM Integration**
-
-The scanner integrates with the existing models in your client application.
-
-```bash
-adversary-mcp-cli status
-```
-
-**Note**: LLM analysis is provided through prompts that can be used with your preferred LLM service. The scanner generates structured prompts for:
-- Security analysis
-- Exploit generation
-- Code review
-- Vulnerability explanations
 
 ---
 
@@ -148,37 +151,23 @@ adversary-mcp-cli status
 
 | Tool | Description | **🆕 AI Features** |
 |------|-------------|-------------------|
-| `adv_scan_code` | **🆕 Hybrid scan** of source code | ✅ LLM prompts, confidence scoring |
-| `adv_scan_file` | **🆕 Enhanced** file scanning | ✅ AI-powered prompts, detailed explanations |
-| `adv_scan_folder` | **🆕 Intelligent** folder scanning | ✅ Batch LLM prompts, statistical insights |
-| `adv_diff_scan` | **🆕 Git diff-aware scanning** - scans only newly added lines | ✅ Smart change detection, branch comparison, requires `working_directory` |
-| `adv_generate_exploit` | **🆕 AI-enhanced** exploit generation | ✅ Context-aware prompts, safety mode |
-| `adv_configure_settings` | **🆕 Advanced** configuration management | ✅ LLM settings, validation |
-| `adv_get_status` | Get server status and **🆕 AI availability** | ✅ LLM configuration status |
+| `adv_scan_code` | source code scanning | confidence scoring |
+| `adv_scan_file` | file scanning | AI-powered prompts, detailed explanations |
+| `adv_scan_folder` | folder scanning | statistical insights |
+| `adv_diff_scan` | scans only newly added lines | Smart change detection, branch comparison, requires `working_directory` |
+| `adv_generate_exploit` | exploit generation | Context-aware prompts, safety mode |
+| `adv_configure_settings` | configuration management | LLM settings, validation |
+| `adv_get_status` | Get server status | LLM configuration status |
 | `adv_get_version` | Get version information | Shows AI capabilities |
 | `adv_mark_false_positive` | Mark false positive | Mark false positive |
 | `adv_unmark_false_positive` | Unmark flase positive | unmark false positive |
 | `adv_list_false_positves` | list false positives | list false positives |
-
-### **🆕 Enhanced Tool Parameters**
-
-All scanning tools now support:
-
-```json
-{
-  "use_llm": true,              // Enable LLM prompts
-  "use_semgrep": true,          // Enable Semgrep static analysis
-  "output_format": "json",      // Output format: "text" or "json"
-  "severity_threshold": "medium", // Filter by severity
-  "include_exploits": true,       // Include exploit examples
-  "confidence_threshold": 0.8,     // AI confidence filtering
-  "output": "/path/to/.adversary.json" // Output file path for json output
-}
-```
+| `adv_threat_model` | Architecture analysis, component extraction, JSON/Markdown output |
+| `adv_diagram` | Visual architecture diagrams, threat highlighting, multiple formats |
 
 ### **🆕 Git Diff-Aware Scanning**
 
-The new `adv_diff_scan` tool enables intelligent scanning of only changed files between git branches:
+The `adv_diff_scan` tool enables intelligent scanning of only changed files between git branches:
 
 #### **Key Features:**
 - **Smart Change Detection**: Analyzes only modified code, not entire repository
@@ -195,36 +184,216 @@ The new `adv_diff_scan` tool enables intelligent scanning of only changed files 
 
 This prevents false positives from flagging existing code as new vulnerabilities.
 
-#### **MCP Tool Parameters:**
+#### **Example Usage:**
+```bash
+# Scan changes in current branch vs main
+adv_diff_scan
+ source_branch="main"
+ target_branch="HEAD"
+ working_directory="/path/to/your/repo"
+```
+```bash
+# Scan with high severity filter
+adv_diff_scan
+ source_branch="main"
+ target_branch="HEAD"
+ severity_threshold="high"
+ working_directory="/path/to/your/repo"
+```
+
+## **🆕 STRIDE Threat Modeling**
+
+The Adversary MCP Server now includes comprehensive threat modeling capabilities that analyze your application architecture and generate STRIDE-based security assessments with visual diagrams.
+
+### **Key Features**
+- **🏗️ Architecture Analysis**: Automatically extracts components, data flows, and trust boundaries from source code
+- **🎯 STRIDE Methodology**: Identifies Spoofing, Tampering, Repudiation, Information Disclosure, Denial of Service, and Elevation of Privilege threats
+- **📊 Visual Diagrams**: Generates Mermaid.js flowcharts, graphs, and sequence diagrams
+- **📋 Structured Output**: Provides JSON and Markdown reports for documentation and integration
+- **🚀 Zero Configuration**: Works out-of-the-box with intelligent defaults for current directory
+
+### **Available Tools**
+
+| Tool | Description | Default Behavior |
+|------|-------------|------------------|
+| `adv_threat_model` | Generate STRIDE-based threat model from source code | Analyzes current directory, outputs `threat_model.json` |
+| `adv_diagram` | Create Mermaid.js architecture diagrams | Uses current directory, outputs `threat_diagram.mmd` |
+
+### **Basic Usage**
+
+#### **Simplest Usage (Current Directory)**
+```bash
+adv_threat_model
+```
+This will:
+- Analyze all supported source files in your current project directory
+- Generate a complete threat model with STRIDE analysis
+- Save results to `threat_model.json` in your project root
+- Include medium+ severity threats by default
+
+#### **Generate Visual Diagram**
+```bash
+adv_diagram
+ diagram_type=flowchart
+```
+This will:
+- Create a Mermaid.js flowchart from your architecture
+- Highlight threats with color-coded severity levels
+- Save to `threat_diagram.mmd` in your project root
+
+### **Advanced Configuration**
+
+#### **Threat Model Generation**
+```bash
+adv_threat_model
+  source_path="/path/to/source"
+  output_file="/path/to/output.json"
+  include_threats=true # Optional: include STRIDE analysis
+  severity_threshold=medium
+  output_format=markdown # Optional: json or markdown
+```
+
+#### **Diagram Generation**
+```bash
+adv_diagram
+ source_path="/path/to/source"
+ output_file="/path/to/diagram.mmd"
+ diagram_type=sequence
+ show_threats=true
+ layout_direction=LR # Optional: TD/LR/BT/RL (default: TD)
+```
+
+### **Language Support**
+
+#### **Currently Supported**
+- **Python**: Complete AST-based analysis with Flask, Django, FastAPI detection
+  - Web frameworks (Flask, Django, FastAPI)
+  - Database connections (SQLite, PostgreSQL, MySQL, MongoDB, Redis)
+  - External APIs (Stripe, GitHub, SendGrid, AWS, Google Cloud)
+  - File system operations and security patterns
+- **Javascript/Typescript**: In-Progress
+
+#### **Architecture Detection**
+The system automatically identifies:
+- **External Entities**: Users, third-party APIs, external services
+- **Processes**: Web applications, API servers, background workers
+- **Data Stores**: Databases, file systems, caches, message queues
+- **Trust Boundaries**: Internet, DMZ, Application layer, Data layer
+- **Data Flows**: HTTP/HTTPS, SQL, API calls, file operations
+
+### **Output Formats**
+
+#### **JSON Structure**
 ```json
 {
-  "source_branch": "main",        // Branch to compare from
-  "target_branch": "feature/new", // Branch to compare to
-  "working_directory": "/absolute/path/to/repo",  // ⚠️ REQUIRED: Working directory for git operations
-  "severity_threshold": "medium", // Filter results by severity
-  "include_exploits": true,       // Include exploit examples
-  "use_llm": true                // Enable AI analysis
-  "output": "/path/to/.adversary.json" // path to json output file.
+  "boundaries": ["Internet", "Application", "Data Layer"],
+  "external_entities": ["User", "Stripe API"],
+  "processes": ["Flask App"],
+  "data_stores": ["SQLite"],
+  "data_flows": [
+    {"source": "User", "target": "Flask App", "protocol": "HTTPS"},
+    {"source": "Flask App", "target": "SQLite", "protocol": "SQL"}
+  ],
+  "threats": [
+    {
+      "type": "injection",
+      "component": "Flask App",
+      "title": "SQL Injection Risk",
+      "severity": "high",
+      "description": "Direct SQL queries without parameterization",
+      "mitigation": "Use parameterized queries or ORM"
+    }
+  ],
+  "metadata": {
+    "source_path": "/path/to/code",
+    "analysis_type": "STRIDE"
+  }
 }
 ```
 
-#### **Example Usage:**
+#### **Mermaid Diagram Examples**
+
+**Flowchart with Threat Highlighting:**
+```mermaid
+flowchart TD
+    User[User]:::external --> WebApp[Web Application]:::process
+    WebApp --> Database[SQLite Database]:::datastore
+    WebApp --> StripeAPI[Stripe API]:::threat
+
+    classDef external fill:#e1f5fe
+    classDef process fill:#f3e5f5
+    classDef datastore fill:#e8f5e8
+    classDef threat fill:#ffebee,stroke:#f44336
 ```
-# Scan changes in current branch vs main
-Use adv_diff_scan with source_branch="main", target_branch="HEAD", and working_directory="/path/to/your/repo"
 
-# Scan changes between specific branches
-Use adv_diff_scan with source_branch="staging", target_branch="production", and working_directory="/path/to/your/repo"
+### **Integration Workflows**
 
-# Scan with high severity filter
-Use adv_diff_scan with severity_threshold="high" and working_directory="/path/to/your/repo"
+#### **Complete Analysis Workflow**
+```json
+// Step 1: Generate threat model
+{
+  "tool": "adv_threat_model",
+  "arguments": {"output_format": "json"}
+}
+
+// Step 2: Create architecture diagram
+{
+  "tool": "adv_diagram",
+  "arguments": {"diagram_type": "flowchart", "show_threats": true}
+}
+
+// Step 3: Generate documentation
+{
+  "tool": "adv_threat_model",
+  "arguments": {"output_format": "markdown", "output_file": "SECURITY.md"}
+}
 ```
 
-#### **⚠️ Important Requirements:**
-1. **Must specify `working_directory`**: The absolute path to your git repository
-2. **Valid git repository**: The directory must contain a `.git` folder
-3. **Valid branches**: Both source and target branches must exist
-4. **Git available**: `git` command must be available in PATH
+#### **CI/CD Integration**
+The threat modeling tools integrate seamlessly with version control:
+
+```yaml
+# .github/workflows/security-analysis.yml
+- name: Generate Threat Model
+  run: |
+    # Use MCP tools via cursor or API
+    # Files are automatically saved to project root
+    git add threat_model.json threat_diagram.mmd
+    git commit -m "Update threat model analysis"
+```
+
+### **STRIDE Threat Categories**
+
+The system analyzes code for all STRIDE threat types:
+
+| STRIDE Category | Description | Example Threats |
+|-----------------|-------------|-----------------|
+| **Spoofing** | Identity verification failures | Weak authentication, session hijacking |
+| **Tampering** | Data integrity violations | Input validation bypass, data corruption |
+| **Repudiation** | Audit and logging failures | Missing audit trails, weak logging |
+| **Information Disclosure** | Data confidentiality breaches | SQL injection, path traversal, exposure |
+| **Denial of Service** | Availability attacks | Resource exhaustion, infinite loops |
+| **Elevation of Privilege** | Authorization failures | Privilege escalation, access control bypass |
+
+### **Best Practices**
+
+#### **Regular Analysis**
+- Run threat modeling on new features and major changes
+- Update diagrams when architecture evolves
+- Review threat assessments during security reviews
+- Include threat models in documentation
+
+#### **Team Collaboration**
+- Commit threat models to version control alongside code
+- Use markdown output for readable security documentation
+- Share Mermaid diagrams in design reviews and documentation
+- Track threat remediation in issue tracking systems
+
+#### **Automation Integration**
+- Generate threat models in CI/CD pipelines
+- Compare threat models between branches to identify new risks
+- Export JSON data for security dashboards and metrics
+- Integrate with existing security tooling and workflows
 
 ---
 
@@ -261,28 +430,8 @@ The integration automatically detects your Semgrep configuration:
 - No configuration required
 - Community rules and patterns
 
-#### **Semgrep Pro** (Automatic Detection)
-```bash
-# Set your Semgrep App Token for Pro features
-export SEMGREP_APP_TOKEN="your_semgrep_token_here"
-
-# Now all scans automatically use Pro features
-adversary-mcp-cli scan myproject/ --use-semgrep
-```
-
 ### **Usage in MCP Tools**
-
-All MCP scanning tools support the `use_semgrep` parameter:
-
-```json
-{
-  "source_code": "eval(user_input)",
-  "file_path": "app.py",
-  "language": "python",
-  "use_semgrep": true,        // Enable Semgrep scanning
-  "output_format": "json"     // Get structured JSON output
-}
-```
+- All MCP scanning tools support the `use_semgrep` parameter:
 
 ### **CLI Usage**
 
@@ -313,16 +462,9 @@ adversary-mcp-cli configure
 # - Specific rules to use (optional)
 ```
 
-Or set via environment:
-```bash
-export SEMGREP_APP_TOKEN="your_token"          # Enable Pro features
-export ADVERSARY_SEMGREP_TIMEOUT="120"        # Custom timeout
-export ADVERSARY_SEMGREP_CONFIG="/path/to/config.yml"  # Custom config
-```
-
 ### **Smart Result Merging**
 
-The integration intelligently combines results from all three engines:
+The integration intelligently combines results from all three scan engines:
 
 ```bash
 # Example output showing merged results
@@ -344,18 +486,10 @@ Get structured output including Semgrep findings:
 adversary-mcp-cli scan app.py --use-semgrep --output=results.json
 
 # The JSON will include:
-# - rules_threats: Findings from built-in rules
 # - semgrep_threats: Findings from Semgrep
 # - llm_analysis: AI-generated prompts (if enabled)
 # - scan_metadata: Detailed statistics
 ```
-
-### **Performance and Availability**
-
-- **Graceful Degradation**: If Semgrep is not installed, scanning continues with other engines
-- **Timeout Protection**: Configurable timeouts prevent hung scans
-- **Automatic Cleanup**: Temporary files are automatically cleaned up
-- **Error Handling**: Clear error messages for configuration issues
 
 ### **Installation Requirements**
 
@@ -372,83 +506,6 @@ semgrep --version
 adversary-mcp-cli status
 ```
 
----
-
-## Rule Management
-
-### **🆕 Enhanced Rule Engine**
-- **95+ Built-in Rules** (expanded from 85)
-- **🆕 AI-Enhanced Categories** with better organization
-- **🆕 Confidence-Based Filtering** for more accurate results
-- **🆕 Hybrid Rule Validation** using both static and AI analysis
-
-### Rule Directory Structure
-
-Rules are automatically organized in your user directory:
-
-```
-~/.local/share/adversary-mcp-server/rules/
-├── built-in/              # Core security rules (95 rules)
-│   ├── python-rules.yaml        # 🆕 Enhanced Python rules
-│   ├── javascript-rules.yaml    # 🆕 Enhanced JavaScript rules
-│   ├── typescript-rules.yaml    # 🆕 Enhanced TypeScript rules
-│   ├── web-security-rules.yaml  # 🆕 Enhanced Web security
-│   ├── api-security-rules.yaml  # 🆕 Enhanced API security
-│   ├── cryptography-rules.yaml  # 🆕 Enhanced Crypto rules
-│   └── configuration-rules.yaml # 🆕 Enhanced Config rules
-├── custom/                # Your custom rules
-├── organization/          # Company/team rules
-└── templates/             # 🆕 Enhanced rule templates
-```
-
-### Rule Management
-
-The adversary MCP server includes 95+ built-in security rules organized by language and category. Rules are automatically loaded and don't require manual management in the current CLI version.
-
-### Creating Custom Rules
-
-1. **Copy template:**
-```bash
-cp ~/.local/share/adversary-mcp-server/rules/templates/rule-template.yaml \
-   ~/.local/share/adversary-mcp-server/rules/custom/my-rule.yaml
-```
-
-2. **Edit the rule:**
-```yaml
-rules:
-  - id: api_key_hardcode
-    name: Hardcoded API Key
-    description: Detects hardcoded API keys in source code
-    category: secrets
-    severity: critical
-    languages: [python, javascript, typescript]
-
-    conditions:
-      - type: pattern
-        value: "API_KEY\\s*=\\s*['\"][a-zA-Z0-9-_]{20,}['\"]"
-
-    remediation: |
-      Store API keys in environment variables:
-      - Use os.getenv('API_KEY') instead of hardcoding
-      - Implement proper secrets management
-
-    references:
-      - https://owasp.org/Top10/A05_2021-Security_Misconfiguration/
-
-    cwe_id: CWE-798
-    owasp_category: A05:2021
-```
-
-3. **Restart the server:**
-The new rule will be automatically loaded when the MCP server restarts.
-
----
-
-## Rule Configuration
-
-The server automatically loads built-in rules from the rule directory structure. Custom rules can be added to the user's configuration directory for extended functionality.
-
----
 
 ## CLI Reference
 
@@ -460,13 +517,15 @@ The server automatically loads built-in rules from the rule directory structure.
 | `adversary-mcp-cli status` | Show current server status and configuration |
 | `adversary-mcp-cli scan [TARGET]` | Scan files/directories for vulnerabilities |
 | `adversary-mcp-cli demo` | Run demonstration of vulnerability scanner |
-| `adversary-mcp-cli mark-false-positive <UUID>` | Mark a finding as false positive |
-| `adversary-mcp-cli unmark-false-positive <UUID>` | Remove false positive marking |
-| `adversary-mcp-cli list-false-positives` | List all false positive findings |
 | `adversary-mcp-cli reset` | Reset all configuration and credentials |
 | `adversary-mcp-cli reset-semgrep-key` | Remove stored Semgrep API key from keyring |
 
-### False Positive Management
+#### **Configure Options:**
+
+- `--severity-threshold`: Default severity threshold (low, medium, high, critical)
+- `--enable-safety-mode/--disable-safety-mode`: Enable/disable exploit safety mode
+
+### False Positive Commands
 
 | Command | Description |
 |---------|-------------|
@@ -478,19 +537,6 @@ The server automatically loads built-in rules from the rule directory structure.
 
 - `--reason TEXT`: Reason for marking as false positive
 - `--reviewer TEXT`: Name of reviewer making the decision
-
-### Configuration Commands
-
-| Command | Description |
-|---------|-------------|
-| `adversary-mcp-cli configure` | Configure server settings |
-| `adversary-mcp-cli status` | Show current configuration and status |
-| `adversary-mcp-cli reset` | Reset all configuration and credentials |
-
-#### **Configure Options:**
-
-- `--severity-threshold`: Default severity threshold (low, medium, high, critical)
-- `--enable-safety-mode/--disable-safety-mode`: Enable/disable exploit safety mode
 
 ### Scan Command Options
 
@@ -518,27 +564,10 @@ adversary-mcp-cli scan /path/to/project
 # Git diff scanning - compare branches
 adversary-mcp-cli scan --source-branch=main --target-branch=feature/auth
 
-# Scan with specific language
-adversary-mcp-cli scan app.js --language=javascript
-
-# High severity threats only
-adversary-mcp-cli scan . --severity=high
-
-# Save scan results to JSON file
-adversary-mcp-cli scan . --output=security-results.json
-
-# Comprehensive analysis with LLM and exploits
-adversary-mcp-cli scan . --use-llm --include-exploits
-
-# Disable LLM, use only Semgrep
-adversary-mcp-cli scan . --no-llm --use-semgrep
-```
-
 ### Additional Commands
 
 | Command | Description |
 |---------|-------------|
-| `adversary-mcp-cli demo` | Run interactive vulnerability demonstration |
 | `adversary-mcp-cli --version` | Show version information |
 | `adversary-mcp-cli --help` | Show help information |
 
@@ -546,17 +575,7 @@ adversary-mcp-cli scan . --no-llm --use-semgrep
 
 ## Security Coverage
 
-### **🆕 Comprehensive Triple-Engine Analysis (95+ Rules + AI + Semgrep)**
-
-#### **Traditional Rule-Based Detection**
-- **Python** (25+ rules): SQL injection, command injection, deserialization, path traversal
-- **JavaScript/TypeScript** (30+ rules): XSS, prototype pollution, eval injection, CORS issues
-- **Web Security** (18+ rules): CSRF, clickjacking, security headers, session management
-- **API Security** (15+ rules): Authentication bypass, parameter pollution, mass assignment
-- **Cryptography** (15+ rules): Weak algorithms, hardcoded keys, poor randomness
-- **Configuration** (15+ rules): Debug mode, default credentials, insecure settings
-
-#### **🆕 AI-Powered Detection**
+#### **🆕 AI-Powered Vulnerability Detection**
 - **Context-Aware Analysis**: Understands complex vulnerability patterns
 - **Business Logic Flaws**: Identifies application-specific issues
 - **Advanced Injection Variants**: Detects novel attack vectors
@@ -576,39 +595,22 @@ adversary-mcp-cli scan . --no-llm --use-semgrep
 - **CWE** - Common Weakness Enumeration mappings + AI categorization
 - **NIST** - Security framework alignment with intelligent analysis
 - **Industry best practices** - SANS, CERT guidelines + AI insights
-- **🆕 MITRE ATT&CK** - Threat modeling integration
-- **🆕 ASVS** - Application Security Verification Standard
 
-### **Full Language Support**
-
-- **Python** - AST-based analysis + AI semantic understanding
-- **JavaScript** - Modern ES6+ and Node.js patterns + AI context analysis
-- **TypeScript** - Type safety vulnerabilities + AI-powered type inference analysis
-
-### **Limited Language Support**
-- TBD
----
 
 ## 🏗️ Enhanced Architecture
 
-The v0.7.7 release features a **triple-engine architecture** combining multiple analysis engines:
+The v0.9.6 release features a **double-engine architecture** combining multiple analysis engines:
 
 ```mermaid
 graph TB
     A[Source Code] --> B[Enhanced Scanner]
-    B --> C[AST Scanner]
-    B --> D[🆕 LLM Analyzer]
-    B --> Q[🆕 Semgrep Scanner]
-
-    C --> E[Rule Engine]
-    E --> F[95+ Built-in Rules]
-    E --> G[Custom Rules]
+    B --> D[LLM Analyzer]
+    B --> Q[Semgrep Scanner]
 
     D --> H[LLM Service]
     H --> I[AI Security Analysis]
 
     Q --> R[Semgrep Engine]
-    R --> S[Industry Rules Database]
     R --> T[Pro Rules - Optional]
 
     C --> J[Threat Matches]
@@ -625,22 +627,14 @@ graph TB
     M --> P[Statistical Analysis]
     M --> V[🆕 JSON Output]
 
-    subgraph "🆕 AI Enhancement"
+    subgraph "AI Analysis"
         D
         H
         I
         K
     end
 
-    subgraph "Traditional Analysis"
-        C
-        E
-        F
-        G
-        J
-    end
-
-    subgraph "🆕 Semgrep Integration"
+    subgraph "Semgrep Integration"
         Q
         R
         S
@@ -648,7 +642,7 @@ graph TB
         U
     end
 
-    subgraph "🆕 Triple-Engine Output"
+    subgraph "Double-Engine Output"
         L
         M
         N
@@ -690,53 +684,8 @@ graph TB
                     └─────────────────┘    └─────────────────┘    └─────────────────┘
 ```
 
----
-
-
-#### **Traditional Rules-Only Analysis**
-```bash
-# Fast, deterministic scanning
-adversary-mcp-cli scan myproject/ --no-llm --severity=medium
-```
-
-#### **🆕 AI-Enhanced Analysis**
-```bash
-# Comprehensive hybrid analysis with LLM prompts
-adversary-mcp-cli scan myproject/ --use-llm --confidence-threshold=0.8
-```
-
-#### **🆕 Git Diff-Aware Scanning**
-```bash
-# Scan only newly added lines between branches (no context lines)
-adversary-mcp-cli scan --source-branch=main --target-branch=HEAD
-
-# Scan changes with specific severity threshold - only new code
-adversary-mcp-cli scan --source-branch=staging --target-branch=production --severity=high
-
-# Scan current branch changes with AI analysis - includes LLM prompts for new code
-adversary-mcp-cli scan --source-branch=main --target-branch=HEAD --use-llm --include-exploits
-
-# Specify repository directory for git operations
-adversary-mcp-cli scan /path/to/repo --source-branch=main --target-branch=feature/new
-```
-
 ### **🆕 Advanced Configuration**
 
-#### **LLM Configuration**
-```bash
-# Configure LLM analysis settings
-adversary-mcp-cli configure --enable-llm-analysis=true
-adversary-mcp-cli configure --exploit-safety-mode=true
-```
-
-#### **🆕 Confidence and Filtering**
-```bash
-# Filter by AI confidence levels
-adversary-mcp-cli scan . --confidence-threshold 0.9 --use-llm
-
-# Combine rules and AI with custom thresholds
-adversary-mcp-cli scan . --severity=high --confidence-threshold=0.7
-```
 
 ### **🆕 JSON Output & Auto-Save**
 
@@ -744,29 +693,6 @@ adversary-mcp-cli scan . --severity=high --confidence-threshold=0.7
 
 All MCP tools now support JSON output format for programmatic integration:
 
-##### **MCP Tool Usage**
-```json
-{
-  "source_code": "eval(user_input)",
-  "file_path": "app.py",
-  "language": "python",
-  "use_llm": true,
-  "use_semgrep": true,
-  "output_format": "json"        // Enable JSON output
-}
-```
-
-##### **CLI Usage**
-```bash
-# Save scan results to JSON file
-adversary-mcp-cli scan myproject/ --output=scan-results.json
-
-# All engines with JSON output
-adversary-mcp-cli scan myproject/ --use-llm --use-semgrep --output=results.json
-
-# Git diff scanning with JSON output
-adversary-mcp-cli scan --source-branch=main --target-branch=HEAD --use-semgrep --output=diff-scan.json
-```
 
 #### **Automatic JSON Generation**
 
@@ -774,10 +700,7 @@ When using MCP tools with `output_format: "json"`, results are automatically sav
 
 ```
 your-project/
-├── adversary_scan_results_20240101_120000.json    // Single file scans
-├── adversary_directory_results_20240101_120500.json  // Directory scans
-├── adversary_diff_results_20240101_121000.json    // Git diff scans
-└── your-code-files...
+├── .adversary.json
 ```
 
 #### **Version Control Integration**
@@ -786,53 +709,12 @@ JSON files are automatically generated in your project root, making them perfect
 
 - **Git tracking**: Commit scan results alongside code changes
 - **CI/CD integration**: Parse JSON results in build pipelines
-- **Trend analysis**: Track security metrics over time
-- **Reporting**: Generate dashboards from structured data
 
 ```bash
 # Example CI/CD workflow
 adversary-mcp-cli scan --source-branch=main --target-branch=HEAD --output=security-scan.json
 git add security-scan.json
 git commit -m "Security scan results for PR"
-```
-
-### **🆕 Enhanced Reporting**
-
-#### **Detailed Analysis Reports**
-```bash
-# Generate comprehensive reports with AI insights
-adversary-mcp-cli scan . --format=detailed --include-ai-analysis --output=report.json
-```
-
-#### **🆕 Statistical Analysis**
-```bash
-# Get detailed statistics about threats found
-adversary-mcp-cli scan . --stats --use-llm
-```
-
-### **🆕 Integration Capabilities**
-
-#### **IDE Integration**
-The enhanced MCP server provides seamless integration with development environments:
-
-- **Real-time Analysis**: Instant feedback as you type
-- **Context-Aware Suggestions**: AI understands your specific codebase
-- **Intelligent Deduplication**: No duplicate alerts from multiple engines
-- **Confidence Indicators**: Know which findings are most reliable
-
-#### **🆕 LLM Prompt Generation**
-```python
-# Use the enhanced scanner programmatically
-from adversary_mcp_server.enhanced_scanner import EnhancedScanner
-
-scanner = EnhancedScanner(enable_llm_analysis=True)
-result = scanner.scan_code(source_code, file_path, language, use_llm=True)
-
-# Access hybrid results
-print(f"Total threats: {len(result.all_threats)}")
-print(f"Rules-based: {len(result.rules_threats)}")
-print(f"LLM prompts generated: {len(result.llm_prompts)}")
-print(f"High confidence: {len(result.get_high_confidence_threats())}")
 ```
 
 ---
@@ -897,9 +779,9 @@ jobs:
 - name: Full Security Scan
   run: |
     adversary-mcp-cli scan . \
-      --severity medium \
-      --format json \
-      --output security-report.json
+      --severity=medium \
+      --format=json \
+      --output=security-report.json
 ```
 
 ### Environment Configuration
@@ -907,10 +789,8 @@ jobs:
 ```bash
 # Configuration environment variables
 export ADVERSARY_CONFIG_DIR="~/.local/share/adversary-mcp-server"
-export ADVERSARY_RULES_DIR="~/.local/share/adversary-mcp-server/rules"
 export ADVERSARY_LOG_LEVEL="INFO"
 export ADVERSARY_SEVERITY_THRESHOLD="medium"
-export ADVERSARY_HOT_RELOAD="enabled"
 ```
 
 ---
@@ -939,25 +819,6 @@ make test
 # Code quality checks
 make lint
 ```
-
-### Project Structure
-
-```
-adversary-mcp-server/
-├── src/adversary_mcp_server/
-│   ├── server.py           # MCP server with adv_* tools
-│   ├── threat_engine.py    # Rule engine with source file tracking
-│   ├── ast_scanner.py      # Static analysis engine
-│   ├── exploit_generator.py # Educational exploit generation
-│   ├── hot_reload.py       # Real-time rule updates
-│   └── cli.py             # Command-line interface
-├── rules/                 # Packaged rules (copied to user directory)
-│   ├── built-in/           # 95+ core security rules
-│   └── templates/         # Rule creation templates
-└── tests/                 # Comprehensive test suite (332 tests)
-```
-
----
 
 ## License
 
@@ -1006,7 +867,7 @@ The project uses GitHub Actions for comprehensive CI/CD automation:
 #### **🔄 Continuous Integration** (`.github/workflows/ci.yml`)
 
 **Multi-Environment Testing:**
-- **Python versions**: 3.10, 3.11, 3.12
+- **Python versions**: 3.11, 3.12
 - **Operating systems**: Ubuntu, macOS, Windows
 - **Dependencies**: Automatic uv-based installation
 
@@ -1148,15 +1009,3 @@ If you encounter the error `"Failed to get diff summary"` when using `adv_diff_s
 - Use full/absolute paths for `working_directory` to avoid confusion
 - Verify branch names with `git branch -a` before running scans
 - For remote branches, use the full name (e.g., `origin/main` not just `main`)
-
-#### **Example Working Configuration:**
-```json
-{
-  "source_branch": "origin/main",
-  "target_branch": "HEAD",
-  "working_directory": "/Users/username/my-project",
-  "severity_threshold": "medium",
-  "include_exploits": true,
-  "use_llm": false
-}
-```
