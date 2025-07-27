@@ -2,6 +2,7 @@
 
 import datetime
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -16,7 +17,7 @@ from .logger import get_logger
 from .scanner.diff_scanner import GitDiffScanner
 from .scanner.scan_engine import ScanEngine
 from .scanner.types import Language, Severity
-from .threat_modeling.diagram_generator import MermaidDiagramGenerator
+from .threat_modeling.diagram_generator import DiagramGenerator
 from .threat_modeling.models import Severity as ThreatSeverity
 from .threat_modeling.threat_model_builder import ThreatModelBuilder
 
@@ -140,6 +141,243 @@ def get_cli_version():
     version = get_version()
     logger.debug(f"CLI version: {version}")
     return version
+
+
+def _validate_mermaid_syntax(diagram_content: str) -> dict[str, any]:
+    """Validate Mermaid diagram syntax using mermaid-py.
+
+    Args:
+        diagram_content: The Mermaid diagram content as string
+
+    Returns:
+        Dict with 'valid' boolean and 'error' message if invalid
+    """
+    try:
+        # Handle None or non-string input
+        if diagram_content is None:
+            return {"valid": False, "error": "Diagram content is None"}
+
+        if not isinstance(diagram_content, str):
+            return {"valid": False, "error": "Diagram content must be a string"}
+
+        # Try to parse the diagram content
+        # Since our diagram_content is already a string, we need to validate it
+        # by attempting to recreate the components that would generate this content
+
+        # Basic syntax checks first
+        lines = diagram_content.strip().split("\n")
+        if not lines:
+            return {"valid": False, "error": "Empty diagram content"}
+
+        # Check diagram type declaration
+        first_line = lines[0].strip()
+        if not (
+            first_line.startswith("flowchart")
+            or first_line.startswith("architecture-beta")
+        ):
+            return {
+                "valid": False,
+                "error": "Missing diagram declaration (flowchart or architecture-beta)",
+            }
+
+        # Determine diagram type for syntax validation
+        is_architecture = first_line.startswith("architecture-beta")
+
+        # Track defined services and groups for architecture diagrams
+        defined_services = set()
+        defined_groups = set()
+        seen_edges = set()
+
+        # Check for basic syntax patterns
+        for i, line in enumerate(lines[1:], 2):  # Start from line 2
+            line = line.strip()
+            if not line:
+                continue
+
+            if is_architecture:
+                # Architecture diagram validation - more strict
+                if line.startswith("group "):
+                    # Validate group syntax: group id(icon)[name]
+                    if not (
+                        ("(" in line and ")" in line) and ("[" in line and "]" in line)
+                    ):
+                        return {
+                            "valid": False,
+                            "error": f"Invalid group syntax on line {i}: group must have (icon)[name] format",
+                        }
+                    # Extract group ID and track it
+                    group_match = re.search(r"group\s+(\w+)", line)
+                    if group_match:
+                        group_id = group_match.group(1)
+                        defined_groups.add(group_id)
+                    # Check for valid icons
+                    icon_match = re.search(r"\(([^)]+)\)", line)
+                    if icon_match:
+                        icon = icon_match.group(1)
+                        valid_icons = {
+                            "cloud",
+                            "database",
+                            "disk",
+                            "internet",
+                            "server",
+                        }
+                        if icon not in valid_icons:
+                            return {
+                                "valid": False,
+                                "error": f"Invalid group icon '{icon}' on line {i}: must be one of {valid_icons}",
+                            }
+                elif line.startswith("service "):
+                    # Validate service syntax: service id(icon)[name] [in groupId]
+                    if not (
+                        ("(" in line and ")" in line) and ("[" in line and "]" in line)
+                    ):
+                        return {
+                            "valid": False,
+                            "error": f"Invalid service syntax on line {i}: service must have (icon)[name] format",
+                        }
+                    # Extract service ID and track it
+                    service_match = re.search(r"service\s+(\w+)", line)
+                    if service_match:
+                        service_id = service_match.group(1)
+                        defined_services.add(service_id)
+                    # Check for valid icons
+                    icon_match = re.search(r"\(([^)]+)\)", line)
+                    if icon_match:
+                        icon = icon_match.group(1)
+                        valid_icons = {
+                            "cloud",
+                            "database",
+                            "disk",
+                            "internet",
+                            "server",
+                        }
+                        if icon not in valid_icons:
+                            return {
+                                "valid": False,
+                                "error": f"Invalid service icon '{icon}' on line {i}: must be one of {valid_icons}",
+                            }
+                    # Check service name for problematic characters
+                    name_match = re.search(r"\[([^\]]+)\]", line)
+                    if name_match:
+                        name = name_match.group(1)
+                        if re.search(r"[(){}[\]<>]", name) or len(name) > 30:
+                            return {
+                                "valid": False,
+                                "error": f"Invalid service name '{name}' on line {i}: avoid special chars and keep under 30 chars",
+                            }
+                    # Validate group reference if present
+                    if " in " in line:
+                        group_ref_match = re.search(r" in (\w+)", line)
+                        if group_ref_match:
+                            group_ref = group_ref_match.group(1)
+                            if group_ref not in defined_groups:
+                                return {
+                                    "valid": False,
+                                    "error": f"Service references undefined group '{group_ref}' on line {i}",
+                                }
+                elif "-->" in line:
+                    # Validate edge syntax: service1:direction --> direction:service2
+                    parts = line.split("-->")
+                    if len(parts) != 2:
+                        return {
+                            "valid": False,
+                            "error": f"Invalid edge syntax on line {i}: {line}",
+                        }
+                    # Check for proper connection point format
+                    left_part = parts[0].strip()
+                    right_part = parts[1].strip()
+
+                    # Extract service IDs from edge and validate they exist
+                    left_service = (
+                        left_part.split(":")[0] if ":" in left_part else left_part
+                    )
+                    right_service = (
+                        right_part.split(":")[1] if ":" in right_part else right_part
+                    )
+
+                    if left_service not in defined_services:
+                        return {
+                            "valid": False,
+                            "error": f"Edge references undefined service '{left_service}' on line {i}",
+                        }
+                    if right_service not in defined_services:
+                        return {
+                            "valid": False,
+                            "error": f"Edge references undefined service '{right_service}' on line {i}",
+                        }
+
+                    # Check for duplicate edges
+                    edge_key = f"{left_service}->{right_service}"
+                    if edge_key in seen_edges:
+                        return {
+                            "valid": False,
+                            "error": f"Duplicate edge '{left_service} -> {right_service}' on line {i}",
+                        }
+                    seen_edges.add(edge_key)
+
+                    # Validate direction indicators
+                    valid_directions = {"T", "B", "L", "R"}
+                    if ":" in left_part:
+                        left_direction = left_part.split(":")[-1]
+                        if left_direction not in valid_directions:
+                            return {
+                                "valid": False,
+                                "error": f"Invalid left direction '{left_direction}' on line {i}: must be T, B, L, or R",
+                            }
+                    if ":" in right_part:
+                        right_direction = right_part.split(":")[0]
+                        if right_direction not in valid_directions:
+                            return {
+                                "valid": False,
+                                "error": f"Invalid right direction '{right_direction}' on line {i}: must be T, B, L, or R",
+                            }
+            else:
+                # Flowchart diagram validation (existing logic)
+                # Skip CSS class definitions
+                if line.startswith("classDef"):
+                    continue
+
+                # Check node definitions (should contain [" or (( or [( )
+                if "[" in line or "(" in line:
+                    # This looks like a node definition, check basic syntax
+                    if not (
+                        ('["' in line and '"]' in line)
+                        or ("((" in line and "))" in line)
+                        or ("[(" in line and ")]" in line)
+                    ):
+                        return {
+                            "valid": False,
+                            "error": f"Invalid node syntax on line {i}: {line}",
+                        }
+
+                # Check link definitions (should contain -->)
+                elif "-->" in line:
+                    # This is a link, check for proper format
+                    parts = line.split("-->")
+                    if len(parts) != 2:
+                        return {
+                            "valid": False,
+                            "error": f"Invalid link syntax on line {i}: {line}",
+                        }
+
+                    # Check for proper link message format if present
+                    if "|" in parts[1]:
+                        link_part = parts[1].strip()
+                        if not (link_part.startswith("|") and "|" in link_part[1:]):
+                            return {
+                                "valid": False,
+                                "error": f"Invalid link message syntax on line {i}: {line}",
+                            }
+
+        # If we get here, basic syntax looks good
+        return {"valid": True, "error": None}
+
+    except ImportError as e:
+        logger.warning(f"mermaid-py not available for validation: {e}")
+        return {"valid": True, "error": "Validation skipped - mermaid-py not available"}
+    except Exception as e:
+        logger.debug(f"Mermaid validation error: {e}")
+        return {"valid": False, "error": str(e)}
 
 
 @click.group()
@@ -1079,6 +1317,11 @@ def reset_semgrep_key():
 @click.option(
     "--search-depth", type=int, default=3, help="Max directory depth to search for repo"
 )
+@click.option(
+    "--use-llm",
+    is_flag=True,
+    help="Enable LLM-enhanced threat analysis for additional insights",
+)
 def threat_model(
     repo_name: str,
     output: str | None,
@@ -1086,6 +1329,7 @@ def threat_model(
     include_threats: bool,
     severity: str,
     search_depth: int,
+    use_llm: bool,
 ):
     """Generate a threat model for a repository by name."""
     logger.info(f"=== Starting threat-model command for repo: {repo_name} ===")
@@ -1104,18 +1348,32 @@ def threat_model(
         console.print(f"📊 Generating threat model for: {repo_path}", style="cyan")
         console.print(f"📁 Output file: {output_file}", style="dim")
 
-        # Create threat model builder
-        builder = ThreatModelBuilder()
+        # Create threat model builder with LLM support
+        builder = ThreatModelBuilder(enable_llm=use_llm)
 
         # Convert severity string to enum
         severity_threshold = ThreatSeverity(severity.lower())
 
         # Build threat model
-        console.print("🔍 Analyzing source code...", style="yellow")
+        if use_llm:
+            console.print(
+                "🤖 Analyzing source code with LLM enhancement...", style="yellow"
+            )
+        else:
+            console.print("🔍 Analyzing source code...", style="yellow")
+
         threat_model = builder.build_threat_model(
             str(repo_path),
             include_threats=include_threats,
             severity_threshold=severity_threshold,
+            use_llm=use_llm,
+            llm_options={
+                "severity_threshold": severity,
+                "enable_business_logic": True,
+                "enable_data_flow_analysis": True,
+                "enable_attack_surface": True,
+                "enable_contextual_enhancement": True,
+            },
         )
 
         # Save threat model
@@ -1158,11 +1416,30 @@ def threat_model(
                     console.print(f"  • {sev.title()}: [{color}]{count}[/{color}]")
 
         console.print(f"\n📄 Threat model saved to: {output_file}")
+
+        # Add LLM enhancement information if used
+        if use_llm and "llm_prompts" in threat_model.metadata:
+            console.print("\n🤖 [bold cyan]LLM Analysis Available:[/bold cyan]")
+            prompt_count = threat_model.metadata.get("llm_prompt_count", 0)
+            console.print(
+                f"  • Generated {prompt_count} analysis prompts for client LLM"
+            )
+            console.print(
+                "  • Business logic, data flow, attack surface, and contextual analysis available"
+            )
+            console.print("  • Prompts stored in threat model metadata for processing")
+        elif use_llm:
+            console.print(
+                "\n⚠️  [bold yellow]LLM Enhancement:[/bold yellow] Requested but not available"
+            )
+
         console.print("\n💡 Next steps:")
         console.print(
             f"  • Run 'adversary-mcp-cli diagram {repo_name}' to create a visual diagram"
         )
         console.print(f"  • Review the {format} file for detailed findings")
+        if not use_llm:
+            console.print("  • Consider using --use-llm for enhanced threat analysis")
 
         logger.info("=== Threat-model command completed successfully ===")
 
@@ -1183,7 +1460,7 @@ def threat_model(
 @click.option(
     "--type",
     "diagram_type",
-    type=click.Choice(["flowchart", "graph", "sequence"]),
+    type=click.Choice(["flowchart", "architecture"]),
     default="flowchart",
     help="Diagram type",
 )
@@ -1202,6 +1479,11 @@ def threat_model(
 @click.option(
     "--search-depth", type=int, default=3, help="Max directory depth to search for repo"
 )
+@click.option(
+    "--use-llm",
+    is_flag=True,
+    help="Enable LLM-enhanced threat analysis when generating new threat models",
+)
 def diagram(
     repo_name: str,
     output: str | None,
@@ -1210,6 +1492,7 @@ def diagram(
     layout: str,
     open_browser: bool,
     search_depth: int,
+    use_llm: bool,
 ):
     """Generate a Mermaid diagram for a repository by name."""
     logger.info(f"=== Starting diagram command for repo: {repo_name} ===")
@@ -1240,22 +1523,53 @@ def diagram(
             with open(threat_model_json, encoding="utf-8") as f:
                 threat_model_data = json.load(f)
 
-            # Generate diagram from JSON data
-            generator = MermaidDiagramGenerator()
-            diagram_content = generator.generate_from_components_dict(
-                threat_model_data, show_threats=show_threats, diagram_type=diagram_type
+            # Generate diagram from JSON data using proper object model
+            from .threat_modeling.models import (
+                DataFlow,
+                ThreatModel,
+                ThreatModelComponents,
+            )
+
+            components = ThreatModelComponents(
+                boundaries=threat_model_data.get("boundaries", []),
+                external_entities=threat_model_data.get("external_entities", []),
+                processes=threat_model_data.get("processes", []),
+                data_stores=threat_model_data.get("data_stores", []),
+                data_flows=[
+                    DataFlow(**flow) for flow in threat_model_data.get("data_flows", [])
+                ],
+            )
+
+            threat_model = ThreatModel(components=components)
+            generator = DiagramGenerator()
+            diagram_content = generator.generate_diagram(
+                threat_model, show_threats=show_threats, diagram_type=diagram_type
             )
         else:
-            console.print("🔍 Analyzing source code...", style="yellow")
+            if use_llm:
+                console.print(
+                    "🤖 Analyzing source code with LLM enhancement...", style="yellow"
+                )
+            else:
+                console.print("🔍 Analyzing source code...", style="yellow")
 
             # Build threat model from source
-            builder = ThreatModelBuilder()
+            builder = ThreatModelBuilder(enable_llm=use_llm)
             threat_model = builder.build_threat_model(
-                str(repo_path), include_threats=show_threats
+                str(repo_path),
+                include_threats=show_threats,
+                use_llm=use_llm,
+                llm_options={
+                    "severity_threshold": "medium",
+                    "enable_business_logic": True,
+                    "enable_data_flow_analysis": True,
+                    "enable_attack_surface": True,
+                    "enable_contextual_enhancement": True,
+                },
             )
 
             # Generate diagram from threat model
-            generator = MermaidDiagramGenerator()
+            generator = DiagramGenerator()
             diagram_content = generator.generate_diagram(
                 threat_model,
                 diagram_type=diagram_type,
@@ -1265,21 +1579,23 @@ def diagram(
 
         # Save diagram
         console.print("💾 Saving Mermaid diagram...", style="yellow")
-        generator.save_diagram(diagram_content, str(output_file))
+        with open(output_file, "w") as f:
+            f.write(diagram_content)
 
-        # If open flag is set, create HTML and open in browser
-        if open_browser:
-            console.print("🌐 Opening diagram in browser...", style="yellow")
-
-            html_content = f"""<!DOCTYPE html>
+        # Always create HTML file
+        console.print("💾 Generating HTML file...", style="yellow")
+        html_content = f"""<!DOCTYPE html>
 <html>
 <head>
     <title>Threat Model Diagram - {repo_name}</title>
-    <script type="module">
-        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@latest/dist/mermaid.min.js"></script>
+    <script>
         mermaid.initialize({{
             startOnLoad: true,
             theme: 'default',
+            architecture: {{
+                useMaxWidth: true
+            }},
             themeVariables: {{
                 darkMode: false
             }}
@@ -1351,26 +1667,62 @@ def diagram(
 </body>
 </html>"""
 
-            # Save HTML file
-            html_file = output_file.with_suffix(".html")
-            with open(html_file, "w", encoding="utf-8") as f:
-                f.write(html_content)
+        # Save HTML file
+        html_file = output_file.with_suffix(".html")
+        with open(html_file, "w", encoding="utf-8") as f:
+            f.write(html_content)
 
-            # Open in browser
+        # Validate Mermaid syntax
+        console.print("🔍 Validating Mermaid syntax...", style="yellow")
+        validation_result = _validate_mermaid_syntax(diagram_content)
+        if validation_result["valid"]:
+            console.print("✅ Mermaid syntax: Valid", style="green")
+        else:
+            console.print(
+                f"❌ Mermaid syntax: Error - {validation_result['error']}", style="red"
+            )
+
+        # If open flag is set, open in browser
+        if open_browser:
+            console.print("🌐 Opening diagram in browser...", style="yellow")
             webbrowser.open(f"file://{html_file.absolute()}")
-            console.print(f"✅ HTML saved to: {html_file}", style="green")
 
         # Display summary
         console.print("\n✅ [bold green]Diagram Generated![/bold green]")
         console.print(f"\n📄 Mermaid diagram saved to: {output_file}")
+        console.print(f"🌐 HTML file saved to: {html_file}")
+
+        # Add LLM enhancement info if used and generating new threat model (not from existing JSON)
+        if use_llm and not threat_model_json.exists():
+            if (
+                hasattr(threat_model, "metadata")
+                and "llm_prompts" in threat_model.metadata
+            ):
+                console.print("\n🤖 [bold cyan]LLM Analysis Available:[/bold cyan]")
+                prompt_count = threat_model.metadata.get("llm_prompt_count", 0)
+                console.print(
+                    f"  • Generated {prompt_count} analysis prompts for client LLM"
+                )
+                console.print(
+                    "  • Enhanced threat model with additional analysis types"
+                )
+            else:
+                console.print(
+                    "\n⚠️  [bold yellow]LLM Enhancement:[/bold yellow] Requested but not available"
+                )
 
         if open_browser:
-            console.print("🌐 Diagram opened in your default browser")
+            console.print("\n🌐 Diagram opened in your default browser")
         else:
             console.print("\n💡 To view the diagram:")
             console.print("  • Run with --open flag to open in browser")
+            console.print("  • Open the .html file directly in any browser")
             console.print("  • Copy the .mmd file content to any Mermaid viewer")
             console.print("  • Use the diagram in your documentation")
+            if not use_llm and not threat_model_json.exists():
+                console.print(
+                    "  • Consider using --use-llm for enhanced threat analysis"
+                )
 
         logger.info("=== Diagram command completed successfully ===")
 

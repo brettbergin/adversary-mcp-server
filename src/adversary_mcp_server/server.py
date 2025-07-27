@@ -26,7 +26,7 @@ from .scanner.exploit_generator import ExploitGenerator
 from .scanner.false_positive_manager import FalsePositiveManager
 from .scanner.scan_engine import EnhancedScanResult, ScanEngine
 from .scanner.types import Category, Language, LanguageSupport, Severity, ThreatMatch
-from .threat_modeling import MermaidDiagramGenerator, ThreatModelBuilder
+from .threat_modeling import DiagramGenerator, ThreatModelBuilder
 from .threat_modeling.models import Severity as ThreatSeverity
 
 logger = get_logger("server")
@@ -470,6 +470,11 @@ class AdversaryMCPServer:
                                 "enum": ["json", "markdown"],
                                 "default": "markdown",
                             },
+                            "use_llm": {
+                                "type": "boolean",
+                                "description": "Enable LLM-enhanced threat analysis for additional insights",
+                                "default": False,
+                            },
                         },
                         "anyOf": [
                             {"required": ["repo_name"]},
@@ -505,7 +510,7 @@ class AdversaryMCPServer:
                             "diagram_type": {
                                 "type": "string",
                                 "description": "Type of Mermaid diagram to generate",
-                                "enum": ["flowchart", "graph", "sequence"],
+                                "enum": ["flowchart"],
                                 "default": "flowchart",
                             },
                             "show_threats": {
@@ -518,6 +523,11 @@ class AdversaryMCPServer:
                                 "description": "Layout direction for diagram",
                                 "enum": ["TD", "LR", "BT", "RL"],
                                 "default": "TD",
+                            },
+                            "use_llm": {
+                                "type": "boolean",
+                                "description": "Enable LLM-enhanced threat analysis when generating new threat models",
+                                "default": False,
                             },
                         },
                         "anyOf": [
@@ -2677,6 +2687,7 @@ class AdversaryMCPServer:
             include_threats = arguments.get("include_threats", True)
             severity_threshold_str = arguments.get("severity_threshold", "medium")
             output_format = arguments.get("output_format", "markdown")
+            use_llm = arguments.get("use_llm", False)
 
             # Determine source path
             if source_path_arg:
@@ -2714,14 +2725,22 @@ class AdversaryMCPServer:
             if not source_path_resolved.exists():
                 raise AdversaryToolError(f"Source path does not exist: {source_path}")
 
-            # Create threat model builder
-            builder = ThreatModelBuilder()
+            # Create threat model builder with LLM support
+            builder = ThreatModelBuilder(enable_llm=use_llm)
 
             # Generate threat model
             threat_model = builder.build_threat_model(
                 source_path=str(source_path_resolved),
                 include_threats=include_threats,
                 severity_threshold=severity_threshold,
+                use_llm=use_llm,
+                llm_options={
+                    "severity_threshold": severity_threshold_str,
+                    "enable_business_logic": True,
+                    "enable_data_flow_analysis": True,
+                    "enable_attack_surface": True,
+                    "enable_contextual_enhancement": True,
+                },
             )
 
             # Save threat model
@@ -2798,9 +2817,27 @@ class AdversaryMCPServer:
                 result += "\n"
 
             result += f"✅ **Threat model saved to:** `{output_file}`\n\n"
+
+            # Add LLM enhancement information if used
+            if use_llm and "llm_prompts" in threat_model.metadata:
+                result += "🤖 **LLM Analysis Available:**\n"
+                prompt_count = threat_model.metadata.get("llm_prompt_count", 0)
+                result += (
+                    f"- Generated {prompt_count} analysis prompts for client LLM\n"
+                )
+                result += "- Business logic, data flow, attack surface, and contextual analysis available\n"
+                result += "- Prompts stored in threat model metadata for processing\n"
+                result += "\n"
+            elif use_llm:
+                result += "⚠️ **LLM Enhancement:** Requested but not available\n\n"
+
             result += "**Next Steps:**\n"
             result += "- Use `adv_diagram` to create a visual diagram\n"
             result += f"- Review the {output_format} file for detailed findings\n"
+            if not use_llm:
+                result += (
+                    "- Consider using `use_llm: true` for enhanced threat analysis\n"
+                )
 
             logger.info("Threat model generation completed successfully")
             return [types.TextContent(type="text", text=result)]
@@ -2825,6 +2862,7 @@ class AdversaryMCPServer:
             diagram_type = arguments.get("diagram_type", "flowchart")
             show_threats = arguments.get("show_threats", True)
             layout_direction = arguments.get("layout_direction", "TD")
+            use_llm = arguments.get("use_llm", False)
 
             # Determine source path
             if source_path_arg:
@@ -2861,20 +2899,34 @@ class AdversaryMCPServer:
                     with open(source_path_resolved, encoding="utf-8") as f:
                         threat_model_data = json.load(f)
 
-                    # Generate diagram from JSON data
-                    generator = MermaidDiagramGenerator()
-                    diagram_content = generator.generate_from_components_dict(
-                        components_dict=threat_model_data,
-                        show_threats=show_threats,
-                        diagram_type=diagram_type,
+                    # Generate diagram from JSON data using proper object model
+                    from .threat_modeling.models import (
+                        DataFlow,
+                        ThreatModel,
+                        ThreatModelComponents,
                     )
 
-                    # Update layout direction if different from default
-                    if layout_direction != "TD":
-                        lines = diagram_content.split("\n")
-                        if lines and lines[0].startswith(f"{diagram_type} TD"):
-                            lines[0] = f"{diagram_type} {layout_direction}"
-                            diagram_content = "\n".join(lines)
+                    components = ThreatModelComponents(
+                        boundaries=threat_model_data.get("boundaries", []),
+                        external_entities=threat_model_data.get(
+                            "external_entities", []
+                        ),
+                        processes=threat_model_data.get("processes", []),
+                        data_stores=threat_model_data.get("data_stores", []),
+                        data_flows=[
+                            DataFlow(**flow)
+                            for flow in threat_model_data.get("data_flows", [])
+                        ],
+                    )
+
+                    threat_model = ThreatModel(components=components)
+                    generator = DiagramGenerator()
+                    diagram_content = generator.generate_diagram(
+                        threat_model,
+                        show_threats=show_threats,
+                        diagram_type=diagram_type,
+                        layout_direction=layout_direction,
+                    )
 
                 except (json.JSONDecodeError, KeyError) as e:
                     raise AdversaryToolError(f"Invalid threat model JSON file: {e}")
@@ -2888,18 +2940,26 @@ class AdversaryMCPServer:
                         f"Source path does not exist: {source_path}"
                     )
 
-                # Create threat model builder
-                builder = ThreatModelBuilder()
+                # Create threat model builder with LLM support
+                builder = ThreatModelBuilder(enable_llm=use_llm)
 
                 # Generate threat model (include threats if show_threats is True)
                 threat_model = builder.build_threat_model(
                     source_path=str(source_path_resolved),
                     include_threats=show_threats,
                     severity_threshold=ThreatSeverity.MEDIUM,
+                    use_llm=use_llm,
+                    llm_options={
+                        "severity_threshold": "medium",
+                        "enable_business_logic": True,
+                        "enable_data_flow_analysis": True,
+                        "enable_attack_surface": True,
+                        "enable_contextual_enhancement": True,
+                    },
                 )
 
                 # Generate diagram
-                generator = MermaidDiagramGenerator()
+                generator = DiagramGenerator()
                 diagram_content = generator.generate_diagram(
                     threat_model=threat_model,
                     diagram_type=diagram_type,
@@ -2908,7 +2968,8 @@ class AdversaryMCPServer:
                 )
 
             # Save diagram
-            generator.save_diagram(diagram_content, str(output_file_resolved))
+            with open(output_file_resolved, "w") as f:
+                f.write(diagram_content)
 
             # Generate response
             result = "# Mermaid Diagram Generated\n\n"
@@ -2916,7 +2977,20 @@ class AdversaryMCPServer:
             result += f"**Output:** {output_file}\n"
             result += f"**Diagram Type:** {diagram_type}\n"
             result += f"**Layout:** {layout_direction}\n"
-            result += f"**Show Threats:** {show_threats}\n\n"
+            result += f"**Show Threats:** {show_threats}\n"
+
+            # Add LLM enhancement info if used and generating new threat model
+            if use_llm and not str(source_path).endswith(".json"):
+                if (
+                    hasattr(threat_model, "metadata")
+                    and "llm_prompts" in threat_model.metadata
+                ):
+                    prompt_count = threat_model.metadata.get("llm_prompt_count", 0)
+                    result += f"**LLM Enhanced:** Yes ({prompt_count} analysis prompts available)\n"
+                else:
+                    result += "**LLM Enhanced:** Requested but not available\n"
+
+            result += "\n"
 
             # Show full diagram for rendering in Cursor
             result += "## Diagram Preview\n\n"

@@ -84,8 +84,8 @@ Once configured, you can use these MCP tools in Cursor:
 - `adv_mark_false_positive` - Mark false positive
 - `adv_unmark_false_positives` - Unmark false positive
 - `adv_list_false_postives` - List false positives
-- `adv_threat_model` - generates architecture analysis with structured output
-- `adv_diagram` - creates visual architecture diagrams
+- `adv_threat_model` - generates architecture analysis with structured output (🆕 **LLM-enhanced**)
+- `adv_diagram` - creates visual architecture diagrams (🆕 **LLM-enhanced**)
 
 ### 4. Run Demo (Optional)
 

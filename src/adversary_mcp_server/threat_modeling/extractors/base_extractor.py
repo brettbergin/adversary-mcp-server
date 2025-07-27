@@ -4,7 +4,7 @@ import re
 from abc import ABC, abstractmethod
 from pathlib import Path
 
-from ..models import ThreatModelComponents
+from ..models import ComponentType, ThreatModelComponents
 
 
 class BaseExtractor(ABC):
@@ -262,6 +262,15 @@ class BaseExtractor(ABC):
         # Add trust boundaries
         self.components.boundaries = self._identify_trust_boundaries()
 
+        # Consolidate similar external entities to reduce over-extraction
+        self._consolidate_external_entities()
+
+        # Add missing essential data flows for web applications
+        self._add_essential_web_flows()
+
+        # Add bidirectional flows where appropriate
+        self._add_bidirectional_flows()
+
         # Sort all lists for consistent output
         self.components.boundaries.sort()
         self.components.external_entities.sort()
@@ -270,3 +279,184 @@ class BaseExtractor(ABC):
 
         # Sort data flows by source, then target
         self.components.data_flows.sort(key=lambda f: (f.source, f.target))
+
+    def _consolidate_external_entities(self):
+        """Consolidate similar external entities to reduce over-extraction."""
+        # Group similar API entities
+        consolidated_entities = []
+        consolidated_flows = []
+        entity_groups = {}
+
+        # Group entities by type
+        for entity in self.components.external_entities:
+            # Determine entity group
+            group_key = self._get_entity_group(entity)
+            if group_key not in entity_groups:
+                entity_groups[group_key] = []
+            entity_groups[group_key].append(entity)
+
+        # Keep only one representative per group (unless group has special handling)
+        for group_key, entities in entity_groups.items():
+            if group_key == "Generic API" and len(entities) > 5:
+                # For generic APIs, keep only the first few and group the rest
+                consolidated_entities.extend(entities[:3])
+                if len(entities) > 3:
+                    consolidated_entities.append("External APIs")
+                    # Update flows to point to consolidated entity
+                    self._update_flows_for_consolidated_entity(
+                        entities[3:], "External APIs"
+                    )
+            else:
+                # Keep all entities in specialized groups
+                consolidated_entities.extend(entities)
+
+        self.components.external_entities = consolidated_entities
+
+    def _get_entity_group(self, entity: str) -> str:
+        """Get the group classification for an external entity."""
+        entity_lower = entity.lower()
+
+        # Payment and financial services
+        if any(
+            term in entity_lower for term in ["stripe", "paypal", "square", "payment"]
+        ):
+            return "Payment Services"
+
+        # Communication services
+        if any(term in entity_lower for term in ["twilio", "sendgrid", "mail", "sms"]):
+            return "Communication Services"
+
+        # Cloud services
+        if any(term in entity_lower for term in ["aws", "google", "azure", "cloud"]):
+            return "Cloud Services"
+
+        # Authentication services
+        if any(term in entity_lower for term in ["auth", "oauth", "sso", "login"]):
+            return "Authentication Services"
+
+        # Development services
+        if any(
+            term in entity_lower for term in ["github", "gitlab", "bitbucket", "git"]
+        ):
+            return "Development Services"
+
+        # Generic or unknown APIs
+        return "Generic API"
+
+    def _update_flows_for_consolidated_entity(
+        self, old_entities: list[str], new_entity: str
+    ):
+        """Update data flows to point to consolidated entity."""
+        for flow in self.components.data_flows:
+            if flow.target in old_entities:
+                flow.target = new_entity
+            elif flow.source in old_entities:
+                flow.source = new_entity
+
+    def _add_essential_web_flows(self):
+        """Add essential data flows for web applications that are often missing."""
+        # Check if this is a web application
+        web_processes = []
+        for process in self.components.processes:
+            if any(
+                term in process.lower()
+                for term in [
+                    "app",
+                    "web",
+                    "server",
+                    "django",
+                    "flask",
+                    "fastapi",
+                    "express",
+                ]
+            ):
+                web_processes.append(process)
+
+        if not web_processes:
+            return
+
+        # Add Web User entity if not present
+        if "Web User" not in self.components.external_entities:
+            self.components.add_component(
+                "Web User",
+                ComponentType.EXTERNAL_ENTITY,
+                description="End users accessing the web application",
+            )
+
+        # Add flows from Web User to web processes
+        for process in web_processes:
+            self._add_data_flow_if_new(
+                "Web User",
+                process,
+                "HTTPS",
+                data_type="user_requests",
+                authentication="session_based",
+            )
+
+        # Add flows between processes and databases if missing
+        databases = [
+            store
+            for store in self.components.data_stores
+            if any(
+                term in store.lower()
+                for term in ["database", "db", "mysql", "postgres", "sqlite"]
+            )
+        ]
+
+        for process in web_processes:
+            for database in databases:
+                # Check if flow already exists
+                existing_flow = any(
+                    flow.source == process and flow.target == database
+                    for flow in self.components.data_flows
+                )
+                if not existing_flow:
+                    self._add_data_flow_if_new(
+                        process,
+                        database,
+                        "SQL",
+                        data_type="queries",
+                        authentication="connection_pool",
+                    )
+
+    def _add_bidirectional_flows(self):
+        """Add bidirectional flows where appropriate (e.g., API responses)."""
+        current_flows = list(self.components.data_flows)
+
+        for flow in current_flows:
+            # Add return flows for HTTP/HTTPS requests
+            if flow.protocol in ["HTTP", "HTTPS"]:
+                # Check if reverse flow already exists
+                reverse_exists = any(
+                    existing_flow.source == flow.target
+                    and existing_flow.target == flow.source
+                    for existing_flow in self.components.data_flows
+                )
+
+                if not reverse_exists:
+                    self._add_data_flow_if_new(
+                        flow.target,
+                        flow.source,
+                        flow.protocol,
+                        data_type="responses",
+                        authentication=flow.authentication,
+                        encryption=flow.encryption,
+                    )
+
+            # Add return flows for database queries (result sets)
+            elif flow.protocol == "SQL":
+                reverse_exists = any(
+                    existing_flow.source == flow.target
+                    and existing_flow.target == flow.source
+                    for existing_flow in self.components.data_flows
+                )
+
+                if not reverse_exists:
+                    self._add_data_flow_if_new(
+                        flow.target,
+                        flow.source,
+                        "SQL",
+                        data_type="result_sets",
+                        authentication=flow.authentication,
+                        encryption=flow.encryption,
+                    )

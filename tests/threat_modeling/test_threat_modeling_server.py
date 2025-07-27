@@ -186,7 +186,7 @@ if __name__ == '__main__':
             assert output_file.exists()
 
             diagram_content = output_file.read_text()
-            assert diagram_content.startswith("flowchart TD")
+            assert "flowchart TD" in diagram_content
             assert "classDef" in diagram_content  # CSS styling
 
     @pytest.mark.asyncio
@@ -228,7 +228,7 @@ if __name__ == '__main__':
             arguments = {
                 "source_path": str(json_file),
                 "output_file": str(output_file),
-                "diagram_type": "sequence",
+                "diagram_type": "flowchart",
                 "show_threats": False,
             }
 
@@ -237,14 +237,13 @@ if __name__ == '__main__':
             # Verify response
             assert len(result) == 1
             response_text = result[0].text
-            assert "Diagram Type:** sequence" in response_text
+            assert "Diagram Type:** flowchart" in response_text
             assert "Show Threats:** False" in response_text
 
             # Verify diagram file
             assert output_file.exists()
             diagram_content = output_file.read_text()
-            assert diagram_content.startswith("sequenceDiagram")
-            assert "participant" in diagram_content
+            assert "flowchart TD" in diagram_content
 
     @pytest.mark.asyncio
     async def test_generate_threat_model_directory(self, server):
@@ -384,15 +383,12 @@ def store_data(data):
             source_file = Path(temp_dir) / "app.py"
             source_file.write_text(sample_python_code)
 
-            # Test different diagram types
-            diagram_types = ["flowchart", "graph", "sequence"]
+            # Test supported diagram types (new generator only supports flowchart)
+            supported_types = ["flowchart"]
             layout_directions = ["TD", "LR", "BT", "RL"]
 
-            for diagram_type in diagram_types:
+            for diagram_type in supported_types:
                 for layout in layout_directions:
-                    if diagram_type == "sequence" and layout != "TD":
-                        continue  # Sequence diagrams don't use layout direction
-
                     output_file = (
                         Path(temp_dir) / f"diagram_{diagram_type}_{layout}.mmd"
                     )
@@ -414,11 +410,24 @@ def store_data(data):
                     assert output_file.exists()
                     content = output_file.read_text()
 
-                    if diagram_type == "sequence":
-                        assert content.startswith("sequenceDiagram")
-                    else:
-                        expected_start = f"{diagram_type} {layout}"
-                        assert content.startswith(expected_start)
+                    # Check for diagram type and layout in content (handles YAML frontmatter)
+                    assert f"{diagram_type} {layout}" in content
+
+            # Test unsupported diagram types should raise errors
+            for unsupported_type in ["sequence", "graph"]:
+                output_file = Path(temp_dir) / f"diagram_{unsupported_type}.mmd"
+
+                arguments = {
+                    "source_path": str(source_file),
+                    "output_file": str(output_file),
+                    "diagram_type": unsupported_type,
+                }
+
+                # Should raise AdversaryToolError for unsupported types
+                with pytest.raises(
+                    Exception
+                ):  # Will be caught and re-raised as AdversaryToolError
+                    await server._handle_generate_diagram(arguments)
 
     @pytest.mark.asyncio
     async def test_severity_threshold_filtering(self, server, sample_python_code):
@@ -589,30 +598,10 @@ if __name__ == '__main__':
             assert flowchart_file.exists()
 
             flowchart_content = flowchart_file.read_text()
-            assert flowchart_content.startswith("flowchart TD")
+            assert "flowchart TD" in flowchart_content
             assert "classDef" in flowchart_content  # Threat styling
 
-            # Step 4: Generate sequence diagram from JSON
-            sequence_file = Path(temp_dir) / "sequence.mmd"
-
-            sequence_args = {
-                "source_path": str(threat_model_file),
-                "output_file": str(sequence_file),
-                "diagram_type": "sequence",
-                "show_threats": False,
-            }
-
-            sequence_result = await server._handle_generate_diagram(sequence_args)
-
-            # Verify sequence diagram generation
-            assert len(sequence_result) == 1
-            assert sequence_file.exists()
-
-            sequence_content = sequence_file.read_text()
-            assert sequence_content.startswith("sequenceDiagram")
-            assert "participant" in sequence_content
-
-            # Step 5: Generate markdown report
+            # Step 4: Generate markdown report
             markdown_file = Path(temp_dir) / "threat_report.md"
 
             markdown_args = {
@@ -641,7 +630,6 @@ if __name__ == '__main__':
             created_files = [
                 threat_model_file,
                 flowchart_file,
-                sequence_file,
                 markdown_file,
             ]
             for file_path in created_files:

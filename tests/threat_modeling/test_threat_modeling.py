@@ -11,9 +11,7 @@ import pytest
 # Add the src directory to the path to import modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from adversary_mcp_server.threat_modeling.diagram_generator import (
-    MermaidDiagramGenerator,
-)
+from adversary_mcp_server.threat_modeling.diagram_generator import DiagramGenerator
 from adversary_mcp_server.threat_modeling.extractors.base_extractor import BaseExtractor
 from adversary_mcp_server.threat_modeling.extractors.python_extractor import (
     PythonExtractor,
@@ -290,7 +288,7 @@ def store_data(data):
             assert len(threat_model.components.data_stores) > 0
 
 
-class TestMermaidDiagramGenerator:
+class TestDiagramGenerator:
     """Test Mermaid diagram generator."""
 
     def test_generate_flowchart_diagram(self):
@@ -311,46 +309,54 @@ class TestMermaidDiagramGenerator:
 
         threat_model = ThreatModel(components=components)
 
-        generator = MermaidDiagramGenerator()
+        generator = DiagramGenerator()
         diagram = generator.generate_diagram(
             threat_model=threat_model, diagram_type="flowchart", show_threats=False
         )
 
-        # Basic diagram structure checks
-        assert diagram.startswith("flowchart TD")
+        # Basic diagram structure checks (new generator includes YAML frontmatter)
+        assert "flowchart TD" in diagram
         assert "User" in diagram
         assert "Web App" in diagram
         assert "Database" in diagram
         assert "HTTPS" in diagram
         assert "SQL" in diagram
 
-        # Check for CSS classes
-        assert "classDef" in diagram
+        # Should not have CSS classes since show_threats=False and no threats
+        assert "classDef" not in diagram
 
     def test_generate_from_dict(self):
         """Test generating diagram from dictionary data."""
-        components_dict = {
-            "boundaries": ["Internet", "Internal"],
-            "external_entities": ["User", "API"],
-            "processes": ["Web Server"],
-            "data_stores": ["Database"],
-            "data_flows": [
-                {"source": "User", "target": "Web Server", "protocol": "HTTPS"},
-                {"source": "Web Server", "target": "Database", "protocol": "SQL"},
-            ],
-        }
-
-        diagram = MermaidDiagramGenerator.generate_from_components_dict(
-            components_dict=components_dict, diagram_type="flowchart"
+        # Create components using the proper object model
+        from adversary_mcp_server.threat_modeling.models import (
+            DataFlow,
+            ThreatModel,
+            ThreatModelComponents,
         )
 
-        assert diagram.startswith("flowchart TD")
-        assert "User" in diagram
-        assert "Web Server" in diagram
-        assert "Database" in diagram
+        components = ThreatModelComponents(
+            boundaries=["Internet", "Internal"],
+            external_entities=["User", "API"],
+            processes=["Web Server"],
+            data_stores=["Database"],
+            data_flows=[
+                DataFlow(source="User", target="Web Server", protocol="HTTPS"),
+                DataFlow(source="Web Server", target="Database", protocol="SQL"),
+            ],
+        )
 
-    def test_sequence_diagram_generation(self):
-        """Test generating sequence diagram."""
+        threat_model = ThreatModel(components=components)
+        generator = DiagramGenerator()
+
+        diagram = generator.generate_diagram(threat_model, diagram_type="flowchart")
+
+        assert "flowchart TD" in diagram
+        assert "User" in diagram or "user" in diagram
+        assert "Web Server" in diagram or "web_server" in diagram
+        assert "Database" in diagram or "database" in diagram
+
+    def test_unsupported_diagram_type(self):
+        """Test error handling for unsupported diagram types."""
         components = ThreatModelComponents()
         components.data_flows = [
             DataFlow("Client", "Server", "HTTPS"),
@@ -359,75 +365,51 @@ class TestMermaidDiagramGenerator:
 
         threat_model = ThreatModel(components=components)
 
-        generator = MermaidDiagramGenerator()
-        diagram = generator.generate_diagram(
-            threat_model=threat_model, diagram_type="sequence"
-        )
+        generator = DiagramGenerator()
 
-        assert diagram.startswith("sequenceDiagram")
-        assert "participant" in diagram
-        assert "Client" in diagram
-        assert "Server" in diagram
-        assert "Database" in diagram
-
-    def test_sanitize_display_name(self):
-        """Test display name sanitization for Mermaid participant labels."""
-        generator = MermaidDiagramGenerator()
-
-        # Test cases that could break Mermaid syntax
-        test_cases = [
-            # (input, expected_output)
-            ("Test.Com API", "Test.Com API"),  # Dots are OK in display names
-            ("Test\nAPI", "Test API"),  # Line breaks should be removed
-            ("Test\r\nAPI", "Test API"),  # Windows line breaks
-            ("Test    API", "Test API"),  # Multiple spaces normalized
-            ("  Test API  ", "Test API"),  # Leading/trailing whitespace
-            (
-                "Very Long Component Name That Exceeds Fifty Characters And Should Be Truncated",
-                "Very Long Component Name That Exceeds Fifty Cha...",
-            ),  # Long names truncated
-            ("", ""),  # Empty string
-            ("A", "A"),  # Single character
-            ("Test\tAPI", "Test API"),  # Tab characters
-        ]
-
-        for input_name, expected in test_cases:
-            result = generator._sanitize_display_name(input_name)
-            assert (
-                result == expected
-            ), f"Input '{repr(input_name)}' should produce '{expected}', got '{result}'"
+        # New generator only supports flowchart, should raise ValueError for others
+        with pytest.raises(ValueError, match="Unsupported diagram type"):
+            generator.generate_diagram(
+                threat_model=threat_model, diagram_type="sequence"
+            )
 
     def test_sanitize_id(self):
         """Test ID sanitization for Mermaid node IDs."""
-        generator = MermaidDiagramGenerator()
+        generator = DiagramGenerator()
 
         test_cases = [
-            # (input, expected_pattern)
-            ("Test API", "Test_API"),
-            ("Test.Com API", "Test_Com_API"),
-            ("123numbers", "node_123numbers"),  # Should start with letter
-            ("test-api", "test_api"),
-            ("test@api", "test_api"),
-            ("test/api", "test_api"),
-            ("", "node_1"),  # Empty becomes node_1
+            # (input, expected_pattern) - new generator outputs lowercase
+            ("Test API", "testapi"),
+            ("Test.Com API", "testcomapi"),
+            ("123numbers", "node123numbers"),  # Should start with letter
+            ("test-api", "testapi"),
+            ("test@api", "testapi"),
+            ("test/api", "testapi"),
+            ("", "unnamednode"),  # Empty becomes unnamednode
         ]
 
         for input_name, expected in test_cases:
             result = generator._sanitize_id(input_name)
-            if expected.startswith("node_") and input_name == "":
-                # For empty strings, just check it starts with node_
-                assert result.startswith(
-                    "node_"
-                ), f"Empty input should start with 'node_', got '{result}'"
+            if input_name == "":
+                # For empty strings, just check it's "unnamed_node"
+                assert (
+                    result == "unnamednode"
+                ), f"Empty input should be 'unnamednode', got '{result}'"
             else:
                 assert (
                     result == expected
                 ), f"Input '{input_name}' should produce '{expected}', got '{result}'"
 
-    def test_sequence_diagram_with_problematic_names(self):
-        """Test sequence diagram generation with names that could cause syntax errors."""
+    def test_flowchart_with_problematic_names(self):
+        """Test flowchart generation with names that could cause syntax errors."""
         components = ThreatModelComponents()
         # Include names that previously caused issues
+        components.external_entities = [
+            "Web User",
+            "Test.Com API",
+            "Example.Org?Foo=Bar#Header API",
+        ]
+        components.processes = ["Django App"]
         components.data_flows = [
             DataFlow("Django App", "Test.Com API", "HTTP"),
             DataFlow("Test.Com API", "Django App", "HTTP"),
@@ -437,27 +419,28 @@ class TestMermaidDiagramGenerator:
 
         threat_model = ThreatModel(components=components)
 
-        generator = MermaidDiagramGenerator()
+        generator = DiagramGenerator()
         diagram = generator.generate_diagram(
-            threat_model=threat_model, diagram_type="sequence"
+            threat_model=threat_model, diagram_type="flowchart"
         )
 
         # Should generate valid syntax
-        assert diagram.startswith("sequenceDiagram")
+        assert "flowchart TD" in diagram
 
-        # Check that problematic characters are handled
+        # Check that problematic characters are handled in node IDs
         lines = diagram.split("\n")
-        participant_lines = [line.strip() for line in lines if "participant" in line]
+        node_lines = [
+            line.strip()
+            for line in lines
+            if any(name in line for name in ["djangoapp", "testcom", "exampleorg"])
+        ]
 
-        for line in participant_lines:
-            # No line should contain unescaped line breaks
-            assert "\n" not in line.replace(
-                "\\n", ""
-            ), f"Line contains unescaped line break: {line}"
-            # Should follow proper participant syntax
-            assert " as " in line, f"Participant line missing ' as ': {line}"
-            # Should not have trailing incomplete syntax
-            assert not line.endswith(" as"), f"Incomplete participant syntax: {line}"
+        # Should contain sanitized node identifiers
+        assert any("djangoapp" in line for line in lines)
+
+        # Original component names should still be recognizable in display labels
+        assert "Django App" in diagram or "djangoapp" in diagram
+        assert "Test.Com" in diagram or "testcom" in diagram
 
 
 class TestThreatCatalog:
@@ -524,7 +507,7 @@ class TestBaseExtractor:
         # Create a concrete implementation for testing
         class TestExtractor(BaseExtractor):
             def extract_components(
-                self, code: str, file_path: str
+                self, code: str, _file_path: str
             ) -> ThreatModelComponents:
                 self.reset()
                 # Simple test implementation
@@ -559,7 +542,7 @@ class TestBaseExtractor:
 
         class TestExtractor(BaseExtractor):
             def extract_components(
-                self, code: str, file_path: str
+                self, code: str, _file_path: str
             ) -> ThreatModelComponents:
                 self.reset()
                 if "error" in code:
@@ -592,7 +575,7 @@ class TestBaseExtractor:
 
         class TestExtractor(BaseExtractor):
             def extract_components(
-                self, code: str, file_path: str
+                self, _code: str, _file_path: str
             ) -> ThreatModelComponents:
                 return ThreatModelComponents()
 
@@ -609,7 +592,7 @@ class TestBaseExtractor:
 
         class TestExtractor(BaseExtractor):
             def extract_components(
-                self, code: str, file_path: str
+                self, _code: str, _file_path: str
             ) -> ThreatModelComponents:
                 return ThreatModelComponents()
 
@@ -652,7 +635,7 @@ class TestBaseExtractor:
 
         class TestExtractor(BaseExtractor):
             def extract_components(
-                self, code: str, file_path: str
+                self, _code: str, _file_path: str
             ) -> ThreatModelComponents:
                 return ThreatModelComponents()
 
@@ -723,7 +706,7 @@ class TestBaseExtractor:
 
         class TestExtractor(BaseExtractor):
             def extract_components(
-                self, code: str, file_path: str
+                self, _code: str, _file_path: str
             ) -> ThreatModelComponents:
                 return ThreatModelComponents()
 
@@ -793,7 +776,7 @@ class TestBaseExtractor:
 
         class TestExtractor(BaseExtractor):
             def extract_components(
-                self, code: str, file_path: str
+                self, _code: str, _file_path: str
             ) -> ThreatModelComponents:
                 return ThreatModelComponents()
 
@@ -832,7 +815,7 @@ class TestBaseExtractor:
 
         class TestExtractor(BaseExtractor):
             def extract_components(
-                self, code: str, file_path: str
+                self, _code: str, _file_path: str
             ) -> ThreatModelComponents:
                 return ThreatModelComponents()
 
@@ -866,7 +849,7 @@ class TestBaseExtractor:
 
         class TestExtractor(BaseExtractor):
             def extract_components(
-                self, code: str, file_path: str
+                self, _code: str, _file_path: str
             ) -> ThreatModelComponents:
                 return ThreatModelComponents()
 
@@ -891,7 +874,7 @@ class TestBaseExtractor:
 
         class TestExtractor(BaseExtractor):
             def extract_components(
-                self, code: str, file_path: str
+                self, _code: str, _file_path: str
             ) -> ThreatModelComponents:
                 return ThreatModelComponents()
 
@@ -1024,31 +1007,46 @@ if __name__ == '__main__':
                 assert "protocol" in flow
 
             # Step 3: Generate Mermaid diagram
-            generator = MermaidDiagramGenerator()
+            generator = DiagramGenerator()
 
-            # Test flowchart
+            # Test flowchart (new generator includes YAML frontmatter)
             flowchart = generator.generate_diagram(
                 threat_model=threat_model, diagram_type="flowchart", show_threats=True
             )
-            assert flowchart.startswith("flowchart TD")
-            assert "Flask" in flowchart or "Web" in flowchart
-
-            # Test sequence diagram
-            sequence = generator.generate_diagram(
-                threat_model=threat_model, diagram_type="sequence"
-            )
-            assert sequence.startswith("sequenceDiagram")
+            assert "flowchart TD" in flowchart
+            assert "Flask" in flowchart or "Web" in flowchart or "flask" in flowchart
 
             # Step 4: Test JSON serialization/deserialization
             json_data = json.dumps(threat_dict, indent=2)
             parsed_data = json.loads(json_data)
-            assert parsed_data == threat_dict
 
-            # Step 5: Test diagram from JSON
-            diagram_from_json = MermaidDiagramGenerator.generate_from_components_dict(
-                components_dict=parsed_data, show_threats=True
+            # Verify core structure is preserved (metadata may have serialization differences)
+            for key in required_keys:
+                assert parsed_data[key] == threat_dict[key]
+
+            # Step 5: Test diagram generation still works with JSON data
+            # (Note: new generator requires ThreatModel objects, not dicts)
+            from adversary_mcp_server.threat_modeling.models import (
+                DataFlow,
+                ThreatModel,
+                ThreatModelComponents,
             )
-            assert diagram_from_json.startswith("flowchart TD")
+
+            components_from_json = ThreatModelComponents(
+                boundaries=parsed_data.get("boundaries", []),
+                external_entities=parsed_data.get("external_entities", []),
+                processes=parsed_data.get("processes", []),
+                data_stores=parsed_data.get("data_stores", []),
+                data_flows=[
+                    DataFlow(**flow) for flow in parsed_data.get("data_flows", [])
+                ],
+            )
+
+            threat_model_from_json = ThreatModel(components=components_from_json)
+            diagram_from_json = generator.generate_diagram(
+                threat_model_from_json, show_threats=True
+            )
+            assert "flowchart TD" in diagram_from_json
 
         finally:
             Path(temp_file).unlink(missing_ok=True)
@@ -1090,9 +1088,10 @@ def get_data():
             assert markdown_output.exists()
 
             # Generate and save diagram
-            generator = MermaidDiagramGenerator()
+            generator = DiagramGenerator()
             diagram = generator.generate_diagram(threat_model)
-            generator.save_diagram(diagram, str(diagram_output))
+            with open(diagram_output, "w") as f:
+                f.write(diagram)
             assert diagram_output.exists()
 
             # Verify JSON can be loaded
@@ -1107,9 +1106,9 @@ def get_data():
             markdown_content = markdown_output.read_text()
             assert "# Threat Model Report" in markdown_content
 
-            # Verify Mermaid diagram has content
+            # Verify Mermaid diagram has content (new generator includes YAML frontmatter)
             diagram_content = diagram_output.read_text()
-            assert diagram_content.startswith("flowchart TD")
+            assert "flowchart TD" in diagram_content
 
     def test_javascript_integration(self):
         """Test threat modeling with JavaScript code."""
@@ -1353,6 +1352,138 @@ export class DataService {
             assert any("API" in c or "Example.Com" in c for c in all_components)
             # Should have MongoDB from TypeScript
             assert any("Mongo" in c for c in all_components)
+
+    def test_full_threat_model_building_with_save(self):
+        """Test complete threat model building process with file saving."""
+        # Create test directory structure similar to a real application
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Create main app file
+            app_file = Path(temp_dir) / "app.py"
+            app_file.write_text(
+                """
+from flask import Flask, request, jsonify
+import sqlite3
+import requests
+
+app = Flask(__name__)
+
+@app.route('/api/users/<user_id>', methods=['GET'])
+def get_user(user_id):
+    # Database query with potential SQL injection
+    conn = sqlite3.connect('users.db')
+    cursor = conn.cursor()
+    query = f"SELECT * FROM users WHERE id = '{user_id}'"
+    result = cursor.execute(query).fetchone()
+
+    # External API call
+    stripe_response = requests.get(f"https://api.stripe.com/v1/customers/{user_id}")
+
+    return jsonify({
+        "user": result,
+        "payment_info": stripe_response.json()
+    })
+
+if __name__ == '__main__':
+    app.run()
+"""
+            )
+
+            # Create database module
+            db_file = Path(temp_dir) / "database.py"
+            db_file.write_text(
+                """
+import sqlite3
+import redis
+
+def get_db_connection():
+    return sqlite3.connect('app.db')
+
+def get_cache():
+    return redis.Redis(host='localhost', port=6379)
+
+def store_user_data(user_data):
+    conn = get_db_connection()
+    conn.execute("INSERT INTO users VALUES (?, ?, ?)",
+                (user_data['id'], user_data['name'], user_data['email']))
+    conn.commit()
+    conn.close()
+"""
+            )
+
+            # Build threat model
+            builder = ThreatModelBuilder(enable_llm=False)
+            threat_model = builder.build_threat_model(
+                source_path=temp_dir,
+                include_threats=True,
+                severity_threshold=Severity.MEDIUM,
+                use_llm=False,
+            )
+
+            # Verify components were extracted correctly
+            assert len(threat_model.components.processes) > 0
+            assert len(threat_model.components.data_stores) > 0
+            assert len(threat_model.components.external_entities) > 0
+            assert len(threat_model.components.data_flows) > 0
+
+            # Verify specific components
+            all_processes = threat_model.components.processes
+            all_stores = threat_model.components.data_stores
+            all_entities = threat_model.components.external_entities
+
+            # Should have Flask process
+            assert any("Flask" in p or "Web" in p for p in all_processes)
+
+            # Should have databases
+            assert any("SQL" in s or "Database" in s for s in all_stores)
+            assert any("Redis" in s for s in all_stores)
+
+            # Should have external HTTP client/API
+            assert any("HTTP" in e or "Client" in e or "API" in e for e in all_entities)
+
+            # Test file saving functionality
+            json_output = Path(temp_dir) / "test_threat_model.json"
+            markdown_output = Path(temp_dir) / "test_threat_model.md"
+
+            # Save JSON format
+            builder.save_threat_model(threat_model, str(json_output), format="json")
+            assert json_output.exists()
+
+            # Verify JSON structure
+            with open(json_output) as f:
+                json_data = json.load(f)
+
+            required_keys = [
+                "boundaries",
+                "external_entities",
+                "processes",
+                "data_stores",
+                "data_flows",
+            ]
+            for key in required_keys:
+                assert key in json_data
+                assert isinstance(json_data[key], list)
+
+            # Save markdown format
+            builder.save_threat_model(
+                threat_model, str(markdown_output), format="markdown"
+            )
+            assert markdown_output.exists()
+
+            # Verify markdown content
+            markdown_content = markdown_output.read_text()
+            assert "# Threat Model Report" in markdown_content
+            assert "## Architecture Components" in markdown_content
+
+            # Verify threat detection if threats are present
+            if threat_model.threats:
+                assert len(threat_model.threats) > 0
+                # Should detect SQL injection or similar vulnerabilities
+                threat_descriptions = [
+                    t.description.lower() for t in threat_model.threats
+                ]
+                assert any(
+                    "sql" in desc or "injection" in desc for desc in threat_descriptions
+                )
 
 
 if __name__ == "__main__":

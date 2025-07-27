@@ -199,16 +199,25 @@ def get_connection():
         assert "Generating diagram" in result.output
         assert "Using existing threat model" in result.output
         assert "Diagram Generated!" in result.output
+        assert "Validating Mermaid syntax" in result.output
+        assert "Mermaid syntax: Valid" in result.output
 
-        # Check that diagram was created
+        # Check that BOTH files were created (new behavior)
         diagram_file = mock_repo_structure / "threat_diagram.mmd"
+        html_file = mock_repo_structure / "threat_diagram.html"
         assert diagram_file.exists()
+        assert html_file.exists()
 
         # Verify mermaid content
-        content = diagram_file.read_text()
-        assert (
-            "flowchart" in content or "graph" in content or "sequenceDiagram" in content
-        )
+        mermaid_content = diagram_file.read_text()
+        assert "flowchart" in mermaid_content
+
+        # Verify HTML content
+        html_content = html_file.read_text()
+        assert "<!DOCTYPE html>" in html_content
+        assert "mermaid" in html_content
+        assert "Threat Model Diagram" in html_content
+        assert "flowchart" in html_content  # Mermaid content should be embedded
 
     @patch("adversary_mcp_server.cli._find_repo_by_name_cli")
     def test_diagram_command_no_threat_model(
@@ -222,10 +231,18 @@ def get_connection():
         assert result.exit_code == 0
         assert "Analyzing source code" in result.output
         assert "Diagram Generated!" in result.output
+        assert "Validating Mermaid syntax" in result.output
 
-        # Check that diagram was created
+        # Check that BOTH files were created (new behavior)
         diagram_file = mock_repo_structure / "threat_diagram.mmd"
+        html_file = mock_repo_structure / "threat_diagram.html"
         assert diagram_file.exists()
+        assert html_file.exists()
+
+        # Verify HTML content contains Mermaid
+        html_content = html_file.read_text()
+        assert "<!DOCTYPE html>" in html_content
+        assert "Threat Model Diagram" in html_content
 
     @patch("adversary_mcp_server.cli._find_repo_by_name_cli")
     def test_diagram_command_different_types(
@@ -234,14 +251,19 @@ def get_connection():
         """Test diagram command with different diagram types."""
         mock_find_repo.return_value = mock_repo_structure
 
-        # Test each diagram type
-        for diagram_type in ["flowchart", "graph", "sequence"]:
+        # Test supported diagram types (new generator only supports flowchart)
+        for diagram_type in ["flowchart"]:
             result = runner.invoke(
                 cli, ["diagram", "test-repo", "--type", diagram_type]
             )
 
             assert result.exit_code == 0
             assert "Diagram Generated!" in result.output
+
+        # Test unsupported diagram type should fail gracefully
+        result = runner.invoke(cli, ["diagram", "test-repo", "--type", "sequence"])
+        assert result.exit_code == 2  # Click validation error for invalid choice
+        assert "Invalid value for '--type'" in result.output
 
     @patch("adversary_mcp_server.cli._find_repo_by_name_cli")
     @patch("webbrowser.open")
@@ -256,10 +278,13 @@ def get_connection():
 
         assert result.exit_code == 0
         assert "Opening diagram in browser" in result.output
-        assert "HTML saved to" in result.output
+        assert "HTML file saved to" in result.output
+        assert "Diagram opened in your default browser" in result.output
 
-        # Check that HTML was created
+        # Check that BOTH files were created (HTML is always created now)
+        diagram_file = mock_repo_structure / "threat_diagram.mmd"
         html_file = mock_repo_structure / "threat_diagram.html"
+        assert diagram_file.exists()
         assert html_file.exists()
 
         # Verify HTML content
@@ -339,3 +364,107 @@ def get_connection():
                 result = runner.invoke(cli, ["diagram", "integration-test"])
                 assert result.exit_code == 0
                 assert "Using existing threat model" in result.output
+
+    @patch("adversary_mcp_server.cli._find_repo_by_name_cli")
+    def test_diagram_command_always_creates_html(
+        self, mock_find_repo, runner, mock_repo_structure
+    ):
+        """Test that diagram command ALWAYS creates HTML file, not just with --open."""
+        mock_find_repo.return_value = mock_repo_structure
+
+        result = runner.invoke(cli, ["diagram", "test-repo"])
+
+        assert result.exit_code == 0
+        assert "Generating HTML file" in result.output
+        assert "HTML file saved to" in result.output
+
+        # Verify both files exist
+        diagram_file = mock_repo_structure / "threat_diagram.mmd"
+        html_file = mock_repo_structure / "threat_diagram.html"
+        assert diagram_file.exists()
+        assert html_file.exists()
+
+        # Verify HTML content is properly formatted
+        html_content = html_file.read_text()
+        assert "<!DOCTYPE html>" in html_content
+        assert (
+            '<script src="https://cdn.jsdelivr.net/npm/mermaid@latest/dist/mermaid.min.js"></script>'
+            in html_content
+        )
+        assert "mermaid.initialize(" in html_content
+        assert '<div class="mermaid">' in html_content
+
+    @patch("adversary_mcp_server.cli._find_repo_by_name_cli")
+    def test_diagram_command_validation_reporting(
+        self, mock_find_repo, runner, mock_repo_structure
+    ):
+        """Test that diagram command reports validation status."""
+        mock_find_repo.return_value = mock_repo_structure
+
+        result = runner.invoke(cli, ["diagram", "test-repo"])
+
+        assert result.exit_code == 0
+        assert "Validating Mermaid syntax" in result.output
+        # Should show valid syntax for generated diagrams
+        assert "Mermaid syntax: Valid" in result.output or "syntax:" in result.output
+
+    @patch("adversary_mcp_server.cli._find_repo_by_name_cli")
+    @patch("adversary_mcp_server.cli._validate_mermaid_syntax")
+    def test_diagram_command_validation_error_handling(
+        self, mock_validate, mock_find_repo, runner, mock_repo_structure
+    ):
+        """Test diagram command handles validation errors gracefully."""
+        mock_find_repo.return_value = mock_repo_structure
+        # Mock validation to return an error
+        mock_validate.return_value = {
+            "valid": False,
+            "error": "Invalid node syntax on line 5: malformed node",
+        }
+
+        result = runner.invoke(cli, ["diagram", "test-repo"])
+
+        # Should still complete successfully even with validation errors
+        assert result.exit_code == 0
+        assert "Validating Mermaid syntax" in result.output
+        assert "Mermaid syntax: Error" in result.output
+        assert "Invalid node syntax on line 5" in result.output
+
+        # Files should still be created despite validation error
+        diagram_file = mock_repo_structure / "threat_diagram.mmd"
+        html_file = mock_repo_structure / "threat_diagram.html"
+        assert diagram_file.exists()
+        assert html_file.exists()
+
+    @patch("adversary_mcp_server.cli._find_repo_by_name_cli")
+    def test_diagram_command_html_content_structure(
+        self, mock_find_repo, runner, mock_repo_structure
+    ):
+        """Test that generated HTML has correct structure and content."""
+        mock_find_repo.return_value = mock_repo_structure
+
+        result = runner.invoke(cli, ["diagram", "test-repo"])
+
+        assert result.exit_code == 0
+
+        html_file = mock_repo_structure / "threat_diagram.html"
+        html_content = html_file.read_text()
+
+        # Check essential HTML structure
+        assert "<!DOCTYPE html>" in html_content
+        assert "<html>" in html_content
+        assert "<head>" in html_content
+        assert "<body>" in html_content
+
+        # Check Mermaid.js integration
+        assert "cdn.jsdelivr.net/npm/mermaid" in html_content
+        assert "mermaid.initialize" in html_content
+        assert "startOnLoad: true" in html_content
+
+        # Check page structure
+        assert "Threat Model Diagram" in html_content
+        assert '<div class="mermaid">' in html_content
+        assert "flowchart" in html_content  # Should contain the actual diagram
+
+        # Check controls
+        assert "Copy Diagram Code" in html_content
+        assert "copyDiagram()" in html_content
