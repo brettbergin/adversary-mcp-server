@@ -150,7 +150,7 @@ adv_scan_folder
 |------|-------------|-------------------|
 | `adv_scan_code` | source code scanning | confidence scoring |
 | `adv_scan_file` | file scanning | AI-powered prompts, detailed explanations |
-| `adv_scan_directory` | directory scanning | statistical insights |
+| `adv_scan_folder` | directory scanning | statistical insights |
 | `adv_diff_scan` | scans only newly added lines | Smart change detection, branch comparison, requires `working_directory` |
 | `adv_configure_settings` | configuration management | LLM settings, validation |
 | `adv_get_status` | Get server status | LLM configuration status |
