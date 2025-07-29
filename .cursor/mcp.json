@@ -19,7 +19,7 @@
       "command": "~/code/adversary-mcp-server/.venv/bin/python",
       "args": [
         "-m",
-        "threatmodel_mcp_server.server"
+        "adversary_mcp_server.server"
       ],
       "cwd": "~/code/adversary-mcp-server",
       "env": {
