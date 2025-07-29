@@ -1,4 +1,4 @@
-"""Adversary MCP Server - Security vulnerability scanning and exploit generation."""
+"""Adversary MCP Server - Security vulnerability scanning and detection."""
 
 import re
 import sys
@@ -88,9 +88,7 @@ def get_version() -> str:
 __version__ = get_version()
 __author__ = "Brett Bergin"
 __email__ = "brettberginbc@yahoo.com"
-__description__ = (
-    "MCP server for adversarial security analysis and vulnerability detection"
-)
+__description__ = "MCP server for security vulnerability scanning and detection"
 
 from .scanner.exploit_generator import ExploitGenerator
 from .server import AdversaryMCPServer

@@ -12,13 +12,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from adversary_mcp_server.scanner.scan_engine import EnhancedScanResult, ScanEngine
-from adversary_mcp_server.scanner.types import (
-    Category,
-    Language,
-    LanguageSupport,
-    Severity,
-    ThreatMatch,
-)
+from adversary_mcp_server.scanner.types import Category, Severity, ThreatMatch
 
 
 class TestEnhancedScanResult:
@@ -58,14 +52,13 @@ class TestEnhancedScanResult:
 
         result = EnhancedScanResult(
             file_path="test.py",
-            language=Language.PYTHON,
             llm_threats=llm_threats,
             semgrep_threats=rules_threats,  # Rules threats now go in semgrep_threats
             scan_metadata=scan_metadata,
         )
 
         assert result.file_path == "test.py"
-        assert result.language == Language.PYTHON
+        # Language is now auto-detected as generic
         assert len(result.semgrep_threats) == 1
         assert len(result.llm_threats) == 1
         assert len(result.all_threats) == 2  # Combined
@@ -99,7 +92,6 @@ class TestEnhancedScanResult:
 
         result = EnhancedScanResult(
             file_path="test.py",
-            language=Language.PYTHON,
             llm_threats=llm_threats,
             semgrep_threats=rules_threats,
             scan_metadata={},
@@ -147,7 +139,6 @@ class TestEnhancedScanResult:
 
         result = EnhancedScanResult(
             file_path="test.py",
-            language=Language.PYTHON,
             llm_threats=llm_threats,
             semgrep_threats=rules_threats + [],
             scan_metadata={},
@@ -196,7 +187,6 @@ class TestEnhancedScanResult:
 
         result = EnhancedScanResult(
             file_path="test.py",
-            language=Language.PYTHON,
             llm_threats=[],
             semgrep_threats=rules_threats + semgrep_threats,
             scan_metadata={},
@@ -258,7 +248,6 @@ class TestEnhancedScanResult:
 
         result = EnhancedScanResult(
             file_path="test.py",
-            language=Language.PYTHON,
             llm_threats=llm_threats,
             semgrep_threats=rules_threats + semgrep_threats,
             scan_metadata={},
@@ -307,7 +296,6 @@ class TestEnhancedScanResult:
 
         result = EnhancedScanResult(
             file_path="test.py",
-            language=Language.PYTHON,
             llm_threats=llm_threats,
             semgrep_threats=rules_threats + [],
             scan_metadata={},
@@ -355,7 +343,6 @@ class TestEnhancedScanResult:
 
         result = EnhancedScanResult(
             file_path="test.py",
-            language=Language.PYTHON,
             llm_threats=[],
             semgrep_threats=threats,
             scan_metadata={},
@@ -390,7 +377,6 @@ class TestEnhancedScanResult:
 
         result = EnhancedScanResult(
             file_path="test.py",
-            language=Language.PYTHON,
             llm_threats=[],
             semgrep_threats=threats,
             scan_metadata={},
@@ -508,7 +494,6 @@ class TestScanEngine:
             system_prompt="System prompt",
             user_prompt="User prompt",
             file_path="test.py",
-            language=Language.PYTHON,
             max_findings=20,
         )
         mock_llm_instance.create_analysis_prompt.return_value = mock_prompt
@@ -525,7 +510,6 @@ class TestScanEngine:
         result = scanner.scan_code_sync(
             source_code="test code",
             file_path="test.py",
-            language=Language.PYTHON,
             use_llm=True,
         )
 
@@ -541,7 +525,7 @@ class TestScanEngine:
 
         mock_semgrep_instance.scan_code.assert_called_once()
         mock_llm_instance.create_analysis_prompt.assert_called_once_with(
-            "test code", "test.py", Language.PYTHON
+            "test code", "test.py", "generic"
         )
 
     @patch("adversary_mcp_server.scanner.scan_engine.SemgrepScanner")
@@ -583,7 +567,6 @@ class TestScanEngine:
         result = scanner.scan_code_sync(
             source_code="test code",
             file_path="test.py",
-            language=Language.PYTHON,
             use_llm=True,
         )
 
@@ -627,13 +610,12 @@ class TestScanEngine:
         try:
             result = scanner.scan_file_sync(
                 file_path=temp_file,
-                language=Language.PYTHON,
                 use_llm=False,
             )
 
             assert isinstance(result, EnhancedScanResult)
             assert result.file_path == str(temp_file)
-            assert result.language == Language.PYTHON
+            # Language is now auto-detected as generic
 
         finally:
             # Clean up
@@ -661,7 +643,6 @@ class TestScanEngine:
         with pytest.raises(FileNotFoundError):
             scanner.scan_file_sync(
                 file_path=Path("non_existent_file.py"),
-                language=Language.PYTHON,
                 use_llm=False,
             )
 
@@ -735,67 +716,6 @@ class TestScanEngine:
                 directory_path=Path("non_existent_directory"),
                 use_llm=False,
             )
-
-    def test_detect_language(self):
-        """Test language detection from file extensions."""
-        mock_threat_engine = Mock()
-        mock_credential_manager = Mock()
-        mock_config = Mock()
-        mock_config.enable_semgrep_scanning = True
-        mock_credential_manager.load_config.return_value = mock_config
-
-        with patch(
-            "adversary_mcp_server.scanner.scan_engine.SemgrepScanner"
-        ) as mock_semgrep_scanner:
-            # Mock Semgrep scanner
-            mock_semgrep_instance = Mock()
-            mock_semgrep_instance.is_available.return_value = True
-            mock_semgrep_scanner.return_value = mock_semgrep_instance
-
-            scanner = ScanEngine(
-                credential_manager=mock_credential_manager,
-                enable_llm_analysis=False,
-            )
-
-            test_cases = [
-                ("test.py", Language.PYTHON),
-                ("test.js", Language.JAVASCRIPT),
-                ("test.jsx", Language.JAVASCRIPT),
-                ("test.ts", Language.TYPESCRIPT),
-                ("test.tsx", Language.TYPESCRIPT),
-                ("test.html", Language.HTML),
-                ("test.htm", Language.HTML),
-                ("test.ejs", Language.HTML),
-                ("test.handlebars", Language.HTML),
-                ("test.hbs", Language.HTML),
-                ("test.vue", Language.HTML),
-                ("test.svelte", Language.HTML),
-                ("test.css", Language.CSS),
-                ("test.scss", Language.CSS),
-                ("test.sass", Language.CSS),
-                ("test.json", Language.JSON),
-                ("test.yaml", Language.YAML),
-                ("test.yml", Language.YAML),
-                ("test.xml", Language.XML),
-                ("test.svg", Language.XML),
-                ("test.php", Language.PHP),
-                ("test.sh", Language.SHELL),
-                ("test.bash", Language.SHELL),
-                ("test.dockerfile", Language.DOCKERFILE),
-                ("test.go", Language.GO),
-                ("test.rb", Language.RUBY),
-                ("test.java", Language.JAVA),
-                ("test.cs", Language.CSHARP),
-                ("test.sql", Language.SQL),
-                ("test.tf", Language.TERRAFORM),
-                ("test.tfvars", Language.TERRAFORM),
-                ("test.hcl", Language.TERRAFORM),
-                ("test.unknown", Language.GENERIC),  # Updated fallback
-            ]
-
-            for filename, expected_language in test_cases:
-                detected_language = scanner._detect_language(Path(filename))
-                assert detected_language == expected_language
 
     @patch("adversary_mcp_server.scanner.scan_engine.SemgrepScanner")
     def test_scan_directory_includes_expanded_file_types(self, mock_semgrep_scanner):
@@ -1041,114 +961,6 @@ class TestScanEngine:
         # Should reinitialize LLM analyzer
         assert mock_llm_analyzer.call_count >= 2  # Initial + reload
 
-
-class TestLanguageSupport:
-    """Test centralized LanguageSupport class."""
-
-    def test_get_supported_languages(self):
-        """Test getting list of supported languages."""
-        languages = LanguageSupport.get_supported_languages()
-
-        # Should include all our expected languages
-        assert Language.PYTHON in languages
-        assert Language.JAVASCRIPT in languages
-        assert Language.TERRAFORM in languages
-        assert Language.HTML in languages
-        assert Language.GENERIC in languages
-
-        # Should be a reasonable number of languages
-        assert len(languages) >= 17  # Current count including TERRAFORM
-
-    def test_extension_to_language_mapping(self):
-        """Test file extension to language mapping."""
-        extension_map = LanguageSupport.get_extension_to_language_map()
-
-        # Test some key mappings
-        assert extension_map[".py"] == Language.PYTHON
-        assert extension_map[".js"] == Language.JAVASCRIPT
-        assert extension_map[".tf"] == Language.TERRAFORM
-        assert extension_map[".tfvars"] == Language.TERRAFORM
-        assert extension_map[".html"] == Language.HTML
-        assert extension_map[".ejs"] == Language.HTML
-
-    def test_language_to_extension_mapping(self):
-        """Test language to primary extension mapping."""
-        lang_map = LanguageSupport.get_language_to_extension_map()
-
-        # Test primary extensions
-        assert lang_map[Language.PYTHON] == ".py"
-        assert lang_map[Language.JAVASCRIPT] == ".js"
-        assert lang_map[Language.TERRAFORM] == ".tf"
-        assert lang_map[Language.HTML] == ".html"
-
-    def test_detect_language(self):
-        """Test language detection from file paths."""
-        test_cases = [
-            ("main.tf", Language.TERRAFORM),
-            ("variables.tfvars", Language.TERRAFORM),
-            ("config.hcl", Language.TERRAFORM),
-            ("template.ejs", Language.HTML),
-            ("script.py", Language.PYTHON),
-            ("Dockerfile", Language.DOCKERFILE),
-            ("unknown.xyz", Language.GENERIC),
-        ]
-
-        for file_path, expected_lang in test_cases:
-            detected = LanguageSupport.detect_language(file_path)
-            assert (
-                detected == expected_lang
-            ), f"Failed for {file_path}: expected {expected_lang}, got {detected}"
-
-    def test_get_extensions_for_language(self):
-        """Test getting all extensions for a specific language."""
-        # Test Terraform extensions
-        tf_extensions = LanguageSupport.get_extensions_for_language(Language.TERRAFORM)
-        assert ".tf" in tf_extensions
-        assert ".tfvars" in tf_extensions
-        assert ".hcl" in tf_extensions
-
-        # Test HTML extensions
-        html_extensions = LanguageSupport.get_extensions_for_language(Language.HTML)
-        assert ".html" in html_extensions
-        assert ".ejs" in html_extensions
-        assert ".vue" in html_extensions
-
-    def test_get_primary_extension(self):
-        """Test getting primary extension for languages."""
-        assert LanguageSupport.get_primary_extension(Language.TERRAFORM) == ".tf"
-        assert LanguageSupport.get_primary_extension(Language.PYTHON) == ".py"
-        assert LanguageSupport.get_primary_extension(Language.HTML) == ".html"
-
-    def test_get_language_enum_values(self):
-        """Test getting language enum values for API schemas."""
-        enum_values = LanguageSupport.get_language_enum_values()
-
-        # Should include all language string values
-        assert "terraform" in enum_values
-        assert "python" in enum_values
-        assert "javascript" in enum_values
-        assert "html" in enum_values
-        assert "generic" in enum_values
-
-        # Should be strings, not Language enums
-        assert all(isinstance(val, str) for val in enum_values)
-
-    def test_centralized_configuration_consistency(self):
-        """Test that centralized configuration is internally consistent."""
-        # All languages should have both extension mapping and primary extension
-        supported_languages = LanguageSupport.get_supported_languages()
-        extension_map = LanguageSupport.get_extension_to_language_map()
-        primary_map = LanguageSupport.get_language_to_extension_map()
-
-        for language in supported_languages:
-            # Each language should have a primary extension
-            assert language in primary_map
-
-            # Primary extension should be in the extension map
-            primary_ext = primary_map[language]
-            assert primary_ext in extension_map
-            assert extension_map[primary_ext] == language
-
     @patch("adversary_mcp_server.scanner.scan_engine.SemgrepScanner")
     @patch("adversary_mcp_server.scanner.scan_engine.LLMScanner")
     @pytest.mark.asyncio
@@ -1203,7 +1015,6 @@ class TestLanguageSupport:
         try:
             result = await scanner.scan_file(
                 file_path=temp_file,
-                language=Language.PYTHON,
                 use_llm=True,
                 use_semgrep=False,
             )
@@ -1260,7 +1071,6 @@ class TestLanguageSupport:
         try:
             result = await scanner.scan_file(
                 file_path=temp_file,
-                language=Language.PYTHON,
                 use_llm=True,
                 use_semgrep=False,
             )
@@ -1313,7 +1123,6 @@ class TestLanguageSupport:
         try:
             result = scanner.scan_file_sync(
                 file_path=temp_file,
-                language=Language.PYTHON,
                 use_llm=False,  # Disabled by user
                 use_semgrep=False,
             )
@@ -1683,7 +1492,6 @@ class TestLanguageSupport:
             result = scanner.scan_code_sync(
                 source_code="test code",
                 file_path="test.py",
-                language=Language.PYTHON,
                 use_llm=False,
                 use_semgrep=True,
                 severity_threshold=Severity.HIGH,
@@ -1772,7 +1580,6 @@ class TestLanguageSupport:
         try:
             result = scanner.scan_file_sync(
                 file_path=temp_file,
-                language=Language.GENERIC,
                 use_llm=False,
                 use_semgrep=False,
             )
@@ -1828,7 +1635,6 @@ class TestLanguageSupport:
 
                 result = scanner.scan_file_sync(
                     file_path=temp_file,
-                    language=Language.PYTHON,
                     use_llm=False,
                     use_semgrep=False,
                 )
@@ -1870,7 +1676,6 @@ class TestLanguageSupport:
         try:
             result = scanner.scan_file_sync(
                 file_path=temp_file,
-                language=Language.PYTHON,
                 use_llm=False,
                 use_semgrep=False,
             )
@@ -1926,7 +1731,6 @@ class TestLanguageSupport:
         try:
             result = scanner.scan_file_sync(
                 file_path=temp_file,
-                language=Language.PYTHON,
                 use_llm=False,
                 use_semgrep=True,
             )
@@ -1982,7 +1786,6 @@ class TestLanguageSupport:
         try:
             result = await scanner.scan_file(
                 file_path=temp_file,
-                language=Language.PYTHON,
                 use_llm=False,
                 use_semgrep=True,
             )

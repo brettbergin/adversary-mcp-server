@@ -7,7 +7,7 @@ from typing import Any
 
 from ..credentials import CredentialManager
 from ..logger import get_logger
-from .types import Category, Language, Severity, ThreatMatch
+from .types import Category, Severity, ThreatMatch
 
 logger = get_logger("llm_scanner")
 
@@ -151,7 +151,6 @@ class LLMAnalysisPrompt:
     system_prompt: str
     user_prompt: str
     file_path: str
-    language: Language
     max_findings: int = 20
 
     def to_dict(self) -> dict[str, Any]:
@@ -162,7 +161,6 @@ class LLMAnalysisPrompt:
             "system_prompt": self.system_prompt,
             "user_prompt": self.user_prompt,
             "file_path": self.file_path,
-            "language": self.language.value,
             "max_findings": self.max_findings,
         }
         logger.debug(f"LLMAnalysisPrompt dict created with keys: {list(result.keys())}")
@@ -218,7 +216,7 @@ class LLMScanner:
         self,
         source_code: str,
         file_path: str,
-        language: Language,
+        language: str,
         max_findings: int = 20,
     ) -> LLMAnalysisPrompt:
         """Create analysis prompt for the given code.
@@ -233,7 +231,7 @@ class LLMScanner:
             LLMAnalysisPrompt object
         """
         file_path_abs = str(Path(file_path).resolve())
-        logger.info(f"Creating analysis prompt for {file_path_abs} ({language.value})")
+        logger.info(f"Creating analysis prompt for {file_path_abs} ({language})")
         logger.debug(
             f"Source code length: {len(source_code)} characters, max_findings: {max_findings}"
         )
@@ -251,7 +249,6 @@ class LLMScanner:
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 file_path=file_path,
-                language=language,
                 max_findings=max_findings,
             )
             logger.info(f"Successfully created analysis prompt for {file_path_abs}")
@@ -389,7 +386,7 @@ Vulnerability types to look for:
 - Denial of service vulnerabilities"""
 
     def _create_user_prompt(
-        self, source_code: str, language: Language, max_findings: int
+        self, source_code: str, language: str, max_findings: int
     ) -> str:
         """Create user prompt for the given code.
 
@@ -402,7 +399,7 @@ Vulnerability types to look for:
             Formatted prompt string
         """
         logger.debug(
-            f"Creating user prompt for {language.value} code, max_findings: {max_findings}"
+            f"Creating user prompt for {language} code, max_findings: {max_findings}"
         )
 
         # Truncate very long code to fit in token limits
@@ -420,9 +417,9 @@ Vulnerability types to look for:
                 f"Code length {original_length} is within limit, no truncation needed"
             )
 
-        prompt = f"""Analyze the following {language.value} code for security vulnerabilities:
+        prompt = f"""Analyze the following {language} code for security vulnerabilities:
 
-```{language.value}
+```{language}
 {source_code}
 ```
 
@@ -463,7 +460,7 @@ Response format:
         self,
         source_code: str,
         file_path: str,
-        language: Language,
+        language: str,
         max_findings: int = 20,
     ) -> list[LLMSecurityFinding]:
         """Analyze code for security vulnerabilities.
@@ -481,7 +478,7 @@ Response format:
             Empty list (client-based LLM doesn't do analysis here)
         """
         file_path_abs = str(Path(file_path).resolve())
-        logger.info(f"analyze_code called for {file_path_abs} ({language.value})")
+        logger.info(f"analyze_code called for {file_path_abs} ({language})")
         logger.debug(
             "Client-based LLM approach - returning empty list (analysis done by client)"
         )
@@ -492,7 +489,7 @@ Response format:
     async def analyze_file(
         self,
         file_path,
-        language: Language,
+        language: str,
         max_findings: int = 20,
     ) -> list[LLMSecurityFinding]:
         """Analyze a single file for security vulnerabilities.
@@ -509,7 +506,7 @@ Response format:
             Empty list (client-based LLM doesn't do analysis here)
         """
         file_path_abs = str(Path(file_path).resolve())
-        logger.info(f"analyze_file called for {file_path_abs} ({language.value})")
+        logger.info(f"analyze_file called for {file_path_abs} ({language})")
         logger.debug(
             "Client-based LLM approach - returning empty list (analysis done by client)"
         )
@@ -550,7 +547,7 @@ Response format:
 
     def batch_analyze_code(
         self,
-        code_samples: list[tuple[str, str, Language]],
+        code_samples: list[tuple[str, str, str]],
         max_findings_per_sample: int = 20,
     ) -> list[list[LLMSecurityFinding]]:
         """Analyze multiple code samples.
@@ -570,7 +567,7 @@ Response format:
         results = []
         for i, (code, file_path, language) in enumerate(code_samples):
             logger.debug(
-                f"Processing sample {i+1}/{len(code_samples)}: {file_path} ({language.value})"
+                f"Processing sample {i+1}/{len(code_samples)}: {file_path} ({language})"
             )
             # For client-based approach, return empty results
             results.append([])

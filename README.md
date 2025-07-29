@@ -75,17 +75,14 @@ Once configured, you can use these MCP tools in Cursor:
 
 - `adv_scan_code` - Hybrid scanning with rules + AI analysis
 - `adv_scan_file` - file scanning with LLM support
-- `adv_scan_folder` - folder scanning
+- `adv_scan_directory` - directory scanning
 - `adv_diff_scan` - scans only changed files between branches
-- `adv_generate_exploit` - exploit generation
 - `adv_configure_settings` - Configuration management
 - `adv_get_status` - Check server status and AI availability
 - `adv_get_version` - Get version information
 - `adv_mark_false_positive` - Mark false positive
-- `adv_unmark_false_positives` - Unmark false positive
-- `adv_list_false_postives` - List false positives
-- `adv_threat_model` - generates architecture analysis with structured output (🆕 **LLM-enhanced**)
-- `adv_diagram` - creates visual architecture diagrams (🆕 **LLM-enhanced**)
+- `adv_unmark_false_positive` - Unmark false positive
+- `adv_list_false_positives` - List false positives
 
 ### 4. Run Demo (Optional)
 
@@ -153,17 +150,14 @@ adv_scan_folder
 |------|-------------|-------------------|
 | `adv_scan_code` | source code scanning | confidence scoring |
 | `adv_scan_file` | file scanning | AI-powered prompts, detailed explanations |
-| `adv_scan_folder` | folder scanning | statistical insights |
+| `adv_scan_directory` | directory scanning | statistical insights |
 | `adv_diff_scan` | scans only newly added lines | Smart change detection, branch comparison, requires `working_directory` |
-| `adv_generate_exploit` | exploit generation | Context-aware prompts, safety mode |
 | `adv_configure_settings` | configuration management | LLM settings, validation |
 | `adv_get_status` | Get server status | LLM configuration status |
 | `adv_get_version` | Get version information | Shows AI capabilities |
 | `adv_mark_false_positive` | Mark false positive | Mark false positive |
-| `adv_unmark_false_positive` | Unmark flase positive | unmark false positive |
-| `adv_list_false_positves` | list false positives | list false positives |
-| `adv_threat_model` | Architecture analysis, component extraction, JSON/Markdown output |
-| `adv_diagram` | Visual architecture diagrams, threat highlighting, multiple formats |
+| `adv_unmark_false_positive` | Unmark false positive | unmark false positive |
+| `adv_list_false_positives` | list false positives | list false positives |
 
 ### **🆕 Git Diff-Aware Scanning**
 
@@ -201,201 +195,6 @@ adv_diff_scan
  working_directory="/path/to/your/repo"
 ```
 
-## **🆕 STRIDE Threat Modeling**
-
-The Adversary MCP Server now includes comprehensive threat modeling capabilities that analyze your application architecture and generate STRIDE-based security assessments with visual diagrams.
-
-### **Key Features**
-- **🏗️ Architecture Analysis**: Automatically extracts components, data flows, and trust boundaries from source code
-- **🎯 STRIDE Methodology**: Identifies Spoofing, Tampering, Repudiation, Information Disclosure, Denial of Service, and Elevation of Privilege threats
-- **📊 Visual Diagrams**: Generates Mermaid.js flowcharts, graphs, and sequence diagrams
-- **📋 Structured Output**: Provides JSON and Markdown reports for documentation and integration
-- **🚀 Zero Configuration**: Works out-of-the-box with intelligent defaults for current directory
-
-### **Available Tools**
-
-| Tool | Description | Default Behavior |
-|------|-------------|------------------|
-| `adv_threat_model` | Generate STRIDE-based threat model from source code | Analyzes current directory, outputs `threat_model.json` |
-| `adv_diagram` | Create Mermaid.js architecture diagrams | Uses current directory, outputs `threat_diagram.mmd` |
-
-### **Basic Usage**
-
-#### **Simplest Usage (Current Directory)**
-```bash
-adv_threat_model
-```
-This will:
-- Analyze all supported source files in your current project directory
-- Generate a complete threat model with STRIDE analysis
-- Save results to `threat_model.json` in your project root
-- Include medium+ severity threats by default
-
-#### **Generate Visual Diagram**
-```bash
-adv_diagram
- diagram_type=flowchart
-```
-This will:
-- Create a Mermaid.js flowchart from your architecture
-- Highlight threats with color-coded severity levels
-- Save to `threat_diagram.mmd` in your project root
-
-### **Advanced Configuration**
-
-#### **Threat Model Generation**
-```bash
-adv_threat_model
-  source_path="/path/to/source"
-  output_file="/path/to/output.json"
-  include_threats=true # Optional: include STRIDE analysis
-  severity_threshold=medium
-  output_format=markdown # Optional: json or markdown
-```
-
-#### **Diagram Generation**
-```bash
-adv_diagram
- source_path="/path/to/source"
- output_file="/path/to/diagram.mmd"
- diagram_type=sequence
- show_threats=true
- layout_direction=LR # Optional: TD/LR/BT/RL (default: TD)
-```
-
-### **Language Support**
-
-#### **Currently Supported**
-- **Python**: Complete AST-based analysis with Flask, Django, FastAPI detection
-  - Web frameworks (Flask, Django, FastAPI)
-  - Database connections (SQLite, PostgreSQL, MySQL, MongoDB, Redis)
-  - External APIs (Stripe, GitHub, SendGrid, AWS, Google Cloud)
-  - File system operations and security patterns
-- **Javascript/Typescript**: In-Progress
-
-#### **Architecture Detection**
-The system automatically identifies:
-- **External Entities**: Users, third-party APIs, external services
-- **Processes**: Web applications, API servers, background workers
-- **Data Stores**: Databases, file systems, caches, message queues
-- **Trust Boundaries**: Internet, DMZ, Application layer, Data layer
-- **Data Flows**: HTTP/HTTPS, SQL, API calls, file operations
-
-### **Output Formats**
-
-#### **JSON Structure**
-```json
-{
-  "boundaries": ["Internet", "Application", "Data Layer"],
-  "external_entities": ["User", "Stripe API"],
-  "processes": ["Flask App"],
-  "data_stores": ["SQLite"],
-  "data_flows": [
-    {"source": "User", "target": "Flask App", "protocol": "HTTPS"},
-    {"source": "Flask App", "target": "SQLite", "protocol": "SQL"}
-  ],
-  "threats": [
-    {
-      "type": "injection",
-      "component": "Flask App",
-      "title": "SQL Injection Risk",
-      "severity": "high",
-      "description": "Direct SQL queries without parameterization",
-      "mitigation": "Use parameterized queries or ORM"
-    }
-  ],
-  "metadata": {
-    "source_path": "/path/to/code",
-    "analysis_type": "STRIDE"
-  }
-}
-```
-
-#### **Mermaid Diagram Examples**
-
-**Flowchart with Threat Highlighting:**
-```mermaid
-flowchart TD
-    User[User]:::external --> WebApp[Web Application]:::process
-    WebApp --> Database[SQLite Database]:::datastore
-    WebApp --> StripeAPI[Stripe API]:::threat
-
-    classDef external fill:#e1f5fe
-    classDef process fill:#f3e5f5
-    classDef datastore fill:#e8f5e8
-    classDef threat fill:#ffebee,stroke:#f44336
-```
-
-### **Integration Workflows**
-
-#### **Complete Analysis Workflow**
-```json
-// Step 1: Generate threat model
-{
-  "tool": "adv_threat_model",
-  "arguments": {"output_format": "json"}
-}
-
-// Step 2: Create architecture diagram
-{
-  "tool": "adv_diagram",
-  "arguments": {"diagram_type": "flowchart", "show_threats": true}
-}
-
-// Step 3: Generate documentation
-{
-  "tool": "adv_threat_model",
-  "arguments": {"output_format": "markdown", "output_file": "SECURITY.md"}
-}
-```
-
-#### **CI/CD Integration**
-The threat modeling tools integrate seamlessly with version control:
-
-```yaml
-# .github/workflows/security-analysis.yml
-- name: Generate Threat Model
-  run: |
-    # Use MCP tools via cursor or API
-    # Files are automatically saved to project root
-    git add threat_model.json threat_diagram.mmd
-    git commit -m "Update threat model analysis"
-```
-
-### **STRIDE Threat Categories**
-
-The system analyzes code for all STRIDE threat types:
-
-| STRIDE Category | Description | Example Threats |
-|-----------------|-------------|-----------------|
-| **Spoofing** | Identity verification failures | Weak authentication, session hijacking |
-| **Tampering** | Data integrity violations | Input validation bypass, data corruption |
-| **Repudiation** | Audit and logging failures | Missing audit trails, weak logging |
-| **Information Disclosure** | Data confidentiality breaches | SQL injection, path traversal, exposure |
-| **Denial of Service** | Availability attacks | Resource exhaustion, infinite loops |
-| **Elevation of Privilege** | Authorization failures | Privilege escalation, access control bypass |
-
-### **Best Practices**
-
-#### **Regular Analysis**
-- Run threat modeling on new features and major changes
-- Update diagrams when architecture evolves
-- Review threat assessments during security reviews
-- Include threat models in documentation
-
-#### **Team Collaboration**
-- Commit threat models to version control alongside code
-- Use markdown output for readable security documentation
-- Share Mermaid diagrams in design reviews and documentation
-- Track threat remediation in issue tracking systems
-
-#### **Automation Integration**
-- Generate threat models in CI/CD pipelines
-- Compare threat models between branches to identify new risks
-- Export JSON data for security dashboards and metrics
-- Integrate with existing security tooling and workflows
-
----
 
 ## **🆕 Semgrep Integration**
 
@@ -599,21 +398,22 @@ adversary-mcp-cli scan --source-branch=main --target-branch=feature/auth
 
 ## 🏗️ Enhanced Architecture
 
-The v0.9.6 release features a **double-engine architecture** combining multiple analysis engines:
+The v0.9.8 release features a **triple-engine architecture** combining multiple analysis engines:
 
 ```mermaid
 graph TB
     A[Source Code] --> B[Enhanced Scanner]
+    B --> C[Rules Engine]
     B --> D[LLM Analyzer]
     B --> Q[Semgrep Scanner]
 
+    C --> J[Rule Matches]
     D --> H[LLM Service]
     H --> I[AI Security Analysis]
 
     Q --> R[Semgrep Engine]
     R --> T[Pro Rules - Optional]
 
-    C --> J[Threat Matches]
     D --> K[LLM Findings]
     Q --> U[Semgrep Findings]
 
@@ -627,6 +427,11 @@ graph TB
     M --> P[Statistical Analysis]
     M --> V[🆕 JSON Output]
 
+    subgraph "Built-in Rules"
+        C
+        J
+    end
+
     subgraph "AI Analysis"
         D
         H
@@ -637,12 +442,11 @@ graph TB
     subgraph "Semgrep Integration"
         Q
         R
-        S
         T
         U
     end
 
-    subgraph "Double-Engine Output"
+    subgraph "Triple-Engine Output"
         L
         M
         N
@@ -658,7 +462,7 @@ graph TB
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
 │   Cursor IDE    │───▶│🆕 Enhanced MCP  │───▶│🆕 Triple Engine │
 │                 │    │     Server      │    │                 │
-│ • Code editing  │    │ • adv_* tools   │    │ • AST Analysis  │
+│ • Code editing  │    │ • adv_* tools   │    │ • Rules Engine  │
 │ • Chat interface│    │ • AI integration│    │ • LLM Analysis  │
 │ • Tool calling  │    │ • JSON output   │    │ • Semgrep Scan  │
 │ • Auto-save     │    │ • Protocol v2   │    │ • Hot-reload    │
@@ -667,7 +471,7 @@ graph TB
                               ┌─────────────────────────┼─────────────────────────┐
                               │                         ▼                         │
                     ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-                    │🆕 Enhanced Rules│    │  Custom Rules   │    │🆕 Semgrep Rules │
+                    │🆕 Built-in Rules│    │  Custom Rules   │    │🆕 Semgrep Rules │
                     │   (95+ rules)   │    │  User defined   │    │Industry Standard│
                     │ Multi-language  │    │ Project specific│    │ Free + Pro Tiers│
                     │ + AI Categories │    │ + AI Templates  │    │ Auto-detection  │

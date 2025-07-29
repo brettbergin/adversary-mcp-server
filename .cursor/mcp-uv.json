@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "adversary-mcp-server": {
+      "command": "uv",
+      "args": [
+        "run", 
+        "python", 
+        "-m", 
+        "adversary_mcp_server.server"
+      ],
+      "cwd": "/Users/brettbergin/code/adversary-mcp-server"
+    }
+  }
+}

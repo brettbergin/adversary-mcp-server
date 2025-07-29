@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "adversary-mcp-server": {
+      "command": "/Users/brettbergin/code/adversary-mcp-server/.venv/bin/python",
+      "args": ["-m", "adversary_mcp_server.server"],
+      "cwd": "/Users/brettbergin/code/adversary-mcp-server"
+    }
+  }
+} 

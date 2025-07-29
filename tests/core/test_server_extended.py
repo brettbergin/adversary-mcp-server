@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from mcp import types
 
 from adversary_mcp_server import DEFAULT_VERSION
-from adversary_mcp_server.scanner.types import Category, Language, Severity, ThreatMatch
+from adversary_mcp_server.scanner.types import Category, Severity, ThreatMatch
 from adversary_mcp_server.server import (
     AdversaryMCPServer,
     AdversaryToolError,
@@ -67,7 +67,6 @@ class TestAdversaryMCPServerExtended:
         """Test scan_code tool call."""
         arguments = {
             "content": "import pickle; pickle.loads(data)",
-            "language": "python",
             "severity_threshold": "medium",
             "include_exploits": True,
             "use_llm": False,
@@ -90,7 +89,6 @@ class TestAdversaryMCPServerExtended:
                 llm_threats=[],
                 semgrep_threats=[threat],
                 file_path="test.py",
-                language=Language.PYTHON,
                 scan_metadata={
                     "semgrep": {"findings": 1},
                     "llm_analysis": {"findings": 0},
@@ -139,7 +137,6 @@ class TestAdversaryMCPServerExtended:
                     llm_threats=[],
                     semgrep_threats=[threat],
                     file_path=temp_file,
-                    language=Language.PYTHON,
                     scan_metadata={
                         "semgrep": {"findings": 1},
                         "llm_analysis": {"findings": 0},
@@ -195,7 +192,6 @@ class TestAdversaryMCPServerExtended:
                     llm_threats=[],
                     semgrep_threats=[threat],
                     file_path=str(test_file),
-                    language=Language.PYTHON,
                     scan_metadata={
                         "semgrep": {"findings": 1},
                         "llm_analysis": {"findings": 0},
@@ -220,25 +216,6 @@ class TestAdversaryMCPServerExtended:
 
         with pytest.raises(AdversaryToolError, match="Directory not found"):
             await server._handle_scan_directory(arguments)
-
-    @pytest.mark.asyncio
-    async def test_call_tool_generate_exploit(self, server):
-        """Test generate_exploit tool call."""
-        arguments = {
-            "vulnerability_type": "sql_injection",
-            "code_context": "SELECT * FROM users WHERE id = ' + user_id",
-            "target_language": "python",
-            "use_llm": False,
-        }
-
-        with patch.object(server.exploit_generator, "generate_exploits") as mock_gen:
-            mock_gen.return_value = ["' OR '1'='1' --", "' UNION SELECT NULL--"]
-
-            result = await server._handle_generate_exploit(arguments)
-
-        assert len(result) == 1
-        assert "sql_injection" in result[0].text.lower()
-        assert "OR '1'='1'" in result[0].text
 
     @pytest.mark.asyncio
     async def test_call_tool_configure_settings(self, server):
@@ -374,7 +351,6 @@ class TestAdversaryMCPServerExtended:
         """Test exploit generation with errors."""
         arguments = {
             "content": "test code",
-            "language": "python",
             "include_exploits": True,
             "use_llm": False,
         }
@@ -397,7 +373,6 @@ class TestAdversaryMCPServerExtended:
                 llm_threats=[],
                 semgrep_threats=[threat],
                 file_path="test.py",
-                language=Language.PYTHON,
                 scan_metadata={
                     "semgrep": {"findings": 1},
                     "llm_analysis": {"findings": 0},
@@ -428,7 +403,6 @@ class TestAdversaryMCPServerExtended:
                 llm_threats=[],
                 semgrep_threats=[],
                 file_path="test.py",
-                language=Language.PYTHON,
                 scan_metadata={},
             )
             mock_scan.return_value = mock_result
@@ -465,7 +439,6 @@ class TestAdversaryMCPServerExtended:
                     llm_threats=[],
                     semgrep_threats=[threat],
                     file_path=temp_file,
-                    language=Language.PYTHON,
                     scan_metadata={},
                 )
                 mock_scan.return_value = mock_result
@@ -510,7 +483,6 @@ class TestAdversaryMCPServerExtended:
                     llm_threats=[],
                     semgrep_threats=[threat],
                     file_path=threat.file_path,
-                    language=Language.PYTHON,
                     scan_metadata={
                         "semgrep": {"findings": 1},
                         "llm_analysis": {"findings": 0},
@@ -536,7 +508,6 @@ class TestAdversaryMCPServerExtended:
         # Test ScanRequest
         request = ScanRequest(
             content="test code",
-            language="python",
             severity_threshold="high",
             include_exploits=False,
         )
@@ -553,39 +524,9 @@ class TestAdversaryMCPServerExtended:
         assert result.summary["total"] == 1
 
     @pytest.mark.asyncio
-    async def test_vulnerability_type_mapping(self, server):
-        """Test different vulnerability types in generate_exploit."""
-        vulnerability_types = [
-            "sql_injection",
-            "command_injection",
-            "xss",
-            "deserialization",
-            "path_traversal",
-            "unknown_type",
-        ]
-
-        for vuln_type in vulnerability_types:
-            arguments = {
-                "vulnerability_type": vuln_type,
-                "code_context": "test code",
-                "target_language": "python",
-            }
-
-            with patch.object(
-                server.exploit_generator, "generate_exploits", return_value=["exploit"]
-            ):
-                result = await server._handle_generate_exploit(arguments)
-                assert len(result) == 1
-                assert vuln_type in result[0].text.lower()
-
-    @pytest.mark.asyncio
     async def test_error_handling_in_handlers(self, server):
         """Test error handling in various handlers."""
-        # Test scan_code with invalid language
-        with pytest.raises(AdversaryToolError):
-            await server._handle_scan_code(
-                {"content": "test", "language": "invalid_language"}
-            )
+        # Language validation has been removed - scan_code now accepts any language
 
         # Test configure_settings with error in store_config
         with patch.object(
@@ -916,7 +857,6 @@ class TestAdversaryMCPServerVersionIntegration:
 
             arguments = {
                 "content": "test code",
-                "language": "python",
                 "output_format": "json",
                 "output": custom_output,
             }
@@ -928,7 +868,6 @@ class TestAdversaryMCPServerVersionIntegration:
                     llm_threats=[],
                     semgrep_threats=[],
                     file_path="input.code",
-                    language=Language.PYTHON,
                     scan_metadata={},
                 )
                 mock_scan.return_value = mock_result

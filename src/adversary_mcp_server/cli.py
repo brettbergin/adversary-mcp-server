@@ -2,7 +2,6 @@
 
 import datetime
 import json
-import re
 import sys
 from pathlib import Path
 
@@ -16,123 +15,64 @@ from .credentials import CredentialManager
 from .logger import get_logger
 from .scanner.diff_scanner import GitDiffScanner
 from .scanner.scan_engine import ScanEngine
-from .scanner.types import Language, Severity
-from .threat_modeling.diagram_generator import DiagramGenerator
-from .threat_modeling.models import Severity as ThreatSeverity
-from .threat_modeling.threat_model_builder import ThreatModelBuilder
+from .scanner.types import Severity
 
 console = Console()
 logger = get_logger("cli")
 
 
-def _is_valid_project(path: Path) -> bool:
-    """Check if a directory looks like a valid project."""
-    project_indicators = [
-        ".git",  # Git repository
-        "package.json",  # Node.js project
-        "pyproject.toml",  # Python project
-        "Cargo.toml",  # Rust project
-        "pom.xml",  # Maven project
-        "build.gradle",  # Gradle project
-        "composer.json",  # PHP project
-        "go.mod",  # Go project
-        "requirements.txt",  # Python project
-        "setup.py",  # Python project
-        "Gemfile",  # Ruby project
-        ".svn",  # SVN repository
-        ".hg",  # Mercurial repository
-    ]
+def _get_project_root(custom_path: str | None = None) -> Path:
+    """Get the project root directory.
 
-    for indicator in project_indicators:
-        if (path / indicator).exists():
-            return True
+    Args:
+        custom_path: Optional custom path override
 
-    return False
+    Returns:
+        Path object representing project root directory
+    """
+    if custom_path:
+        return Path(custom_path).resolve()
+    return Path.cwd()
 
 
-def _find_repo_by_name_cli(repo_name: str, max_depth: int = 3) -> Path:
-    """Find a repository by name using recursive search from home directory."""
+def _get_adversary_json_path(custom_path: str | None = None) -> Path:
+    """Get the path to the .adversary.json file.
 
-    home = Path.home()
-    found_repos = []
+    Args:
+        custom_path: Optional custom path override for the directory containing .adversary.json
 
-    # Directories to skip for performance and relevance
-    skip_dirs = {
-        ".git",
-        ".svn",
-        ".hg",  # Version control internals
-        "node_modules",
-        "venv",
-        ".venv",
-        "env",  # Dependencies/virtual envs
-        "__pycache__",
-        ".pytest_cache",
-        ".mypy_cache",  # Python cache
-        ".idea",
-        ".vscode",  # IDE directories
-        "target",
-        "build",
-        "dist",  # Build outputs
-        "vendor",
-        "bower_components",  # Package managers
-        ".npm",
-        ".yarn",
-        ".cargo",  # Package manager caches
-        "Library",
-        "Applications",
-        "Desktop",
-        "Downloads",  # macOS system dirs
-        "AppData",
-        "LocalAppData",  # Windows system dirs
-    }
+    Returns:
+        Path to .adversary.json file
+    """
+    project_root = _get_project_root(custom_path)
+    return project_root / ".adversary.json"
 
-    def search_directory(current_path: Path, current_depth: int):
-        """Recursively search for repositories."""
-        if current_depth > max_depth:
-            return
 
-        try:
-            for item in current_path.iterdir():
-                if not item.is_dir():
-                    continue
+def _resolve_target_path(
+    target: str | None, custom_working_dir: str | None = None
+) -> Path:
+    """Resolve target path relative to project root.
 
-                # Skip hidden directories and known non-repo directories
-                if item.name.startswith(".") or item.name in skip_dirs:
-                    continue
+    Args:
+        target: Target path (file/directory)
+        custom_working_dir: Optional custom working directory override
 
-                # If directory name matches repo name, check if it's a valid project
-                if item.name == repo_name and _is_valid_project(item):
-                    found_repos.append(item)
-                    logger.debug(f"Found potential repo at: {item}")
+    Returns:
+        Resolved Path object
+    """
+    project_root = _get_project_root(custom_working_dir)
 
-                # Recurse into subdirectory if we haven't hit max depth
-                if current_depth < max_depth:
-                    search_directory(item, current_depth + 1)
+    if not target:
+        return project_root
 
-        except (PermissionError, OSError, FileNotFoundError):
-            # Skip directories we can't access
-            logger.debug(f"Skipping inaccessible directory: {current_path}")
-            pass
+    target_path = Path(target)
 
-    console.print(f"🔍 Searching for repository '{repo_name}'...", style="yellow")
-    search_directory(home, 0)
+    # If absolute path, use as-is
+    if target_path.is_absolute():
+        return target_path.resolve()
 
-    if not found_repos:
-        console.print(f"❌ Repository '{repo_name}' not found.", style="red")
-        sys.exit(1)
-
-    if len(found_repos) == 1:
-        console.print(f"✅ Found repository at: {found_repos[0]}", style="green")
-        return found_repos[0]
-
-    # Multiple matches - let user know and pick the first one
-    console.print(
-        f"⚠️  Multiple repositories named '{repo_name}' found:", style="yellow"
-    )
-    for repo in found_repos:
-        console.print(f"  - {repo}", style="cyan")
-    console.print(f"ℹ️  Using first match: {found_repos[0]}", style="blue")
-    return found_repos[0]
+    # Resolve relative to project root
+    return (project_root / target_path).resolve()
 
 
 def get_cli_version():
@@ -141,243 +81,6 @@ def get_cli_version():
     version = get_version()
     logger.debug(f"CLI version: {version}")
     return version
-
-
-def _validate_mermaid_syntax(diagram_content: str) -> dict[str, any]:
-    """Validate Mermaid diagram syntax using mermaid-py.
-
-    Args:
-        diagram_content: The Mermaid diagram content as string
-
-    Returns:
-        Dict with 'valid' boolean and 'error' message if invalid
-    """
-    try:
-        # Handle None or non-string input
-        if diagram_content is None:
-            return {"valid": False, "error": "Diagram content is None"}
-
-        if not isinstance(diagram_content, str):
-            return {"valid": False, "error": "Diagram content must be a string"}
-
-        # Try to parse the diagram content
-        # Since our diagram_content is already a string, we need to validate it
-        # by attempting to recreate the components that would generate this content
-
-        # Basic syntax checks first
-        lines = diagram_content.strip().split("\n")
-        if not lines:
-            return {"valid": False, "error": "Empty diagram content"}
-
-        # Check diagram type declaration
-        first_line = lines[0].strip()
-        if not (
-            first_line.startswith("flowchart")
-            or first_line.startswith("architecture-beta")
-        ):
-            return {
-                "valid": False,
-                "error": "Missing diagram declaration (flowchart or architecture-beta)",
-            }
-
-        # Determine diagram type for syntax validation
-        is_architecture = first_line.startswith("architecture-beta")
-
-        # Track defined services and groups for architecture diagrams
-        defined_services = set()
-        defined_groups = set()
-        seen_edges = set()
-
-        # Check for basic syntax patterns
-        for i, line in enumerate(lines[1:], 2):  # Start from line 2
-            line = line.strip()
-            if not line:
-                continue
-
-            if is_architecture:
-                # Architecture diagram validation - more strict
-                if line.startswith("group "):
-                    # Validate group syntax: group id(icon)[name]
-                    if not (
-                        ("(" in line and ")" in line) and ("[" in line and "]" in line)
-                    ):
-                        return {
-                            "valid": False,
-                            "error": f"Invalid group syntax on line {i}: group must have (icon)[name] format",
-                        }
-                    # Extract group ID and track it
-                    group_match = re.search(r"group\s+(\w+)", line)
-                    if group_match:
-                        group_id = group_match.group(1)
-                        defined_groups.add(group_id)
-                    # Check for valid icons
-                    icon_match = re.search(r"\(([^)]+)\)", line)
-                    if icon_match:
-                        icon = icon_match.group(1)
-                        valid_icons = {
-                            "cloud",
-                            "database",
-                            "disk",
-                            "internet",
-                            "server",
-                        }
-                        if icon not in valid_icons:
-                            return {
-                                "valid": False,
-                                "error": f"Invalid group icon '{icon}' on line {i}: must be one of {valid_icons}",
-                            }
-                elif line.startswith("service "):
-                    # Validate service syntax: service id(icon)[name] [in groupId]
-                    if not (
-                        ("(" in line and ")" in line) and ("[" in line and "]" in line)
-                    ):
-                        return {
-                            "valid": False,
-                            "error": f"Invalid service syntax on line {i}: service must have (icon)[name] format",
-                        }
-                    # Extract service ID and track it
-                    service_match = re.search(r"service\s+(\w+)", line)
-                    if service_match:
-                        service_id = service_match.group(1)
-                        defined_services.add(service_id)
-                    # Check for valid icons
-                    icon_match = re.search(r"\(([^)]+)\)", line)
-                    if icon_match:
-                        icon = icon_match.group(1)
-                        valid_icons = {
-                            "cloud",
-                            "database",
-                            "disk",
-                            "internet",
-                            "server",
-                        }
-                        if icon not in valid_icons:
-                            return {
-                                "valid": False,
-                                "error": f"Invalid service icon '{icon}' on line {i}: must be one of {valid_icons}",
-                            }
-                    # Check service name for problematic characters
-                    name_match = re.search(r"\[([^\]]+)\]", line)
-                    if name_match:
-                        name = name_match.group(1)
-                        if re.search(r"[(){}[\]<>]", name) or len(name) > 30:
-                            return {
-                                "valid": False,
-                                "error": f"Invalid service name '{name}' on line {i}: avoid special chars and keep under 30 chars",
-                            }
-                    # Validate group reference if present
-                    if " in " in line:
-                        group_ref_match = re.search(r" in (\w+)", line)
-                        if group_ref_match:
-                            group_ref = group_ref_match.group(1)
-                            if group_ref not in defined_groups:
-                                return {
-                                    "valid": False,
-                                    "error": f"Service references undefined group '{group_ref}' on line {i}",
-                                }
-                elif "-->" in line:
-                    # Validate edge syntax: service1:direction --> direction:service2
-                    parts = line.split("-->")
-                    if len(parts) != 2:
-                        return {
-                            "valid": False,
-                            "error": f"Invalid edge syntax on line {i}: {line}",
-                        }
-                    # Check for proper connection point format
-                    left_part = parts[0].strip()
-                    right_part = parts[1].strip()
-
-                    # Extract service IDs from edge and validate they exist
-                    left_service = (
-                        left_part.split(":")[0] if ":" in left_part else left_part
-                    )
-                    right_service = (
-                        right_part.split(":")[1] if ":" in right_part else right_part
-                    )
-
-                    if left_service not in defined_services:
-                        return {
-                            "valid": False,
-                            "error": f"Edge references undefined service '{left_service}' on line {i}",
-                        }
-                    if right_service not in defined_services:
-                        return {
-                            "valid": False,
-                            "error": f"Edge references undefined service '{right_service}' on line {i}",
-                        }
-
-                    # Check for duplicate edges
-                    edge_key = f"{left_service}->{right_service}"
-                    if edge_key in seen_edges:
-                        return {
-                            "valid": False,
-                            "error": f"Duplicate edge '{left_service} -> {right_service}' on line {i}",
-                        }
-                    seen_edges.add(edge_key)
-
-                    # Validate direction indicators
-                    valid_directions = {"T", "B", "L", "R"}
-                    if ":" in left_part:
-                        left_direction = left_part.split(":")[-1]
-                        if left_direction not in valid_directions:
-                            return {
-                                "valid": False,
-                                "error": f"Invalid left direction '{left_direction}' on line {i}: must be T, B, L, or R",
-                            }
-                    if ":" in right_part:
-                        right_direction = right_part.split(":")[0]
-                        if right_direction not in valid_directions:
-                            return {
-                                "valid": False,
-                                "error": f"Invalid right direction '{right_direction}' on line {i}: must be T, B, L, or R",
-                            }
-            else:
-                # Flowchart diagram validation (existing logic)
-                # Skip CSS class definitions
-                if line.startswith("classDef"):
-                    continue
-
-                # Check node definitions (should contain [" or (( or [( )
-                if "[" in line or "(" in line:
-                    # This looks like a node definition, check basic syntax
-                    if not (
-                        ('["' in line and '"]' in line)
-                        or ("((" in line and "))" in line)
-                        or ("[(" in line and ")]" in line)
-                    ):
-                        return {
-                            "valid": False,
-                            "error": f"Invalid node syntax on line {i}: {line}",
-                        }
-
-                # Check link definitions (should contain -->)
-                elif "-->" in line:
-                    # This is a link, check for proper format
-                    parts = line.split("-->")
-                    if len(parts) != 2:
-                        return {
-                            "valid": False,
-                            "error": f"Invalid link syntax on line {i}: {line}",
-                        }
-
-                    # Check for proper link message format if present
-                    if "|" in parts[1]:
-                        link_part = parts[1].strip()
-                        if not (link_part.startswith("|") and "|" in link_part[1:]):
-                            return {
-                                "valid": False,
-                                "error": f"Invalid link message syntax on line {i}: {line}",
-                            }
-
-        # If we get here, basic syntax looks good
-        return {"valid": True, "error": None}
-
-    except ImportError as e:
-        logger.warning(f"mermaid-py not available for validation: {e}")
-        return {"valid": True, "error": "Validation skipped - mermaid-py not available"}
-    except Exception as e:
-        logger.debug(f"Mermaid validation error: {e}")
-        return {"valid": False, "error": str(e)}
 
 
 @click.group()
@@ -551,7 +254,7 @@ def status():
 
 
 @cli.command()
-@click.argument("target", type=click.Path(exists=True), required=False)
+@click.argument("target", required=False)
 @click.option(
     "--source-branch",
     help="Source branch for git diff scanning (e.g., feature-branch)",
@@ -559,11 +262,6 @@ def status():
 @click.option(
     "--target-branch",
     help="Target branch for git diff scanning (e.g., main)",
-)
-@click.option(
-    "--language",
-    type=click.Choice(["python", "javascript", "typescript"]),
-    help="Target language for scanning",
 )
 @click.option("--use-llm/--no-llm", default=True, help="Use LLM analysis")
 @click.option("--use-semgrep/--no-semgrep", default=True, help="Use Semgrep analysis")
@@ -574,22 +272,26 @@ def status():
 )
 @click.option("--output", type=click.Path(), help="Output file for results (JSON)")
 @click.option("--include-exploits", is_flag=True, help="Include exploit examples")
+@click.option(
+    "--working-directory",
+    help="Working directory to use as project root (defaults to current directory)",
+)
 def scan(
     target: str | None,
     source_branch: str | None,
     target_branch: str | None,
-    language: str | None,
     use_llm: bool,
     use_semgrep: bool,
     severity: str | None,
     output: str | None,
     include_exploits: bool,
+    working_directory: str | None,
 ):
     """Scan a file or directory for security vulnerabilities."""
     logger.info("=== Starting scan command ===")
     logger.debug(
         f"Scan parameters - Target: {target}, Source: {source_branch}, "
-        f"Target branch: {target_branch}, Language: {language}, "
+        f"Target branch: {target_branch}, "
         f"LLM: {use_llm}, Semgrep: {use_semgrep}, Severity: {severity}, "
         f"Output: {output}, Include exploits: {include_exploits}"
     )
@@ -604,9 +306,12 @@ def scan(
         if source_branch and target_branch:
             logger.info(f"Git diff mode: {source_branch} -> {target_branch}")
 
-            # Initialize git diff scanner
+            # Get working directory using helper function
+            project_root = _get_project_root(working_directory)
+
+            # Initialize git diff scanner with project root
             git_diff_scanner = GitDiffScanner(
-                scan_engine=scan_engine, working_dir=Path(target) if target else None
+                scan_engine=scan_engine, working_dir=project_root
             )
             logger.debug("Git diff scanner initialized")
 
@@ -652,42 +357,22 @@ def scan(
                 )
                 sys.exit(1)
 
-            target_path = Path(target)
-            target_path_abs = str(target_path.resolve())
+            # Use helper function to resolve target path
+            target_path = _resolve_target_path(target, working_directory)
+            target_path_abs = str(target_path)
             logger.info(f"Starting traditional scan of: {target_path_abs}")
 
             if target_path.is_file():
                 # Single file scan
                 logger.info(f"Scanning single file: {target_path_abs}")
 
-                # Auto-detect language if not provided
-                if not language:
-                    # Simple language detection based on file extension
-                    ext = target_path.suffix.lower()
-                    lang_map = {
-                        ".py": "python",
-                        ".js": "javascript",
-                        ".ts": "typescript",
-                    }
-                    language = lang_map.get(ext)
-
-                    if not language:
-                        logger.error(f"Cannot auto-detect language for {target}")
-                        console.print(
-                            f"❌ Cannot auto-detect language for {target}", style="red"
-                        )
-                        sys.exit(1)
-                    logger.info(f"Auto-detected language: {language}")
-
                 # Initialize scan engine
-                language_enum = Language(language.upper())
                 severity_enum = Severity(severity) if severity else None
 
-                # Perform scan
-                logger.debug(f"Scanning file {target_path} as {language_enum}")
+                # Perform scan (language will be auto-detected by scan engine)
+                logger.debug(f"Scanning file {target_path} with auto-detected language")
                 scan_result = scan_engine.scan_file_sync(
                     target_path,
-                    language=language_enum,
                     use_llm=use_llm,
                     use_semgrep=use_semgrep,
                     severity_threshold=severity_enum,
@@ -809,18 +494,14 @@ const PASSWORD = "admin123";
         # Scan Python code
         logger.info("Starting Python code demo scan...")
         console.print("\n🔍 [bold]Scanning Python Code...[/bold]")
-        python_result = scan_engine.scan_code_sync(
-            python_code, "demo.py", Language.PYTHON
-        )
+        python_result = scan_engine.scan_code_sync(python_code, "demo.py", "python")
         python_threats = python_result.all_threats
         logger.info(f"Python demo scan completed: {len(python_threats)} threats found")
 
         # Scan JavaScript code
         logger.info("Starting JavaScript code demo scan...")
         console.print("\n🔍 [bold]Scanning JavaScript Code...[/bold]")
-        js_result = scan_engine.scan_code_sync(
-            javascript_code, "demo.js", Language.JAVASCRIPT
-        )
+        js_result = scan_engine.scan_code_sync(javascript_code, "demo.js", "javascript")
         js_threats = js_result.all_threats
         logger.info(f"JavaScript demo scan completed: {len(js_threats)} threats found")
 
@@ -868,21 +549,17 @@ def mark_false_positive(
     try:
         from .scanner.false_positive_manager import FalsePositiveManager
 
-        # Smart search for .adversary.json file like the MCP server does
-        project_root = working_directory or "."
-        from pathlib import Path
+        # Use helper function to get adversary.json path
+        adversary_file_path = _get_adversary_json_path(working_directory)
 
-        current_dir = Path(project_root)
-        adversary_file = current_dir / ".adversary.json"
+        # Check if file exists, if not use the legacy search approach
+        if not adversary_file_path.exists():
+            # Fall back to legacy search in parent directories
+            project_root = working_directory or "."
+            current_dir = Path(project_root)
 
-        # Convert to absolute path for better logging
-        project_root_abs = str(Path(project_root).resolve())
-        logger.info(f"Starting mark-false-positive in directory: {project_root_abs}")
-
-        # If .adversary.json doesn't exist in working_directory, search up the directory tree
-        if not adversary_file.exists():
             logger.info(
-                f".adversary.json not found at {adversary_file}, searching parent directories..."
+                f".adversary.json not found at {adversary_file_path}, searching parent directories..."
             )
             search_dir = current_dir.resolve()
             home_dir = Path.home().resolve()
@@ -891,9 +568,9 @@ def mark_false_positive(
             while search_dir != search_dir.parent and search_dir >= home_dir:
                 test_file = search_dir / ".adversary.json"
                 if test_file.exists():
-                    project_root = str(search_dir)
+                    adversary_file_path = test_file
                     logger.info(
-                        f"✅ Found .adversary.json in parent directory: {project_root}"
+                        f"✅ Found .adversary.json in parent directory: {search_dir}"
                     )
                     found = True
                     break
@@ -905,8 +582,7 @@ def mark_false_positive(
                 )
                 sys.exit(1)
 
-        adversary_file_path = str(Path(project_root) / ".adversary.json")
-        fp_manager = FalsePositiveManager(adversary_file_path=adversary_file_path)
+        fp_manager = FalsePositiveManager(adversary_file_path=str(adversary_file_path))
 
         # Mark as false positive
         success = fp_manager.mark_false_positive(
@@ -919,9 +595,7 @@ def mark_false_positive(
             console.print(
                 f"✅ Finding {finding_uuid} marked as false positive", style="green"
             )
-            console.print(
-                f"📁 File: {Path(project_root) / '.adversary.json'}", style="dim"
-            )
+            console.print(f"📁 File: {adversary_file_path}", style="dim")
             logger.info(f"Finding {finding_uuid} successfully marked as false positive")
         else:
             console.print(
@@ -954,21 +628,17 @@ def unmark_false_positive(finding_uuid: str, working_directory: str | None):
     try:
         from .scanner.false_positive_manager import FalsePositiveManager
 
-        # Smart search for .adversary.json file like the MCP server does
-        project_root = working_directory or "."
-        from pathlib import Path
+        # Use helper function to get adversary.json path
+        adversary_file_path = _get_adversary_json_path(working_directory)
 
-        current_dir = Path(project_root)
-        adversary_file = current_dir / ".adversary.json"
+        # Check if file exists, if not use the legacy search approach
+        if not adversary_file_path.exists():
+            # Fall back to legacy search in parent directories
+            project_root = working_directory or "."
+            current_dir = Path(project_root)
 
-        # Convert to absolute path for better logging
-        project_root_abs = str(Path(project_root).resolve())
-        logger.info(f"Starting unmark-false-positive in directory: {project_root_abs}")
-
-        # If .adversary.json doesn't exist in working_directory, search up the directory tree
-        if not adversary_file.exists():
             logger.info(
-                f".adversary.json not found at {adversary_file}, searching parent directories..."
+                f".adversary.json not found at {adversary_file_path}, searching parent directories..."
             )
             search_dir = current_dir.resolve()
             home_dir = Path.home().resolve()
@@ -977,9 +647,9 @@ def unmark_false_positive(finding_uuid: str, working_directory: str | None):
             while search_dir != search_dir.parent and search_dir >= home_dir:
                 test_file = search_dir / ".adversary.json"
                 if test_file.exists():
-                    project_root = str(search_dir)
+                    adversary_file_path = test_file
                     logger.info(
-                        f"✅ Found .adversary.json in parent directory: {project_root}"
+                        f"✅ Found .adversary.json in parent directory: {search_dir}"
                     )
                     found = True
                     break
@@ -991,17 +661,14 @@ def unmark_false_positive(finding_uuid: str, working_directory: str | None):
                 )
                 sys.exit(1)
 
-        adversary_file_path = str(Path(project_root) / ".adversary.json")
-        fp_manager = FalsePositiveManager(adversary_file_path=adversary_file_path)
+        fp_manager = FalsePositiveManager(adversary_file_path=str(adversary_file_path))
         success = fp_manager.unmark_false_positive(finding_uuid)
 
         if success:
             console.print(
                 f"✅ False positive marking removed from {finding_uuid}", style="green"
             )
-            console.print(
-                f"📁 File: {Path(project_root) / '.adversary.json'}", style="dim"
-            )
+            console.print(f"📁 File: {adversary_file_path}", style="dim")
             logger.info(f"False positive marking removed from {finding_uuid}")
         else:
             console.print(
@@ -1032,21 +699,17 @@ def list_false_positives(working_directory: str | None):
     try:
         from .scanner.false_positive_manager import FalsePositiveManager
 
-        # Smart search for .adversary.json file like the MCP server does
-        project_root = working_directory or "."
-        from pathlib import Path
+        # Use helper function to get adversary.json path
+        adversary_file_path = _get_adversary_json_path(working_directory)
 
-        current_dir = Path(project_root)
-        adversary_file = current_dir / ".adversary.json"
+        # Check if file exists, if not use the legacy search approach
+        if not adversary_file_path.exists():
+            # Fall back to legacy search in parent directories
+            project_root = working_directory or "."
+            current_dir = Path(project_root)
 
-        # Convert to absolute path for better logging
-        project_root_abs = str(Path(project_root).resolve())
-        logger.info(f"Starting list-false-positives in directory: {project_root_abs}")
-
-        # If .adversary.json doesn't exist in working_directory, search up the directory tree
-        if not adversary_file.exists():
             logger.info(
-                f".adversary.json not found at {adversary_file}, searching parent directories..."
+                f".adversary.json not found at {adversary_file_path}, searching parent directories..."
             )
             search_dir = current_dir.resolve()
             home_dir = Path.home().resolve()
@@ -1055,9 +718,9 @@ def list_false_positives(working_directory: str | None):
             while search_dir != search_dir.parent and search_dir >= home_dir:
                 test_file = search_dir / ".adversary.json"
                 if test_file.exists():
-                    project_root = str(search_dir)
+                    adversary_file_path = test_file
                     logger.info(
-                        f"✅ Found .adversary.json in parent directory: {project_root}"
+                        f"✅ Found .adversary.json in parent directory: {search_dir}"
                     )
                     found = True
                     break
@@ -1069,15 +732,12 @@ def list_false_positives(working_directory: str | None):
                 )
                 sys.exit(1)
 
-        adversary_file_path = str(Path(project_root) / ".adversary.json")
-        fp_manager = FalsePositiveManager(adversary_file_path=adversary_file_path)
+        fp_manager = FalsePositiveManager(adversary_file_path=str(adversary_file_path))
         false_positives = fp_manager.get_false_positives()
 
         if not false_positives:
             console.print("No false positives found.", style="yellow")
-            console.print(
-                f"📁 Checked: {Path(project_root) / '.adversary.json'}", style="dim"
-            )
+            console.print(f"📁 Checked: {adversary_file_path}", style="dim")
             return
 
         # Create table
@@ -1098,9 +758,7 @@ def list_false_positives(working_directory: str | None):
             )
 
         console.print(table)
-        console.print(
-            f"📁 Source: {Path(project_root) / '.adversary.json'}", style="dim"
-        )
+        console.print(f"📁 Source: {adversary_file_path}", style="dim")
         logger.info("=== List-false-positives command completed successfully ===")
 
     except Exception as e:
@@ -1288,449 +946,6 @@ def reset_semgrep_key():
         sys.exit(1)
 
     logger.info("=== Reset-semgrep-key command completed successfully ===")
-
-
-@cli.command()
-@click.argument("repo_name")
-@click.option(
-    "--output",
-    type=click.Path(),
-    help="Output file path (default: <repo>/threat_model.json)",
-)
-@click.option(
-    "--format",
-    type=click.Choice(["json", "markdown"]),
-    default="json",
-    help="Output format",
-)
-@click.option(
-    "--include-threats/--no-threats",
-    default=True,
-    help="Include STRIDE threat analysis",
-)
-@click.option(
-    "--severity",
-    type=click.Choice(["low", "medium", "high", "critical"]),
-    default="medium",
-    help="Minimum severity threshold",
-)
-@click.option(
-    "--search-depth", type=int, default=3, help="Max directory depth to search for repo"
-)
-@click.option(
-    "--use-llm",
-    is_flag=True,
-    help="Enable LLM-enhanced threat analysis for additional insights",
-)
-def threat_model(
-    repo_name: str,
-    output: str | None,
-    format: str,
-    include_threats: bool,
-    severity: str,
-    search_depth: int,
-    use_llm: bool,
-):
-    """Generate a threat model for a repository by name."""
-    logger.info(f"=== Starting threat-model command for repo: {repo_name} ===")
-
-    try:
-        # Find repository by name
-        repo_path = _find_repo_by_name_cli(repo_name, max_depth=search_depth)
-
-        # Set default output file in the project directory
-        if output is None:
-            extension = "json" if format == "json" else "md"
-            output_file = repo_path / f"threat_model.{extension}"
-        else:
-            output_file = Path(output)
-
-        console.print(f"📊 Generating threat model for: {repo_path}", style="cyan")
-        console.print(f"📁 Output file: {output_file}", style="dim")
-
-        # Create threat model builder with LLM support
-        builder = ThreatModelBuilder(enable_llm=use_llm)
-
-        # Convert severity string to enum
-        severity_threshold = ThreatSeverity(severity.lower())
-
-        # Build threat model
-        if use_llm:
-            console.print(
-                "🤖 Analyzing source code with LLM enhancement...", style="yellow"
-            )
-        else:
-            console.print("🔍 Analyzing source code...", style="yellow")
-
-        threat_model = builder.build_threat_model(
-            str(repo_path),
-            include_threats=include_threats,
-            severity_threshold=severity_threshold,
-            use_llm=use_llm,
-            llm_options={
-                "severity_threshold": severity,
-                "enable_business_logic": True,
-                "enable_data_flow_analysis": True,
-                "enable_attack_surface": True,
-                "enable_contextual_enhancement": True,
-            },
-        )
-
-        # Save threat model
-        console.print(f"💾 Saving threat model as {format}...", style="yellow")
-        builder.save_threat_model(threat_model, str(output_file), format=format)
-
-        # Display summary
-        console.print("\n✅ [bold green]Threat Model Generated![/bold green]")
-
-        # Architecture summary
-        components = threat_model.components
-        console.print("\n📋 [bold]Architecture Summary:[/bold]")
-        console.print(f"  • Trust Boundaries: {len(components.boundaries)}")
-        console.print(f"  • External Entities: {len(components.external_entities)}")
-        console.print(f"  • Processes: {len(components.processes)}")
-        console.print(f"  • Data Stores: {len(components.data_stores)}")
-        console.print(f"  • Data Flows: {len(components.data_flows)}")
-
-        if include_threats and threat_model.threats:
-            console.print("\n🎯 [bold]Threat Analysis:[/bold]")
-
-            # Group threats by severity
-            threats_by_severity = {}
-            for threat in threat_model.threats:
-                sev = threat.severity.value
-                if sev not in threats_by_severity:
-                    threats_by_severity[sev] = 0
-                threats_by_severity[sev] += 1
-
-            # Display counts
-            for sev in ["critical", "high", "medium", "low"]:
-                if sev in threats_by_severity:
-                    count = threats_by_severity[sev]
-                    color = {
-                        "critical": "red",
-                        "high": "orange3",
-                        "medium": "yellow",
-                        "low": "green",
-                    }.get(sev, "white")
-                    console.print(f"  • {sev.title()}: [{color}]{count}[/{color}]")
-
-        console.print(f"\n📄 Threat model saved to: {output_file}")
-
-        # Add LLM enhancement information if used
-        if use_llm and "llm_prompts" in threat_model.metadata:
-            console.print("\n🤖 [bold cyan]LLM Analysis Available:[/bold cyan]")
-            prompt_count = threat_model.metadata.get("llm_prompt_count", 0)
-            console.print(
-                f"  • Generated {prompt_count} analysis prompts for client LLM"
-            )
-            console.print(
-                "  • Business logic, data flow, attack surface, and contextual analysis available"
-            )
-            console.print("  • Prompts stored in threat model metadata for processing")
-        elif use_llm:
-            console.print(
-                "\n⚠️  [bold yellow]LLM Enhancement:[/bold yellow] Requested but not available"
-            )
-
-        console.print("\n💡 Next steps:")
-        console.print(
-            f"  • Run 'adversary-mcp-cli diagram {repo_name}' to create a visual diagram"
-        )
-        console.print(f"  • Review the {format} file for detailed findings")
-        if not use_llm:
-            console.print("  • Consider using --use-llm for enhanced threat analysis")
-
-        logger.info("=== Threat-model command completed successfully ===")
-
-    except Exception as e:
-        logger.error(f"Threat-model command failed: {e}")
-        logger.debug("Threat-model error details", exc_info=True)
-        console.print(f"❌ Failed to generate threat model: {e}", style="red")
-        sys.exit(1)
-
-
-@cli.command()
-@click.argument("repo_name")
-@click.option(
-    "--output",
-    type=click.Path(),
-    help="Output file path (default: <repo>/threat_diagram.mmd)",
-)
-@click.option(
-    "--type",
-    "diagram_type",
-    type=click.Choice(["flowchart", "architecture"]),
-    default="flowchart",
-    help="Diagram type",
-)
-@click.option(
-    "--show-threats/--no-threats",
-    default=True,
-    help="Highlight components with threats",
-)
-@click.option(
-    "--layout",
-    type=click.Choice(["TD", "LR", "BT", "RL"]),
-    default="TD",
-    help="Layout direction",
-)
-@click.option("--open", "open_browser", is_flag=True, help="Open diagram in browser")
-@click.option(
-    "--search-depth", type=int, default=3, help="Max directory depth to search for repo"
-)
-@click.option(
-    "--use-llm",
-    is_flag=True,
-    help="Enable LLM-enhanced threat analysis when generating new threat models",
-)
-def diagram(
-    repo_name: str,
-    output: str | None,
-    diagram_type: str,
-    show_threats: bool,
-    layout: str,
-    open_browser: bool,
-    search_depth: int,
-    use_llm: bool,
-):
-    """Generate a Mermaid diagram for a repository by name."""
-    logger.info(f"=== Starting diagram command for repo: {repo_name} ===")
-
-    try:
-        import json
-        import webbrowser
-
-        # Find repository by name
-        repo_path = _find_repo_by_name_cli(repo_name, max_depth=search_depth)
-
-        # Set default output file in the project directory
-        if output is None:
-            output_file = repo_path / "threat_diagram.mmd"
-        else:
-            output_file = Path(output)
-
-        console.print(f"📊 Generating diagram for: {repo_path}", style="cyan")
-        console.print(f"📁 Output file: {output_file}", style="dim")
-
-        # Check if source is an existing threat model JSON file
-        threat_model_json = repo_path / "threat_model.json"
-
-        if threat_model_json.exists():
-            console.print(
-                f"📄 Using existing threat model: {threat_model_json}", style="green"
-            )
-            with open(threat_model_json, encoding="utf-8") as f:
-                threat_model_data = json.load(f)
-
-            # Generate diagram from JSON data using proper object model
-            from .threat_modeling.models import (
-                DataFlow,
-                ThreatModel,
-                ThreatModelComponents,
-            )
-
-            components = ThreatModelComponents(
-                boundaries=threat_model_data.get("boundaries", []),
-                external_entities=threat_model_data.get("external_entities", []),
-                processes=threat_model_data.get("processes", []),
-                data_stores=threat_model_data.get("data_stores", []),
-                data_flows=[
-                    DataFlow(**flow) for flow in threat_model_data.get("data_flows", [])
-                ],
-            )
-
-            threat_model = ThreatModel(components=components)
-            generator = DiagramGenerator()
-            diagram_content = generator.generate_diagram(
-                threat_model, show_threats=show_threats, diagram_type=diagram_type
-            )
-        else:
-            if use_llm:
-                console.print(
-                    "🤖 Analyzing source code with LLM enhancement...", style="yellow"
-                )
-            else:
-                console.print("🔍 Analyzing source code...", style="yellow")
-
-            # Build threat model from source
-            builder = ThreatModelBuilder(enable_llm=use_llm)
-            threat_model = builder.build_threat_model(
-                str(repo_path),
-                include_threats=show_threats,
-                use_llm=use_llm,
-                llm_options={
-                    "severity_threshold": "medium",
-                    "enable_business_logic": True,
-                    "enable_data_flow_analysis": True,
-                    "enable_attack_surface": True,
-                    "enable_contextual_enhancement": True,
-                },
-            )
-
-            # Generate diagram from threat model
-            generator = DiagramGenerator()
-            diagram_content = generator.generate_diagram(
-                threat_model,
-                diagram_type=diagram_type,
-                show_threats=show_threats,
-                layout_direction=layout,
-            )
-
-        # Save diagram
-        console.print("💾 Saving Mermaid diagram...", style="yellow")
-        with open(output_file, "w") as f:
-            f.write(diagram_content)
-
-        # Always create HTML file
-        console.print("💾 Generating HTML file...", style="yellow")
-        html_content = f"""<!DOCTYPE html>
-<html>
-<head>
-    <title>Threat Model Diagram - {repo_name}</title>
-    <script src="https://cdn.jsdelivr.net/npm/mermaid@latest/dist/mermaid.min.js"></script>
-    <script>
-        mermaid.initialize({{
-            startOnLoad: true,
-            theme: 'default',
-            architecture: {{
-                useMaxWidth: true
-            }},
-            themeVariables: {{
-                darkMode: false
-            }}
-        }});
-    </script>
-    <style>
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            margin: 0;
-            padding: 20px;
-            background: #f5f5f5;
-        }}
-        .container {{
-            max-width: 1200px;
-            margin: 0 auto;
-            background: white;
-            padding: 30px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }}
-        h1 {{ color: #333; }}
-        .controls {{ margin: 20px 0; }}
-        button {{
-            background: #0066cc;
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 4px;
-            cursor: pointer;
-            margin-right: 10px;
-        }}
-        button:hover {{ background: #0052cc; }}
-        .mermaid {{
-            text-align: center;
-            margin: 20px 0;
-        }}
-        .info {{
-            background: #e3f2fd;
-            padding: 15px;
-            border-radius: 4px;
-            margin: 20px 0;
-        }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>Threat Model Diagram: {repo_name}</h1>
-        <div class="info">
-            <strong>Type:</strong> {diagram_type} |
-            <strong>Layout:</strong> {layout} |
-            <strong>Threats:</strong> {'Highlighted' if show_threats else 'Hidden'}
-        </div>
-        <div class="controls">
-            <button onclick="copyDiagram()">Copy Diagram Code</button>
-            <button onclick="window.print()">Print</button>
-        </div>
-        <div class="mermaid">
-{diagram_content}
-        </div>
-    </div>
-    <script>
-        function copyDiagram() {{
-            const diagram = `{diagram_content}`;
-            navigator.clipboard.writeText(diagram).then(() => {{
-                alert('Diagram code copied to clipboard!');
-            }});
-        }}
-    </script>
-</body>
-</html>"""
-
-        # Save HTML file
-        html_file = output_file.with_suffix(".html")
-        with open(html_file, "w", encoding="utf-8") as f:
-            f.write(html_content)
-
-        # Validate Mermaid syntax
-        console.print("🔍 Validating Mermaid syntax...", style="yellow")
-        validation_result = _validate_mermaid_syntax(diagram_content)
-        if validation_result["valid"]:
-            console.print("✅ Mermaid syntax: Valid", style="green")
-        else:
-            console.print(
-                f"❌ Mermaid syntax: Error - {validation_result['error']}", style="red"
-            )
-
-        # If open flag is set, open in browser
-        if open_browser:
-            console.print("🌐 Opening diagram in browser...", style="yellow")
-            webbrowser.open(f"file://{html_file.absolute()}")
-
-        # Display summary
-        console.print("\n✅ [bold green]Diagram Generated![/bold green]")
-        console.print(f"\n📄 Mermaid diagram saved to: {output_file}")
-        console.print(f"🌐 HTML file saved to: {html_file}")
-
-        # Add LLM enhancement info if used and generating new threat model (not from existing JSON)
-        if use_llm and not threat_model_json.exists():
-            if (
-                hasattr(threat_model, "metadata")
-                and "llm_prompts" in threat_model.metadata
-            ):
-                console.print("\n🤖 [bold cyan]LLM Analysis Available:[/bold cyan]")
-                prompt_count = threat_model.metadata.get("llm_prompt_count", 0)
-                console.print(
-                    f"  • Generated {prompt_count} analysis prompts for client LLM"
-                )
-                console.print(
-                    "  • Enhanced threat model with additional analysis types"
-                )
-            else:
-                console.print(
-                    "\n⚠️  [bold yellow]LLM Enhancement:[/bold yellow] Requested but not available"
-                )
-
-        if open_browser:
-            console.print("\n🌐 Diagram opened in your default browser")
-        else:
-            console.print("\n💡 To view the diagram:")
-            console.print("  • Run with --open flag to open in browser")
-            console.print("  • Open the .html file directly in any browser")
-            console.print("  • Copy the .mmd file content to any Mermaid viewer")
-            console.print("  • Use the diagram in your documentation")
-            if not use_llm and not threat_model_json.exists():
-                console.print(
-                    "  • Consider using --use-llm for enhanced threat analysis"
-                )
-
-        logger.info("=== Diagram command completed successfully ===")
-
-    except Exception as e:
-        logger.error(f"Diagram command failed: {e}")
-        logger.debug("Diagram error details", exc_info=True)
-        console.print(f"❌ Failed to generate diagram: {e}", style="red")
-        sys.exit(1)
 
 
 def main():

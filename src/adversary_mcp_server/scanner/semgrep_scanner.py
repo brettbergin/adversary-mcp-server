@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from ..logger import get_logger
-from .types import Category, Language, Severity, ThreatMatch
+from .types import Category, Severity, ThreatMatch
 
 logger = get_logger("semgrep_scanner")
 
@@ -306,7 +306,7 @@ class OptimizedSemgrepScanner:
         self,
         source_code: str,
         file_path: str,
-        language: Language,
+        language: str,
         config: str | None = None,
         rules: str | None = None,
         timeout: int = 60,
@@ -327,7 +327,7 @@ class OptimizedSemgrepScanner:
             List of ThreatMatch objects
         """
         # Check cache first
-        cache_key = self._get_cache_key(source_code, file_path, language.value)
+        cache_key = self._get_cache_key(source_code, file_path, language)
         file_hash = self._get_file_hash(source_code)
 
         if cache_key in self._cache:
@@ -349,9 +349,7 @@ class OptimizedSemgrepScanner:
         # Perform scan directly
         start_time = time.time()
         try:
-            language_str = (
-                language.value if hasattr(language, "value") else str(language)
-            )
+            language_str = language
             raw_findings = await self._perform_scan(
                 source_code, file_path, language_str, timeout
             )
@@ -386,7 +384,7 @@ class OptimizedSemgrepScanner:
     async def scan_file(
         self,
         file_path: str,
-        language: Language,
+        language: str,
         config: str | None = None,
         rules: str | None = None,
         timeout: int = 60,
@@ -422,7 +420,7 @@ class OptimizedSemgrepScanner:
             return []
 
         # Check cache first (independent caching for file scans)
-        cache_key = self._get_cache_key(source_code, file_path, language.value)
+        cache_key = self._get_cache_key(source_code, file_path, language)
         file_hash = self._get_file_hash(source_code)
 
         if cache_key in self._cache:
@@ -444,9 +442,7 @@ class OptimizedSemgrepScanner:
         # Perform scan directly (independent of scan_code)
         start_time = time.time()
         try:
-            language_str = (
-                language.value if hasattr(language, "value") else str(language)
-            )
+            language_str = language
             raw_findings = await self._perform_scan(
                 source_code, file_path, language_str, timeout
             )
@@ -739,6 +735,14 @@ class OptimizedSemgrepScanner:
         if not language:
             return ".py"
 
+        # Handle both string and object types (for backward compatibility)
+        if hasattr(language, "value"):
+            language_str = language.value
+        elif hasattr(language, "lower"):
+            language_str = language
+        else:
+            language_str = str(language)
+
         ext_map = {
             "python": ".py",
             "javascript": ".js",
@@ -751,7 +755,7 @@ class OptimizedSemgrepScanner:
             "cpp": ".cpp",
             "csharp": ".cs",
         }
-        return ext_map.get(language.lower(), ".py")
+        return ext_map.get(language_str.lower(), ".py")
 
     def _get_clean_env(self) -> dict[str, str]:
         """Get clean environment for subprocess using credential manager."""
@@ -853,11 +857,9 @@ class OptimizedSemgrepScanner:
             "semgrep_user_agent": "adversary-mcp-server",
         }
 
-    def _get_file_extension(self, language: Language) -> str:
+    def _get_file_extension(self, language: str) -> str:
         """Get file extension for language (compatibility method)."""
-        return self._get_extension_for_language(
-            language.value if hasattr(language, "value") else str(language)
-        )
+        return self._get_extension_for_language(language)
 
 
 # Compatibility alias for existing code
