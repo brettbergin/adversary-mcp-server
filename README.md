@@ -75,7 +75,7 @@ Once configured, you can use these MCP tools in Cursor:
 
 - `adv_scan_code` - Hybrid scanning with rules + AI analysis
 - `adv_scan_file` - file scanning with LLM support
-- `adv_scan_directory` - directory scanning
+- `adv_scan_folder` - directory scanning
 - `adv_diff_scan` - scans only changed files between branches
 - `adv_configure_settings` - Configuration management
 - `adv_get_status` - Check server status and AI availability
