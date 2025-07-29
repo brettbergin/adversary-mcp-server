@@ -46,9 +46,9 @@ def secure_function(user_input):
     return cursor.fetchall()
 """
 
-        from adversary_mcp_server.scanner.types import Language
+        # Language enum removed - using strings directly
 
-        result = benchmark(engine.scan_code_sync, test_code, "test.py", Language.PYTHON)
+        result = benchmark(engine.scan_code_sync, test_code, "test.py", "python")
         assert result is not None
 
     def test_scan_engine_javascript_code(self, benchmark):
@@ -75,11 +75,9 @@ function executeCommand(userCommand) {
 }
 """
 
-        from adversary_mcp_server.scanner.types import Language
+        # Language enum removed - using strings directly
 
-        result = benchmark(
-            engine.scan_code_sync, test_code, "test.js", Language.JAVASCRIPT
-        )
+        result = benchmark(engine.scan_code_sync, test_code, "test.js", "javascript")
         assert result is not None
 
 
@@ -116,10 +114,10 @@ def vulnerable_path_traversal(filename):
 
         import asyncio
 
-        from adversary_mcp_server.scanner.types import Language
+        # Language enum removed - using strings directly
 
         async def scan_async():
-            return await scanner.scan_code(code, "test.py", Language.PYTHON)
+            return await scanner.scan_code(code, "test.py", "python")
 
         result = benchmark(asyncio.run, scan_async())
         assert result is not None
@@ -157,10 +155,10 @@ app.get('/search', (req, res) => {
 
         import asyncio
 
-        from adversary_mcp_server.scanner.types import Language
+        # Language enum removed - using strings directly
 
         async def scan_async():
-            return await scanner.scan_code(code, "test.js", Language.JAVASCRIPT)
+            return await scanner.scan_code(code, "test.js", "javascript")
 
         result = benchmark(asyncio.run, scan_async())
         assert result is not None
@@ -213,8 +211,8 @@ def process_payment(card_number, amount):
             }
 
         from adversary_mcp_server.credentials import CredentialManager
-        from adversary_mcp_server.scanner.types import Language
 
+        # Language enum removed - using strings directly
         # Initialize with credential manager
         scanner = LLMScanner(CredentialManager())
 
@@ -244,9 +242,7 @@ def process_payment(card_number, amount):
         scanner.analyze_code = mock_analyze_code
 
         try:
-            result = benchmark(
-                scanner.analyze_code, test_code, "test.py", Language.PYTHON
-            )
+            result = benchmark(scanner.analyze_code, test_code, "test.py", "python")
             assert result is not None
         finally:
             # Restore original method
@@ -432,11 +428,9 @@ def hash_password(password):
     return hashlib.md5(password.encode()).hexdigest()
 """
 
-        from adversary_mcp_server.scanner.types import Language
+        # Language enum removed - using strings directly
 
-        result = benchmark(
-            scan_engine.scan_code_sync, test_code, "test.py", Language.PYTHON
-        )
+        result = benchmark(scan_engine.scan_code_sync, test_code, "test.py", "python")
         assert result is not None
         # Verify we found multiple vulnerabilities
         assert (

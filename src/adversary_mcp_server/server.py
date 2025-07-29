@@ -1,4 +1,4 @@
-"""Adversary MCP Server - Security vulnerability scanning and exploit generation."""
+"""Adversary MCP Server - Security vulnerability scanning and detection."""
 
 import asyncio
 import json
@@ -12,22 +12,18 @@ from typing import Any
 from mcp import types
 from mcp.server import Server
 from mcp.server.models import InitializationOptions
-from mcp.server.stdio import stdio_server  # Add this import
+from mcp.server.stdio import stdio_server
 from mcp.types import ServerCapabilities, Tool, ToolsCapability
 from pydantic import BaseModel
 
 from . import get_version
 from .credentials import CredentialManager
-
-# Set up centralized logging
 from .logger import get_logger
 from .scanner.diff_scanner import GitDiffScanner
 from .scanner.exploit_generator import ExploitGenerator
 from .scanner.false_positive_manager import FalsePositiveManager
 from .scanner.scan_engine import EnhancedScanResult, ScanEngine
-from .scanner.types import Category, Language, LanguageSupport, Severity, ThreatMatch
-from .threat_modeling import DiagramGenerator, ThreatModelBuilder
-from .threat_modeling.models import Severity as ThreatSeverity
+from .scanner.types import Severity, ThreatMatch
 
 logger = get_logger("server")
 
@@ -43,7 +39,6 @@ class ScanRequest(BaseModel):
 
     content: str | None = None
     file_path: str | None = None
-    language: str | None = None
     severity_threshold: str | None = "medium"
     include_exploits: bool = True
     use_llm: bool = False
@@ -62,12 +57,12 @@ class AdversaryMCPServer:
 
     def __init__(self) -> None:
         """Initialize the Adversary MCP server."""
+
         logger.info("=== Initializing Adversary MCP Server ===")
         self.server: Server = Server("adversary-mcp-server")
         self.credential_manager = CredentialManager()
         logger.debug("Created credential manager")
 
-        # Get configuration to determine scanner settings
         logger.debug("Loading configuration...")
         config = self.credential_manager.load_config()
         logger.info(
@@ -84,13 +79,20 @@ class AdversaryMCPServer:
 
         logger.debug("Initializing exploit generator...")
         self.exploit_generator = ExploitGenerator(self.credential_manager)
+        logger.debug("Exploit generator initialized")
 
         logger.debug("Initializing diff scanner...")
         self.diff_scanner = GitDiffScanner(self.scan_engine)
+        logger.debug("diff scanner initialized")
 
         logger.debug("Initializing false positive manager...")
+        # Initialize with default adversary.json path in project root
+        default_adversary_path = self._get_adversary_json_path()
+        self.false_positive_manager = FalsePositiveManager(
+            adversary_file_path=str(default_adversary_path)
+        )
+        logger.debug("false positive manager initialized")
 
-        # Set up server handlers
         logger.debug("Setting up server handlers...")
         self._setup_handlers()
         logger.info("=== Adversary MCP Server initialization complete ===")
@@ -104,18 +106,13 @@ class AdversaryMCPServer:
             return [
                 Tool(
                     name="adv_scan_code",
-                    description="Scan source code for security vulnerabilities",
+                    description="Scan source code for security vulnerabilities. Results are automatically saved to .adversary.json in the project root (MCP cwd).",
                     inputSchema={
                         "type": "object",
                         "properties": {
                             "content": {
                                 "type": "string",
                                 "description": "Source code content to scan",
-                            },
-                            "language": {
-                                "type": "string",
-                                "description": "Programming language",
-                                "enum": LanguageSupport.get_language_enum_values(),
                             },
                             "severity_threshold": {
                                 "type": "string",
@@ -149,7 +146,7 @@ class AdversaryMCPServer:
                                 "description": "Path to output file for JSON results (optional, defaults to .adversary.json in project root)",
                             },
                         },
-                        "required": ["content", "language"],
+                        "required": ["content"],
                     },
                 ),
                 Tool(
@@ -160,7 +157,7 @@ class AdversaryMCPServer:
                         "properties": {
                             "file_path": {
                                 "type": "string",
-                                "description": "Path to the file to scan",
+                                "description": "Path to the file to scan (relative to project root, or absolute path to override)",
                             },
                             "severity_threshold": {
                                 "type": "string",
@@ -199,13 +196,14 @@ class AdversaryMCPServer:
                 ),
                 Tool(
                     name="adv_scan_folder",
-                    description="Scan a folder for security vulnerabilities",
+                    description="Scan a directory for security vulnerabilities. Results are automatically saved to .adversary.json in the project root (MCP cwd).",
                     inputSchema={
                         "type": "object",
                         "properties": {
                             "directory_path": {
                                 "type": "string",
-                                "description": "Path to the directory to scan",
+                                "description": "Path to the directory to scan (relative to project root, or absolute path to override, defaults to '.' for current project)",
+                                "default": ".",
                             },
                             "recursive": {
                                 "type": "boolean",
@@ -244,7 +242,7 @@ class AdversaryMCPServer:
                                 "description": "Path to output file for JSON results (optional, defaults to .adversary.json in project root)",
                             },
                         },
-                        "required": ["directory_path"],
+                        "required": [],
                     },
                 ),
                 Tool(
@@ -298,38 +296,6 @@ class AdversaryMCPServer:
                     },
                 ),
                 Tool(
-                    name="adv_generate_exploit",
-                    description="Generate exploit for a specific vulnerability",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "vulnerability_type": {
-                                "type": "string",
-                                "description": "Type of vulnerability (sql_injection, xss, etc.)",
-                            },
-                            "code_context": {
-                                "type": "string",
-                                "description": "Vulnerable code context",
-                            },
-                            "target_language": {
-                                "type": "string",
-                                "description": "Target programming language",
-                                "enum": LanguageSupport.get_language_enum_values(),
-                            },
-                            "use_llm": {
-                                "type": "boolean",
-                                "description": "Whether to include LLM exploit generation prompts",
-                                "default": False,
-                            },
-                        },
-                        "required": [
-                            "vulnerability_type",
-                            "code_context",
-                            "target_language",
-                        ],
-                    },
-                ),
-                Tool(
                     name="adv_configure_settings",
                     description="Configure adversary MCP server settings",
                     inputSchema={
@@ -376,7 +342,7 @@ class AdversaryMCPServer:
                 ),
                 Tool(
                     name="adv_mark_false_positive",
-                    description="Mark a finding as a false positive",
+                    description="Mark a finding as a false positive in the project's .adversary.json file (located at project root)",
                     inputSchema={
                         "type": "object",
                         "properties": {
@@ -384,21 +350,27 @@ class AdversaryMCPServer:
                                 "type": "string",
                                 "description": "UUID of the finding to mark as false positive",
                             },
-                            "adversary_file_path": {
-                                "type": "string",
-                                "description": "Path to the .adversary.json file containing the finding",
-                            },
                             "reason": {
                                 "type": "string",
                                 "description": "Reason for marking as false positive",
+                                "default": "Manually marked via MCP tool",
+                            },
+                            "marked_by": {
+                                "type": "string",
+                                "description": "Name of the person marking this as false positive",
+                                "default": "MCP User",
+                            },
+                            "adversary_file_path": {
+                                "type": "string",
+                                "description": "Custom path to .adversary.json file (optional, defaults to .adversary.json in project root)",
                             },
                         },
-                        "required": ["finding_uuid", "adversary_file_path"],
+                        "required": ["finding_uuid"],
                     },
                 ),
                 Tool(
                     name="adv_unmark_false_positive",
-                    description="Remove false positive marking from a finding",
+                    description="Remove false positive marking from a finding in the project's .adversary.json file (located at project root)",
                     inputSchema={
                         "type": "object",
                         "properties": {
@@ -408,132 +380,10 @@ class AdversaryMCPServer:
                             },
                             "adversary_file_path": {
                                 "type": "string",
-                                "description": "Path to the .adversary.json file containing the finding",
+                                "description": "Custom path to .adversary.json file (optional, defaults to .adversary.json in project root)",
                             },
                         },
-                        "required": ["finding_uuid", "adversary_file_path"],
-                    },
-                ),
-                Tool(
-                    name="adv_list_false_positives",
-                    description="List all findings marked as false positives",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "adversary_file_path": {
-                                "type": "string",
-                                "description": "Path to the .adversary.json file to list false positives from",
-                            },
-                        },
-                        "required": ["adversary_file_path"],
-                    },
-                ),
-                Tool(
-                    name="adv_threat_model",
-                    description="Generate STRIDE-based threat model from source code",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "repo_name": {
-                                "type": "string",
-                                "description": "Name of the repository/project to analyze (e.g., 'hello-world', 'my-app')",
-                            },
-                            "source_path": {
-                                "type": "string",
-                                "description": "Optional: explicit path to analyze (overrides repo_name discovery)",
-                            },
-                            "search_depth": {
-                                "type": "integer",
-                                "description": "Optional: maximum directory depth to search for repositories (default: 3)",
-                                "minimum": 1,
-                                "maximum": 5,
-                                "default": 3,
-                            },
-                            "output_file": {
-                                "type": "string",
-                                "description": "Optional: output file path (defaults to threat_model.{format} in project root)",
-                            },
-                            "include_threats": {
-                                "type": "boolean",
-                                "description": "Include STRIDE threat analysis in output",
-                                "default": True,
-                            },
-                            "severity_threshold": {
-                                "type": "string",
-                                "description": "Minimum severity threshold for threats",
-                                "enum": ["low", "medium", "high", "critical"],
-                                "default": "medium",
-                            },
-                            "output_format": {
-                                "type": "string",
-                                "description": "Output format for threat model",
-                                "enum": ["json", "markdown"],
-                                "default": "markdown",
-                            },
-                            "use_llm": {
-                                "type": "boolean",
-                                "description": "Enable LLM-enhanced threat analysis for additional insights",
-                                "default": False,
-                            },
-                        },
-                        "anyOf": [
-                            {"required": ["repo_name"]},
-                            {"required": ["source_path"]},
-                        ],
-                    },
-                ),
-                Tool(
-                    name="adv_diagram",
-                    description="Generate Mermaid.js architecture diagram from threat model",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "repo_name": {
-                                "type": "string",
-                                "description": "Name of the repository/project to analyze (e.g., 'verisapi', 'my-app')",
-                            },
-                            "source_path": {
-                                "type": "string",
-                                "description": "Optional: explicit path to source file/directory OR path to existing threat model JSON file (overrides repo_name discovery)",
-                            },
-                            "search_depth": {
-                                "type": "integer",
-                                "description": "Optional: maximum directory depth to search for repositories (default: 3)",
-                                "minimum": 1,
-                                "maximum": 5,
-                                "default": 3,
-                            },
-                            "output_file": {
-                                "type": "string",
-                                "description": "Optional: path for Mermaid diagram output file (.mmd extension) (defaults to threat_diagram.mmd in project root)",
-                            },
-                            "diagram_type": {
-                                "type": "string",
-                                "description": "Type of Mermaid diagram to generate",
-                                "enum": ["flowchart"],
-                                "default": "flowchart",
-                            },
-                            "show_threats": {
-                                "type": "boolean",
-                                "description": "Highlight components with threats in diagram",
-                                "default": True,
-                            },
-                            "layout_direction": {
-                                "type": "string",
-                                "description": "Layout direction for diagram",
-                                "enum": ["TD", "LR", "BT", "RL"],
-                                "default": "TD",
-                            },
-                            "use_llm": {
-                                "type": "boolean",
-                                "description": "Enable LLM-enhanced threat analysis when generating new threat models",
-                                "default": False,
-                            },
-                        },
-                        "anyOf": [
-                            {"required": ["repo_name"]},
-                            {"required": ["source_path"]},
-                        ],
+                        "required": ["finding_uuid"],
                     },
                 ),
             ]
@@ -563,10 +413,6 @@ class AdversaryMCPServer:
                     logger.info("Handling diff_scan request")
                     return await self._handle_diff_scan(arguments)
 
-                elif name == "adv_generate_exploit":
-                    logger.info("Handling generate_exploit request")
-                    return await self._handle_generate_exploit(arguments)
-
                 elif name == "adv_configure_settings":
                     logger.info("Handling configure_settings request")
                     return await self._handle_configure_settings(arguments)
@@ -586,18 +432,6 @@ class AdversaryMCPServer:
                 elif name == "adv_unmark_false_positive":
                     logger.info("Handling unmark_false_positive request")
                     return await self._handle_unmark_false_positive(arguments)
-
-                elif name == "adv_list_false_positives":
-                    logger.info("Handling list_false_positives request")
-                    return await self._handle_list_false_positives(arguments)
-
-                elif name == "adv_threat_model":
-                    logger.info("Handling threat_model request")
-                    return await self._handle_generate_threat_model(arguments)
-
-                elif name == "adv_diagram":
-                    logger.info("Handling diagram request")
-                    return await self._handle_generate_diagram(arguments)
 
                 else:
                     logger.error(f"Unknown tool requested: {name}")
@@ -619,48 +453,41 @@ class AdversaryMCPServer:
             logger.info("Starting code scan")
 
             content = arguments["content"]
-            language_str = arguments["language"]
             severity_threshold = arguments.get("severity_threshold", "medium")
             include_exploits = arguments.get("include_exploits", True)
             use_llm = arguments.get("use_llm", False)
             use_semgrep = arguments.get("use_semgrep", True)
             output_format = arguments.get("output_format", "text")
             output_path = arguments.get("output")
-            # For scan_code operations, use user data directory since there's no specific project context
-            default_directory = str(
-                Path.home() / ".local" / "share" / "adversary-mcp-server"
-            )
-            working_directory = arguments.get("working_directory", default_directory)
-            # Convert to absolute path for better logging
-            working_directory_abs = str(Path(working_directory).resolve())
-            logger.info(f"Code scan - working_directory: {working_directory_abs}")
-
             # Resolve output path if provided
             output_path_resolved = None
             if output_path:
-                output_path_resolved = self._resolve_file_path(
+                output_path_resolved = self._resolve_path_from_project_root(
                     output_path, "output path"
                 )
                 logger.info(f"Code scan - output_path resolved: {output_path_resolved}")
 
+            # Get project root for .adversary.json placement
+            project_root = self._get_project_root()
+            logger.info(f"Code scan - project_root: {project_root}")
+
             logger.debug(
-                f"Code scan parameters - Language: {language_str}, "
+                f"Code scan parameters - Language: auto-detect, "
                 f"Severity: {severity_threshold}, LLM: {use_llm}, "
                 f"Semgrep: {use_semgrep}"
             )
 
-            # Convert language string to enum
-            language = Language(language_str)
             severity_enum = Severity(severity_threshold)
 
-            logger.info(f"Scanning {len(content)} characters of {language.value} code")
+            logger.info(
+                f"Scanning {len(content)} characters with auto-detected language"
+            )
 
             # Scan the code using enhanced scanner (rules-based)
             logger.debug("Calling scan_engine.scan_code...")
             scan_result = await self.scan_engine.scan_code(
                 source_code=content,
                 file_path="input.code",
-                language=language,
                 use_llm=use_llm,
                 use_semgrep=use_semgrep,
                 severity_threshold=severity_enum,
@@ -693,10 +520,10 @@ class AdversaryMCPServer:
             if output_format == "json":
                 logger.debug("Formatting results as JSON")
                 result = self._format_json_scan_results(
-                    scan_result, "code", working_directory
+                    scan_result, "code", str(self._get_project_root())
                 )
                 # Save JSON results to custom path or default location
-                save_path = output_path_resolved if output_path_resolved else "."
+                save_path = str(output_path_resolved) if output_path_resolved else "."
                 saved_path = self._save_scan_results_json(result, save_path)
                 if saved_path:
                     logger.info(f"JSON results saved to: {saved_path}")
@@ -710,9 +537,7 @@ class AdversaryMCPServer:
                 # Add LLM prompts if requested
                 if use_llm:
                     logger.debug("Adding LLM analysis prompts to results")
-                    result += self._add_llm_analysis_prompts(
-                        content, language, "input.code"
-                    )
+                    result += self._add_llm_analysis_prompts(content, "input.code")
 
                     # Add LLM exploit prompts for each threat found
                     if include_exploits and scan_result.all_threats:
@@ -722,15 +547,17 @@ class AdversaryMCPServer:
                         )
 
                 # Auto-save JSON results (regardless of output format)
-                # Use output_path_resolved if provided, otherwise use working_directory (user data directory)
+                # Always save to project root unless custom output specified
                 save_location = (
-                    output_path_resolved if output_path_resolved else working_directory
+                    str(output_path_resolved)
+                    if output_path_resolved
+                    else str(project_root)
                 )
                 logger.info(
-                    f"🔧 adv_scan_code auto-save: output_path_resolved={output_path_resolved}, working_directory={working_directory_abs}, save_location={save_location}"
+                    f"🔧 adv_scan_code auto-save: project_root={project_root}, save_location={save_location}"
                 )
                 json_result = self._format_json_scan_results(
-                    scan_result, "code", working_directory
+                    scan_result, "code", str(project_root)
                 )
                 self._save_scan_results_json(json_result, save_location)
 
@@ -749,15 +576,12 @@ class AdversaryMCPServer:
         try:
             logger.info("Starting file scan")
 
-            # Get initial file path and working directory
+            # Resolve file path using new cwd-based approach
             input_file_path = arguments["file_path"]
-            working_directory = arguments.get("working_directory", str(Path.cwd()))
-
-            # Resolve file path relative to working directory if it's relative
-            file_path = Path(input_file_path)
-            if not file_path.is_absolute():
-                file_path = Path(working_directory) / file_path
-            file_path = file_path.resolve()
+            file_path = self._resolve_path_from_project_root(
+                input_file_path, "file path"
+            )
+            logger.info(f"Scanning file: {file_path}")
 
             severity_threshold = arguments.get("severity_threshold", "medium")
             include_exploits = arguments.get("include_exploits", True)
@@ -766,19 +590,13 @@ class AdversaryMCPServer:
             output_format = arguments.get("output_format", "text")
             output_path = arguments.get("output")
 
-            # Convert to absolute path for better logging
-            working_directory_abs = str(Path(working_directory).resolve())
-            logger.info(f"File scan - working_directory: {working_directory_abs}")
-
             # Resolve output path if provided
             output_path_resolved = None
             if output_path:
-                output_path_resolved = self._resolve_file_path(
+                output_path_resolved = self._resolve_path_from_project_root(
                     output_path, "output path"
                 )
                 logger.info(f"File scan - output_path resolved: {output_path_resolved}")
-
-            logger.info(f"Scanning file: {file_path}")
             logger.debug(
                 f"File scan parameters - Severity: {severity_threshold}, "
                 f"LLM: {use_llm}, Semgrep: {use_semgrep}"
@@ -835,10 +653,10 @@ class AdversaryMCPServer:
             if output_format == "json":
                 logger.debug("Formatting results as JSON")
                 result = self._format_json_scan_results(
-                    scan_result, str(file_path), working_directory
+                    scan_result, str(file_path), str(self._get_project_root())
                 )
                 # Save JSON results to custom path or default location
-                save_path = output_path_resolved if output_path_resolved else "."
+                save_path = str(output_path_resolved) if output_path_resolved else "."
                 saved_path = self._save_scan_results_json(result, save_path)
                 if saved_path:
                     logger.info(f"JSON results saved to: {saved_path}")
@@ -857,11 +675,9 @@ class AdversaryMCPServer:
                         with open(file_path, encoding="utf-8") as f:
                             file_content = f.read()
 
-                        # Detect language from file extension
-                        language = self.scan_engine._detect_language(file_path)
-
+                        # Language is now auto-detected as generic
                         result += self._add_llm_analysis_prompts(
-                            file_content, language, str(file_path)
+                            file_content, str(file_path)
                         )
 
                         # Add LLM exploit prompts for each threat found
@@ -876,13 +692,14 @@ class AdversaryMCPServer:
                         result += f"\n\n⚠️ **LLM Analysis:** Could not read file for LLM analysis: {e}\n"
 
                 # Auto-save JSON results to project root (regardless of output format)
+                project_root = self._get_project_root()
                 logger.info(
-                    f"🔧 adv_scan_file auto-save: file_path={file_path}, working_directory={working_directory_abs}"
+                    f"🔧 adv_scan_file auto-save: file_path={file_path}, project_root={project_root}"
                 )
                 json_result = self._format_json_scan_results(
-                    scan_result, str(file_path), working_directory
+                    scan_result, str(file_path), str(project_root)
                 )
-                self._save_scan_results_json(json_result, working_directory)
+                self._save_scan_results_json(json_result, str(project_root))
 
             logger.info("File scan completed successfully")
             return [types.TextContent(type="text", text=result)]
@@ -898,7 +715,11 @@ class AdversaryMCPServer:
         """Handle directory scanning request."""
         try:
             logger.info("Starting directory scan")
-            directory_path = Path(arguments["directory_path"]).resolve()
+            input_directory = arguments.get("directory_path", ".")
+            directory_path = self._resolve_path_from_project_root(
+                input_directory, "directory path"
+            )
+            logger.info(f"Scanning directory: {directory_path}")
             recursive = arguments.get("recursive", True)
             severity_threshold = arguments.get("severity_threshold", "medium")
             include_exploits = arguments.get("include_exploits", True)
@@ -910,14 +731,12 @@ class AdversaryMCPServer:
             # Resolve output path if provided
             output_path_resolved = None
             if output_path:
-                output_path_resolved = self._resolve_file_path(
+                output_path_resolved = self._resolve_path_from_project_root(
                     output_path, "output path"
                 )
                 logger.info(
                     f"Directory scan - output_path resolved: {output_path_resolved}"
                 )
-
-            logger.info(f"Scanning directory: {directory_path}")
             logger.debug(
                 f"Directory scan parameters - Recursive: {recursive}, "
                 f"Severity: {severity_threshold}, LLM: {use_llm}, "
@@ -979,10 +798,10 @@ class AdversaryMCPServer:
             if output_format == "json":
                 logger.debug("Formatting results as JSON")
                 result = self._format_json_directory_results(
-                    scan_results, str(directory_path), str(directory_path)
+                    scan_results, str(directory_path), str(self._get_project_root())
                 )
                 # Save JSON results to custom path or default location
-                save_path = output_path_resolved if output_path_resolved else "."
+                save_path = str(output_path_resolved) if output_path_resolved else "."
                 saved_path = self._save_scan_results_json(result, save_path)
                 if saved_path:
                     logger.info(f"JSON results saved to: {saved_path}")
@@ -1012,15 +831,11 @@ class AdversaryMCPServer:
                             with open(scan_result.file_path, encoding="utf-8") as f:
                                 file_content = f.read()
 
-                            # Detect language
-                            language = self.scan_engine._detect_language(
-                                Path(scan_result.file_path)
-                            )
+                            # Language is now auto-detected as generic
 
                             result += f"## File {i}: {scan_result.file_path}\n\n"
                             result += self._add_llm_analysis_prompts(
                                 file_content,
-                                language,
                                 str(scan_result.file_path),
                                 include_header=False,
                             )
@@ -1032,13 +847,14 @@ class AdversaryMCPServer:
                             result += f"⚠️ Could not read {scan_result.file_path} for LLM analysis: {e}\n\n"
 
                 # Auto-save JSON results to project root (regardless of output format)
+                project_root = self._get_project_root()
                 logger.info(
-                    f"🔧 adv_scan_folder auto-save: directory_path={directory_path}"
+                    f"🔧 adv_scan_directory auto-save: directory_path={directory_path}, project_root={project_root}"
                 )
                 json_result = self._format_json_directory_results(
-                    scan_results, str(directory_path), str(directory_path)
+                    scan_results, str(directory_path), str(project_root)
                 )
-                self._save_scan_results_json(json_result, str(directory_path))
+                self._save_scan_results_json(json_result, str(project_root))
 
             logger.info("Directory scan completed successfully")
             return [types.TextContent(type="text", text=result)]
@@ -1055,10 +871,17 @@ class AdversaryMCPServer:
         try:
             source_branch = arguments["source_branch"]
             target_branch = arguments["target_branch"]
-            working_directory = arguments.get("working_directory", ".")
-            # Convert to absolute path for better logging
-            working_directory_abs = str(Path(working_directory).resolve())
-            logger.info(f"Diff scan - working_directory: {working_directory_abs}")
+            custom_working_directory = arguments.get("working_directory")
+
+            # Resolve working directory - if provided, use it, otherwise use project root
+            if custom_working_directory:
+                working_directory = self._resolve_path_from_project_root(
+                    custom_working_directory, "working directory"
+                )
+            else:
+                working_directory = self._get_project_root()
+
+            logger.info(f"Diff scan - working_directory: {working_directory}")
             severity_threshold = arguments.get("severity_threshold", "medium")
             include_exploits = arguments.get("include_exploits", True)
             use_llm = arguments.get("use_llm", False)
@@ -1068,8 +891,8 @@ class AdversaryMCPServer:
             # Convert severity threshold to enum
             severity_enum = Severity(severity_threshold)
 
-            # Convert working directory to Path object
-            working_dir_path = Path(working_directory).resolve()
+            # Working directory is already a resolved Path object
+            working_dir_path = working_directory
 
             # Get diff summary first
             diff_summary = self.diff_scanner.get_diff_summary(
@@ -1125,10 +948,11 @@ class AdversaryMCPServer:
                     scan_results,
                     diff_summary,
                     f"{source_branch}..{target_branch}",
-                    working_directory,
+                    str(working_directory),
                 )
                 # Auto-save JSON results to project root
-                self._save_scan_results_json(result, ".")
+                project_root = self._get_project_root()
+                self._save_scan_results_json(result, str(project_root))
             else:
                 logger.debug("Formatting results as text")
                 # Format results
@@ -1164,15 +988,11 @@ class AdversaryMCPServer:
                                     for chunk in chunks
                                 )
 
-                                # Detect language
-                                language = self.scan_engine._detect_language(
-                                    Path(file_path)
-                                )
+                                # Language is now auto-detected as generic
 
                                 result += f"## File {i}: {file_path}\n\n"
                                 result += self._add_llm_analysis_prompts(
                                     changed_code,
-                                    language,
                                     file_path,
                                     include_header=False,
                                 )
@@ -1189,83 +1009,6 @@ class AdversaryMCPServer:
             logger.error(f"Diff scanning failed: {e}")
             logger.debug("Diff scan error details", exc_info=True)
             raise AdversaryToolError(f"Diff scanning failed: {e}")
-
-    async def _handle_generate_exploit(
-        self, arguments: dict[str, Any]
-    ) -> list[types.TextContent]:
-        """Handle exploit generation request."""
-        try:
-            vulnerability_type = arguments["vulnerability_type"]
-            code_context = arguments["code_context"]
-            target_language = arguments["target_language"]
-            use_llm = arguments.get("use_llm", False)
-
-            # Create a mock threat match for exploit generation
-            # Map vulnerability type to category
-            type_to_category = {
-                "sql_injection": Category.INJECTION,
-                "command_injection": Category.INJECTION,
-                "xss": Category.XSS,
-                "deserialization": Category.DESERIALIZATION,
-                "path_traversal": Category.LFI,
-            }
-
-            category = type_to_category.get(vulnerability_type, Category.INJECTION)
-
-            mock_threat = ThreatMatch(
-                rule_id=f"custom_{vulnerability_type}",
-                rule_name=vulnerability_type.replace("_", " ").title(),
-                description=f"Custom {vulnerability_type} vulnerability",
-                category=category,
-                severity=Severity.HIGH,
-                file_path="custom_scan",
-                line_number=1,
-                code_snippet=code_context,
-            )
-
-            # Generate exploits (template-based only for now)
-            exploits = self.exploit_generator.generate_exploits(
-                mock_threat, code_context, False  # Don't use LLM directly
-            )
-
-            # Format results
-            result = f"# {vulnerability_type.replace('_', ' ').title()} Exploit\n\n"
-            result += f"**Target Language:** {target_language}\n"
-            result += f"**Vulnerability Type:** {vulnerability_type}\n"
-            result += "**Severity:** HIGH\n\n"
-            result += "**Code Context:**\n"
-            result += f"```{target_language}\n{code_context}\n```\n\n"
-            result += "**Generated Exploits:**\n\n"
-
-            if exploits:
-                for i, exploit in enumerate(exploits, 1):
-                    result += f"### Exploit {i}:\n\n"
-                    result += f"```\n{exploit}\n```\n\n"
-            else:
-                result += "No template-based exploits available for this vulnerability type.\n\n"
-
-            # Add LLM exploit prompts if requested
-            if use_llm:
-                result += "# 🤖 LLM Exploit Generation\n\n"
-                result += "For enhanced LLM-based exploit generation, use the following prompts with your client's LLM:\n\n"
-
-                prompt = self.exploit_generator.create_exploit_prompt(
-                    mock_threat, code_context
-                )
-
-                result += "## System Prompt\n\n"
-                result += f"```\n{prompt.system_prompt}\n```\n\n"
-                result += "## User Prompt\n\n"
-                result += f"```\n{prompt.user_prompt}\n```\n\n"
-                result += "**Instructions:** Send both prompts to your LLM for enhanced exploit generation.\n"
-
-            logger.info("Exploit generation completed successfully")
-            return [types.TextContent(type="text", text=result)]
-
-        except Exception as e:
-            logger.error(f"Exploit generation failed: {e}")
-            logger.debug("Exploit generation error details", exc_info=True)
-            raise AdversaryToolError(f"Exploit generation failed: {e}")
 
     async def _handle_configure_settings(
         self, arguments: dict[str, Any]
@@ -1413,57 +1156,101 @@ class AdversaryMCPServer:
         """Get the current version."""
         return get_version()
 
-    def _get_current_working_directory(self) -> Path:
-        """Get the current working directory.
+    def _get_project_root(self) -> Path:
+        """Get the project root directory.
 
-        This method exists to allow easy mocking in tests.
+        This is set by the MCP client's 'cwd' parameter and represents
+        the root of the project being analyzed. This is where .adversary.json
+        will be stored and where relative paths are resolved against.
 
         Returns:
-            Path object representing current working directory
+            Path object representing project root directory
         """
-        from pathlib import Path
-
         return Path.cwd()
 
-    def _resolve_file_path(
-        self, file_path: str, path_description: str = "file path"
-    ) -> str:
-        """Resolve relative file path to absolute path.
+    def _resolve_path_from_project_root(
+        self, path: str, path_description: str = "path", allow_override: bool = True
+    ) -> Path:
+        """Resolve path relative to project root directory.
 
         Args:
-            file_path: Path to file or directory (may be relative)
-            path_description: Description of the path type for error messages
+            path: Path to resolve (may be relative or absolute)
+            path_description: Description for error messages
+            allow_override: If True, absolute paths override project root resolution
 
         Returns:
-            Absolute path to the file or directory
+            Resolved Path object
         """
-        from pathlib import Path
+        logger.debug(f"Resolving {path_description}: {path}")
 
-        # Handle empty or whitespace-only paths
-        if not file_path or not file_path.strip():
+        if not path or not path.strip():
             raise AdversaryToolError(f"{path_description} cannot be empty")
 
-        path = Path(file_path.strip())
+        path_obj = Path(path.strip())
 
-        # If it's already absolute, return as-is
-        if path.is_absolute():
-            return str(path)
+        # If absolute path and overrides are allowed, use as-is
+        if path_obj.is_absolute() and allow_override:
+            logger.debug(f"Using absolute path override: {path_obj}")
+            return path_obj.resolve()
 
-        # For relative paths, resolve against the current working directory
-        # This assumes the MCP client is running from the project directory
-        resolved_path = self._get_current_working_directory() / path
-        return str(resolved_path.resolve())
+        # Resolve relative to project root
+        project_root = self._get_project_root()
+        resolved = project_root / path_obj
+        logger.debug(
+            f"Resolved {path_description} relative to project root {project_root}: {resolved}"
+        )
+        return resolved.resolve()
 
-    def _resolve_adversary_file_path(self, adversary_file_path: str) -> str:
-        """Resolve relative adversary file path to absolute path.
+    def _resolve_adversary_file_path(self, path: str | None) -> str:
+        """Resolve path for .adversary.json file (for backward compatibility).
 
         Args:
-            adversary_file_path: Path to .adversary.json file (may be relative)
+            path: Path to resolve
 
         Returns:
-            Absolute path to the .adversary.json file
+            Resolved path as string
         """
-        return self._resolve_file_path(adversary_file_path, "adversary_file_path")
+        if path is None or not path.strip():
+            raise AdversaryToolError("adversary_file_path cannot be empty")
+        resolved_path = self._resolve_path_from_project_root(
+            path, "adversary file path"
+        )
+        return str(resolved_path)
+
+    def _resolve_file_path(self, path: str, path_description: str = "File path") -> str:
+        """Resolve generic file path (for backward compatibility).
+
+        Args:
+            path: Path to resolve
+            path_description: Description of the path type (used in error messages)
+
+        Returns:
+            Resolved path as string
+        """
+        if not path or not path.strip():
+            raise AdversaryToolError(f"{path_description} cannot be empty")
+        resolved_path = self._resolve_path_from_project_root(path, "file path")
+        return str(resolved_path)
+
+    def _get_adversary_json_path(self, custom_path: str | None = None) -> Path:
+        """Get the path to the .adversary.json file.
+
+        Args:
+            custom_path: Optional custom path override
+
+        Returns:
+            Path to .adversary.json file
+        """
+        if custom_path is not None:
+            # Validate that custom_path is not empty/whitespace
+            if not custom_path.strip():
+                raise AdversaryToolError("adversary_file_path cannot be empty")
+            return self._resolve_path_from_project_root(
+                custom_path, "adversary file path"
+            )
+
+        # Default: .adversary.json in project root
+        return self._get_project_root() / ".adversary.json"
 
     def _filter_threats_by_severity(
         self, threats: list[ThreatMatch], min_severity: Severity
@@ -1565,14 +1352,14 @@ class AdversaryMCPServer:
             # Still show analysis overview
             result += "## Analysis Overview\n\n"
             result += f"**LLM Analysis:** {scan_result.stats['llm_threats']} findings\n"
-            result += f"**Language:** {scan_result.language.value}\n\n"
+            result += f"**Language:** {scan_result.language}\n\n"
             return result
 
         # Analysis overview
         result += "## Analysis Overview\n\n"
         result += f"**LLM Analysis:** {scan_result.stats['llm_threats']} findings\n"
         result += f"**Total Unique:** {scan_result.stats['unique_threats']} findings\n"
-        result += f"**Language:** {scan_result.language.value}\n\n"
+        result += f"**Language:** {scan_result.language}\n\n"
 
         # Summary by severity
         severity_counts = scan_result.stats["severity_counts"]
@@ -1906,7 +1693,7 @@ class AdversaryMCPServer:
             "scan_metadata": {
                 "target": scan_target,
                 "timestamp": datetime.utcnow().isoformat() + "Z",
-                "language": scan_result.language.value,
+                "language": scan_result.language,
                 "file_path": scan_result.file_path,
                 "scan_type": "enhanced",
                 "total_threats": len(scan_result.all_threats),
@@ -1981,7 +1768,7 @@ class AdversaryMCPServer:
             files_scanned.append(
                 {
                     "file_path": scan_result.file_path,
-                    "language": scan_result.language.value,
+                    "language": scan_result.language,
                     "threat_count": (
                         len(scan_result.all_threats)
                         if hasattr(scan_result, "all_threats")
@@ -2071,8 +1858,9 @@ class AdversaryMCPServer:
                     [
                         f
                         for f in files_scanned
-                        if isinstance(f.get("threat_count", 0), int)
-                        and int(f["threat_count"]) > 0
+                        if (threat_count := f.get("threat_count", 0)) is not None
+                        and isinstance(threat_count, int)
+                        and threat_count > 0
                     ]
                 ),
             },
@@ -2489,15 +2277,15 @@ class AdversaryMCPServer:
     def _add_llm_analysis_prompts(
         self,
         content: str,
-        language: Language,
         file_path: str,
         include_header: bool = True,
     ) -> str:
         """Add LLM analysis prompts to scan results."""
         try:
             analyzer = self.scan_engine.llm_analyzer
+            # Language is now auto-detected as generic
             prompt = analyzer.create_analysis_prompt(
-                content, file_path, language, max_findings=20
+                content, file_path, "generic", max_findings=20
             )
 
             result = ""
@@ -2550,38 +2338,37 @@ class AdversaryMCPServer:
         """Handle mark false positive request."""
         try:
             finding_uuid = arguments.get("finding_uuid")
-            adversary_file_path = arguments.get("adversary_file_path")
+            custom_path = arguments.get("adversary_file_path")
             reason = arguments.get("reason", "Marked as false positive via MCP")
-            marked_by = arguments.get("marked_by", "user")
+            marked_by = arguments.get("marked_by", "MCP User")
 
             if not finding_uuid:
                 raise AdversaryToolError("finding_uuid is required")
-            if not adversary_file_path:
-                raise AdversaryToolError("adversary_file_path is required")
 
-            # Resolve relative path to absolute path
-            resolved_path = self._resolve_adversary_file_path(adversary_file_path)
+            # Get .adversary.json path using new cwd-based approach
+            adversary_path = self._get_adversary_json_path(custom_path)
+            logger.info(f"Marking false positive in: {adversary_path}")
 
-            # Create false positive manager with resolved file path
-            fp_manager = FalsePositiveManager(adversary_file_path=resolved_path)
+            # Create false positive manager
+            fp_manager = FalsePositiveManager(adversary_file_path=str(adversary_path))
 
             success = fp_manager.mark_false_positive(finding_uuid, reason, marked_by)
 
             if success:
                 logger.info(
-                    f"✅ Successfully marked finding {finding_uuid} as false positive in {resolved_path}"
+                    f"✅ Successfully marked finding {finding_uuid} as false positive in {adversary_path}"
                 )
                 result = "✅ **Finding marked as false positive**\n\n"
                 result += f"**UUID:** {finding_uuid}\n"
                 result += f"**Reason:** {reason}\n"
-                result += f"**File:** {resolved_path}\n"
+                result += f"**File:** {adversary_path}\n"
             else:
                 logger.warning(
-                    f"❌ Failed to mark finding {finding_uuid} as false positive - not found in {resolved_path}"
+                    f"❌ Failed to mark finding {finding_uuid} as false positive - not found in {adversary_path}"
                 )
                 result = "⚠️ **Finding not found**\n\n"
                 result += f"**UUID:** {finding_uuid}\n"
-                result += f"**File checked:** {resolved_path}\n"
+                result += f"**File checked:** {adversary_path}\n"
                 result += "The threat with this UUID was not found in the .adversary.json file.\n"
                 result += (
                     "Make sure you've run a scan that generated this finding first.\n"
@@ -2599,34 +2386,33 @@ class AdversaryMCPServer:
         """Handle unmark false positive request."""
         try:
             finding_uuid = arguments.get("finding_uuid")
-            adversary_file_path = arguments.get("adversary_file_path")
+            custom_path = arguments.get("adversary_file_path")
 
             if not finding_uuid:
                 raise AdversaryToolError("finding_uuid is required")
-            if not adversary_file_path:
-                raise AdversaryToolError("adversary_file_path is required")
 
-            # Resolve relative path to absolute path
-            resolved_path = self._resolve_adversary_file_path(adversary_file_path)
+            # Get .adversary.json path using new cwd-based approach
+            adversary_path = self._get_adversary_json_path(custom_path)
+            logger.info(f"Unmarking false positive in: {adversary_path}")
 
-            # Create false positive manager with resolved file path
-            fp_manager = FalsePositiveManager(adversary_file_path=resolved_path)
+            # Create false positive manager
+            fp_manager = FalsePositiveManager(adversary_file_path=str(adversary_path))
             success = fp_manager.unmark_false_positive(finding_uuid)
 
             if success:
                 logger.info(
-                    f"✅ Successfully unmarked finding {finding_uuid} from {resolved_path}"
+                    f"✅ Successfully unmarked finding {finding_uuid} from {adversary_path}"
                 )
                 result = "✅ **Finding unmarked as false positive**\n\n"
                 result += f"**UUID:** {finding_uuid}\n"
-                result += f"**File:** {resolved_path}\n"
+                result += f"**File:** {adversary_path}\n"
             else:
                 logger.warning(
-                    f"❌ Finding {finding_uuid} not found in false positives in {resolved_path}"
+                    f"❌ Finding {finding_uuid} not found in false positives in {adversary_path}"
                 )
                 result = "⚠️ **Finding not found in false positives**\n\n"
                 result += f"**UUID:** {finding_uuid}\n"
-                result += f"**File checked:** {resolved_path}\n"
+                result += f"**File checked:** {adversary_path}\n"
 
             return [types.TextContent(type="text", text=result)]
 
@@ -2644,15 +2430,15 @@ class AdversaryMCPServer:
             if not adversary_file_path:
                 raise AdversaryToolError("adversary_file_path is required")
 
-            # Resolve relative path to absolute path
-            resolved_path = self._resolve_adversary_file_path(adversary_file_path)
+            # Get adversary.json path using the new helper method
+            adversary_path = str(self._get_adversary_json_path(adversary_file_path))
 
             # Create false positive manager with resolved file path
-            fp_manager = FalsePositiveManager(adversary_file_path=resolved_path)
+            fp_manager = FalsePositiveManager(adversary_file_path=adversary_path)
             false_positives = fp_manager.get_false_positives()
 
             result = f"# False Positives ({len(false_positives)} found)\n\n"
-            result += f"**File:** {resolved_path}\n\n"
+            result += f"**File:** {adversary_path}\n\n"
 
             if not false_positives:
                 result += "No false positives found.\n"
@@ -2671,368 +2457,6 @@ class AdversaryMCPServer:
         except Exception as e:
             logger.error(f"Error listing false positives: {e}")
             raise AdversaryToolError(f"Failed to list false positives: {str(e)}")
-
-    async def _handle_generate_threat_model(
-        self, arguments: dict[str, Any]
-    ) -> list[types.TextContent]:
-        """Handle threat model generation request."""
-        try:
-            logger.info("Starting threat model generation")
-
-            # Get parameters
-            repo_name = arguments.get("repo_name")
-            source_path_arg = arguments.get("source_path")
-            search_depth = arguments.get("search_depth", 3)
-            output_file = arguments.get("output_file")
-            include_threats = arguments.get("include_threats", True)
-            severity_threshold_str = arguments.get("severity_threshold", "medium")
-            output_format = arguments.get("output_format", "markdown")
-            use_llm = arguments.get("use_llm", False)
-
-            # Determine source path
-            if source_path_arg:
-                # Explicit path provided
-                source_path = Path(source_path_arg)
-                logger.info(f"Using explicit source path: {source_path}")
-            elif repo_name:
-                # Find repo by name
-                source_path = self._find_repo_by_name(repo_name, max_depth=search_depth)
-                logger.info(f"Found repository '{repo_name}' at: {source_path}")
-            else:
-                raise AdversaryToolError(
-                    "Either 'repo_name' or 'source_path' must be provided"
-                )
-
-            # Set default output file in the project directory
-            if output_file is None:
-                extension = "json" if output_format == "json" else "md"
-                output_file = source_path / f"threat_model.{extension}"
-                logger.info(f"Using default output file: {output_file}")
-            else:
-                output_file = Path(output_file)
-
-            # Convert severity string to enum
-            severity_threshold = ThreatSeverity(severity_threshold_str.lower())
-
-            # Resolve paths
-            source_path_resolved = source_path.resolve()
-            output_file_resolved = output_file.resolve()
-
-            logger.info(f"Analyzing source: {source_path_resolved}")
-            logger.info(f"Output file: {output_file_resolved}")
-
-            # Validate source path exists
-            if not source_path_resolved.exists():
-                raise AdversaryToolError(f"Source path does not exist: {source_path}")
-
-            # Create threat model builder with LLM support
-            builder = ThreatModelBuilder(enable_llm=use_llm)
-
-            # Generate threat model
-            threat_model = builder.build_threat_model(
-                source_path=str(source_path_resolved),
-                include_threats=include_threats,
-                severity_threshold=severity_threshold,
-                use_llm=use_llm,
-                llm_options={
-                    "severity_threshold": severity_threshold_str,
-                    "enable_business_logic": True,
-                    "enable_data_flow_analysis": True,
-                    "enable_attack_surface": True,
-                    "enable_contextual_enhancement": True,
-                },
-            )
-
-            # Save threat model
-            builder.save_threat_model(
-                threat_model=threat_model,
-                output_path=str(output_file_resolved),
-                format=output_format,
-            )
-
-            # Generate response
-            components = threat_model.components
-            result = "# Threat Model Generated\n\n"
-            result += f"**Source:** {source_path}\n"
-            result += f"**Output:** {output_file}\n"
-            result += f"**Format:** {output_format}\n\n"
-
-            result += "## Architecture Summary\n\n"
-            result += f"- **Trust Boundaries:** {len(components.boundaries)}\n"
-            result += f"- **External Entities:** {len(components.external_entities)}\n"
-            result += f"- **Processes:** {len(components.processes)}\n"
-            result += f"- **Data Stores:** {len(components.data_stores)}\n"
-            result += f"- **Data Flows:** {len(components.data_flows)}\n\n"
-
-            if include_threats:
-                result += f"- **Threats Identified:** {len(threat_model.threats)}\n\n"
-
-                # Show threat breakdown by severity
-                threat_counts = {}
-                for threat in threat_model.threats:
-                    severity = threat.severity.value
-                    threat_counts[severity] = threat_counts.get(severity, 0) + 1
-
-                if threat_counts:
-                    result += "### Threat Breakdown\n\n"
-                    for severity in ["critical", "high", "medium", "low"]:
-                        count = threat_counts.get(severity, 0)
-                        if count > 0:
-                            emoji = {
-                                "critical": "🔴",
-                                "high": "🟠",
-                                "medium": "🟡",
-                                "low": "🟢",
-                            }[severity]
-                            result += (
-                                f"- **{severity.capitalize()}:** {count} {emoji}\n"
-                            )
-                    result += "\n"
-
-            # Show component breakdown
-            if components.external_entities:
-                result += "### External Entities\n"
-                for entity in components.external_entities[:5]:  # Show first 5
-                    result += f"- {entity}\n"
-                if len(components.external_entities) > 5:
-                    result += (
-                        f"- ... and {len(components.external_entities) - 5} more\n"
-                    )
-                result += "\n"
-
-            if components.processes:
-                result += "### Processes\n"
-                for process in components.processes[:5]:  # Show first 5
-                    result += f"- {process}\n"
-                if len(components.processes) > 5:
-                    result += f"- ... and {len(components.processes) - 5} more\n"
-                result += "\n"
-
-            if components.data_stores:
-                result += "### Data Stores\n"
-                for store in components.data_stores[:5]:  # Show first 5
-                    result += f"- {store}\n"
-                if len(components.data_stores) > 5:
-                    result += f"- ... and {len(components.data_stores) - 5} more\n"
-                result += "\n"
-
-            result += f"✅ **Threat model saved to:** `{output_file}`\n\n"
-
-            # Add LLM enhancement information if used
-            if use_llm and "llm_prompts" in threat_model.metadata:
-                result += "🤖 **LLM Analysis Available:**\n"
-                prompt_count = threat_model.metadata.get("llm_prompt_count", 0)
-                result += (
-                    f"- Generated {prompt_count} analysis prompts for client LLM\n"
-                )
-                result += "- Business logic, data flow, attack surface, and contextual analysis available\n"
-                result += "- Prompts stored in threat model metadata for processing\n"
-                result += "\n"
-            elif use_llm:
-                result += "⚠️ **LLM Enhancement:** Requested but not available\n\n"
-
-            result += "**Next Steps:**\n"
-            result += "- Use `adv_diagram` to create a visual diagram\n"
-            result += f"- Review the {output_format} file for detailed findings\n"
-            if not use_llm:
-                result += (
-                    "- Consider using `use_llm: true` for enhanced threat analysis\n"
-                )
-
-            logger.info("Threat model generation completed successfully")
-            return [types.TextContent(type="text", text=result)]
-
-        except Exception as e:
-            logger.error(f"Threat model generation failed: {e}")
-            logger.debug("Threat model error details", exc_info=True)
-            raise AdversaryToolError(f"Threat model generation failed: {e}")
-
-    async def _handle_generate_diagram(
-        self, arguments: dict[str, Any]
-    ) -> list[types.TextContent]:
-        """Handle Mermaid diagram generation request."""
-        try:
-            logger.info("Starting diagram generation")
-
-            # Get parameters
-            repo_name = arguments.get("repo_name")
-            source_path_arg = arguments.get("source_path")
-            search_depth = arguments.get("search_depth", 3)
-            output_file = arguments.get("output_file")
-            diagram_type = arguments.get("diagram_type", "flowchart")
-            show_threats = arguments.get("show_threats", True)
-            layout_direction = arguments.get("layout_direction", "TD")
-            use_llm = arguments.get("use_llm", False)
-
-            # Determine source path
-            if source_path_arg:
-                # Explicit path provided
-                source_path = Path(source_path_arg)
-                logger.info(f"Using explicit source path: {source_path}")
-            elif repo_name:
-                # Find repo by name
-                source_path = self._find_repo_by_name(repo_name, max_depth=search_depth)
-                logger.info(f"Found repository '{repo_name}' at: {source_path}")
-            else:
-                raise AdversaryToolError(
-                    "Either 'repo_name' or 'source_path' must be provided"
-                )
-
-            # Set default output file in the project directory
-            if output_file is None:
-                output_file = source_path / "threat_diagram.mmd"
-                logger.info(f"Using default output file: {output_file}")
-            else:
-                output_file = Path(output_file)
-
-            # Resolve paths
-            source_path_resolved = source_path.resolve()
-            output_file_resolved = output_file.resolve()
-
-            logger.info(f"Source: {source_path_resolved}")
-            logger.info(f"Output: {output_file_resolved}")
-
-            # Check if source is an existing threat model JSON file
-            if source_path_resolved.suffix.lower() == ".json":
-                logger.info("Using existing threat model JSON file")
-                try:
-                    with open(source_path_resolved, encoding="utf-8") as f:
-                        threat_model_data = json.load(f)
-
-                    # Generate diagram from JSON data using proper object model
-                    from .threat_modeling.models import (
-                        DataFlow,
-                        ThreatModel,
-                        ThreatModelComponents,
-                    )
-
-                    components = ThreatModelComponents(
-                        boundaries=threat_model_data.get("boundaries", []),
-                        external_entities=threat_model_data.get(
-                            "external_entities", []
-                        ),
-                        processes=threat_model_data.get("processes", []),
-                        data_stores=threat_model_data.get("data_stores", []),
-                        data_flows=[
-                            DataFlow(**flow)
-                            for flow in threat_model_data.get("data_flows", [])
-                        ],
-                    )
-
-                    threat_model = ThreatModel(components=components)
-                    generator = DiagramGenerator()
-                    diagram_content = generator.generate_diagram(
-                        threat_model,
-                        show_threats=show_threats,
-                        diagram_type=diagram_type,
-                        layout_direction=layout_direction,
-                    )
-
-                except (json.JSONDecodeError, KeyError) as e:
-                    raise AdversaryToolError(f"Invalid threat model JSON file: {e}")
-
-            else:
-                # Generate new threat model from source code
-                logger.info("Generating new threat model from source code")
-
-                if not source_path_resolved.exists():
-                    raise AdversaryToolError(
-                        f"Source path does not exist: {source_path}"
-                    )
-
-                # Create threat model builder with LLM support
-                builder = ThreatModelBuilder(enable_llm=use_llm)
-
-                # Generate threat model (include threats if show_threats is True)
-                threat_model = builder.build_threat_model(
-                    source_path=str(source_path_resolved),
-                    include_threats=show_threats,
-                    severity_threshold=ThreatSeverity.MEDIUM,
-                    use_llm=use_llm,
-                    llm_options={
-                        "severity_threshold": "medium",
-                        "enable_business_logic": True,
-                        "enable_data_flow_analysis": True,
-                        "enable_attack_surface": True,
-                        "enable_contextual_enhancement": True,
-                    },
-                )
-
-                # Generate diagram
-                generator = DiagramGenerator()
-                diagram_content = generator.generate_diagram(
-                    threat_model=threat_model,
-                    diagram_type=diagram_type,
-                    show_threats=show_threats,
-                    layout_direction=layout_direction,
-                )
-
-            # Save diagram
-            with open(output_file_resolved, "w") as f:
-                f.write(diagram_content)
-
-            # Generate response
-            result = "# Mermaid Diagram Generated\n\n"
-            result += f"**Source:** {source_path}\n"
-            result += f"**Output:** {output_file}\n"
-            result += f"**Diagram Type:** {diagram_type}\n"
-            result += f"**Layout:** {layout_direction}\n"
-            result += f"**Show Threats:** {show_threats}\n"
-
-            # Add LLM enhancement info if used and generating new threat model
-            if use_llm and not str(source_path).endswith(".json"):
-                if (
-                    hasattr(threat_model, "metadata")
-                    and "llm_prompts" in threat_model.metadata
-                ):
-                    prompt_count = threat_model.metadata.get("llm_prompt_count", 0)
-                    result += f"**LLM Enhanced:** Yes ({prompt_count} analysis prompts available)\n"
-                else:
-                    result += "**LLM Enhanced:** Requested but not available\n"
-
-            result += "\n"
-
-            # Show full diagram for rendering in Cursor
-            result += "## Diagram Preview\n\n"
-            result += "```mermaid\n"
-            result += diagram_content
-            result += "\n```\n\n"
-
-            result += f"✅ **Diagram saved to:** `{output_file}`\n\n"
-            result += "**Usage:**\n"
-            result += "- Copy the `.mmd` file content to visualize in Mermaid-compatible tools\n"
-            result += "- Use with GitHub, GitLab, or online Mermaid editors\n"
-            result += "- Integrate into documentation or presentations\n"
-
-            logger.info("Diagram generation completed successfully")
-            return [types.TextContent(type="text", text=result)]
-
-        except Exception as e:
-            logger.error(f"Diagram generation failed: {e}")
-            logger.debug("Diagram error details", exc_info=True)
-            raise AdversaryToolError(f"Diagram generation failed: {e}")
-
-    async def run(self) -> None:
-        """Run the MCP server."""
-        logger.info("Starting MCP server...")
-        try:
-            async with stdio_server() as (read_stream, write_stream):
-                logger.info("MCP server running and accepting connections")
-                await self.server.run(
-                    read_stream,
-                    write_stream,
-                    InitializationOptions(
-                        server_name="adversary-mcp-server",
-                        server_version=self._get_version(),
-                        capabilities=ServerCapabilities(
-                            tools=ToolsCapability(listChanged=True)
-                        ),
-                    ),
-                )
-        except Exception as e:
-            logger.error(f"Server runtime error: {e}")
-            logger.debug("Server error details", exc_info=True)
-            raise
 
     def _find_repo_by_name(self, repo_name: str, max_depth: int = 3) -> Path:
         """Find a repository by name using recursive search from home directory."""
@@ -3137,6 +2561,28 @@ class AdversaryMCPServer:
         ]
 
         return any((path / indicator).exists() for indicator in project_indicators)
+
+    async def run(self) -> None:
+        """Run the MCP server."""
+        logger.info("Starting MCP server...")
+        try:
+            async with stdio_server() as (read_stream, write_stream):
+                logger.info("MCP server running and accepting connections")
+                await self.server.run(
+                    read_stream,
+                    write_stream,
+                    InitializationOptions(
+                        server_name="adversary-mcp-server",
+                        server_version=self._get_version(),
+                        capabilities=ServerCapabilities(
+                            tools=ToolsCapability(listChanged=True)
+                        ),
+                    ),
+                )
+        except Exception as e:
+            logger.error(f"Server runtime error: {e}")
+            logger.debug("Server error details", exc_info=True)
+            raise
 
 
 async def async_main() -> None:

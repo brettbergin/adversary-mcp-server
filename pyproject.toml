@@ -1,14 +1,14 @@
 [project]
 name = "adversary-mcp-server"
-version = "0.9.8"
-description = "MCP server for adversarial security analysis and vulnerability detection"
+version = "0.9.9"
+description = "MCP server for security vulnerability scanning and detection"
 readme = "README.md"
 authors = [
     { name = "Brett Bergin", email = "brettberginbc@yahoo.com" }
 ]
 requires-python = ">=3.11,<3.13"
 license = { text = "MIT" }
-keywords = ["security", "mcp", "vulnerability", "adversary", "cursor", "red-team"]
+keywords = ["security", "mcp", "vulnerability", "scanner", "static-analysis"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -30,19 +30,11 @@ dependencies = [
     "typing-extensions>=4.0.0",
     "cryptography>=3.4.8",
     "pyyaml>=6.0.0",
-    "ast-tools>=0.1.0",
-    "esprima>=4.0.0",
-    "openai>=1.0.0",
-    "jinja2>=3.0.0",
-    "tree-sitter>=0.20.0",
-    "tree-sitter-python>=0.20.0",
-    "tree-sitter-javascript>=0.20.0",
-    "tree-sitter-typescript>=0.20.0",
     "bandit>=1.7.0",
     "semgrep>=1.0.0",
     "requests>=2.28.0",
     "watchdog>=3.0.0",
-    "mermaid-py>=0.8.0",
+    "jinja2==3.1.6",
 ]
 
 [project.optional-dependencies]

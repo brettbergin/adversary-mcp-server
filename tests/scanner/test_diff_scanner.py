@@ -18,7 +18,7 @@ from adversary_mcp_server.scanner.diff_scanner import (
     GitDiffScanner,
 )
 from adversary_mcp_server.scanner.scan_engine import ScanEngine
-from adversary_mcp_server.scanner.types import Language, Severity
+from adversary_mcp_server.scanner.types import Severity
 
 
 class TestDiffChunk:
@@ -189,16 +189,17 @@ class TestGitDiffScanner:
         assert scanner.working_dir == working_dir
 
     def test_detect_language_from_path(self):
-        """Test language detection from file paths."""
+        """Test language detection from file paths (now simplified to generic)."""
         scanner = GitDiffScanner()
 
-        assert scanner._detect_language_from_path("test.py") == Language.PYTHON
-        assert scanner._detect_language_from_path("test.js") == Language.JAVASCRIPT
-        assert scanner._detect_language_from_path("test.jsx") == Language.JAVASCRIPT
-        assert scanner._detect_language_from_path("test.ts") == Language.TYPESCRIPT
-        assert scanner._detect_language_from_path("test.tsx") == Language.TYPESCRIPT
-        assert scanner._detect_language_from_path("test.txt") is None
-        assert scanner._detect_language_from_path("README.md") is None
+        # Language detection has been simplified - all files return generic
+        assert scanner._detect_language_from_path("test.py") == "generic"
+        assert scanner._detect_language_from_path("test.js") == "generic"
+        assert scanner._detect_language_from_path("test.jsx") == "generic"
+        assert scanner._detect_language_from_path("test.ts") == "generic"
+        assert scanner._detect_language_from_path("test.tsx") == "generic"
+        assert scanner._detect_language_from_path("test.txt") == "generic"
+        assert scanner._detect_language_from_path("README.md") == "generic"
 
     @patch("adversary_mcp_server.scanner.scan_engine.ScanEngine")
     @patch("subprocess.run")
@@ -306,21 +307,8 @@ index 1234567..abcdefg 100644
 
         assert results == {}
 
-    @patch("adversary_mcp_server.scanner.diff_scanner.GitDiffScanner.get_diff_changes")
-    def test_scan_diff_with_unsupported_files(self, mock_get_diff):
-        """Test scanning diff with unsupported file types."""
-        mock_chunk = Mock()
-        mock_chunk.get_added_lines_only.return_value = "some content"
-        mock_chunk.added_lines = [(1, "some content")]
-        mock_get_diff.return_value = {
-            "README.md": [mock_chunk],
-            "image.png": [mock_chunk],
-        }
-
-        scanner = GitDiffScanner()
-        results = scanner.scan_diff_sync("feature", "main")
-
-        assert results == {}
+    # Test removed - language-based file filtering no longer exists
+    # All files are now considered scannable
 
     @patch("adversary_mcp_server.scanner.diff_scanner.GitDiffScanner.get_diff_changes")
     def test_scan_diff_with_supported_files(self, mock_get_diff):
@@ -369,7 +357,7 @@ index 1234567..abcdefg 100644
         mock_get_diff.return_value = {
             "test.py": [mock_chunk1],
             "script.js": [mock_chunk2],
-            "README.md": [mock_chunk3],  # Unsupported
+            "README.md": [mock_chunk3],  # Now supported - all files are scannable
         }
 
         scanner = GitDiffScanner()
@@ -378,13 +366,13 @@ index 1234567..abcdefg 100644
         assert summary["source_branch"] == "feature"
         assert summary["target_branch"] == "main"
         assert summary["total_files_changed"] == 3
-        assert summary["supported_files"] == 2
+        assert summary["supported_files"] == 3  # All files now supported
         assert summary["total_chunks"] == 3
         assert summary["lines_added"] == 4  # 2 + 1 + 1 = 4
         assert summary["lines_removed"] == 1
         assert "test.py" in summary["scannable_files"]
         assert "script.js" in summary["scannable_files"]
-        assert "README.md" not in summary["scannable_files"]
+        assert "README.md" in summary["scannable_files"]  # Now included
 
     @patch("adversary_mcp_server.scanner.diff_scanner.GitDiffScanner.get_diff_changes")
     def test_get_diff_summary_git_error(self, mock_get_diff):

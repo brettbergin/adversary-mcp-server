@@ -94,24 +94,26 @@ def render_template(user_input):
 
         async def mock_scan_file(*args, **kwargs):
             from adversary_mcp_server.scanner.scan_engine import EnhancedScanResult
-            from adversary_mcp_server.scanner.types import Language
+
+            # Language enum removed - using strings directly
 
             return EnhancedScanResult(
                 file_path=str(test_file),
-                language=Language.PYTHON,
                 llm_threats=[],
                 semgrep_threats=mock_threats,
-                scan_metadata={"file_path": str(test_file), "language": "python"},
+                scan_metadata={"file_path": str(test_file)},
             )
 
         with patch.object(server.scan_engine, "scan_file", side_effect=mock_scan_file):
-            # First scan
-            arguments1 = {
-                "file_path": str(test_file),
-                "working_directory": str(temp_project_dir),
-            }
+            with patch.object(
+                server, "_get_project_root", return_value=temp_project_dir
+            ):
+                # First scan - using relative path since we're mocking project root
+                arguments1 = {
+                    "file_path": "vulnerable.py",  # Relative to project root
+                }
 
-            result1 = await server._handle_scan_file(arguments1)
+                result1 = await server._handle_scan_file(arguments1)
 
             # Verify scan completed and file was saved
             assert adversary_file.exists()
@@ -130,12 +132,14 @@ def render_template(user_input):
             }
 
             # Second scan with same file - should preserve UUIDs
-            arguments2 = {
-                "file_path": str(test_file),
-                "working_directory": str(temp_project_dir),
-            }
+            with patch.object(
+                server, "_get_project_root", return_value=temp_project_dir
+            ):
+                arguments2 = {
+                    "file_path": "vulnerable.py",  # Relative to project root
+                }
 
-            result2 = await server._handle_scan_file(arguments2)
+                result2 = await server._handle_scan_file(arguments2)
 
             # Load second scan results
             with open(adversary_file) as f:
@@ -164,24 +168,26 @@ def render_template(user_input):
 
         async def mock_scan_file(*args, **kwargs):
             from adversary_mcp_server.scanner.scan_engine import EnhancedScanResult
-            from adversary_mcp_server.scanner.types import Language
+
+            # Language enum removed - using strings directly
 
             return EnhancedScanResult(
                 file_path=str(test_file),
-                language=Language.PYTHON,
                 llm_threats=[],
                 semgrep_threats=mock_threats,
-                scan_metadata={"file_path": str(test_file), "language": "python"},
+                scan_metadata={"file_path": str(test_file)},
             )
 
         with patch.object(server.scan_engine, "scan_file", side_effect=mock_scan_file):
-            # First scan
-            await server._handle_scan_file(
-                {
-                    "file_path": str(test_file),
-                    "working_directory": str(temp_project_dir),
-                }
-            )
+            with patch.object(
+                server, "_get_project_root", return_value=temp_project_dir
+            ):
+                # First scan
+                await server._handle_scan_file(
+                    {
+                        "file_path": "vulnerable.py",
+                    }
+                )
 
             # Load results and get UUID of first threat
             with open(adversary_file) as f:
@@ -213,12 +219,14 @@ def render_template(user_input):
             )
 
             # Run second scan - should preserve false positive marking
-            await server._handle_scan_file(
-                {
-                    "file_path": str(test_file),
-                    "working_directory": str(temp_project_dir),
-                }
-            )
+            with patch.object(
+                server, "_get_project_root", return_value=temp_project_dir
+            ):
+                await server._handle_scan_file(
+                    {
+                        "file_path": "vulnerable.py",
+                    }
+                )
 
             # Verify false positive marking persisted
             with open(adversary_file) as f:
@@ -251,25 +259,27 @@ def render_template(user_input):
 
         async def mock_scan_file_initial(*args, **kwargs):
             from adversary_mcp_server.scanner.scan_engine import EnhancedScanResult
-            from adversary_mcp_server.scanner.types import Language
+
+            # Language enum removed - using strings directly
 
             return EnhancedScanResult(
                 file_path=str(test_file),
-                language=Language.PYTHON,
                 llm_threats=[],
                 semgrep_threats=initial_threats,
-                scan_metadata={"file_path": str(test_file), "language": "python"},
+                scan_metadata={"file_path": str(test_file)},
             )
 
         with patch.object(
             server.scan_engine, "scan_file", side_effect=mock_scan_file_initial
         ):
-            await server._handle_scan_file(
-                {
-                    "file_path": str(test_file),
-                    "working_directory": str(temp_project_dir),
-                }
-            )
+            with patch.object(
+                server, "_get_project_root", return_value=temp_project_dir
+            ):
+                await server._handle_scan_file(
+                    {
+                        "file_path": "vulnerable.py",
+                    }
+                )
 
         # Capture original UUIDs
         with open(adversary_file) as f:
@@ -283,25 +293,27 @@ def render_template(user_input):
 
         async def mock_scan_file_expanded(*args, **kwargs):
             from adversary_mcp_server.scanner.scan_engine import EnhancedScanResult
-            from adversary_mcp_server.scanner.types import Language
+
+            # Language enum removed - using strings directly
 
             return EnhancedScanResult(
                 file_path=str(test_file),
-                language=Language.PYTHON,
                 llm_threats=[],
                 semgrep_threats=all_threats,
-                scan_metadata={"file_path": str(test_file), "language": "python"},
+                scan_metadata={"file_path": str(test_file)},
             )
 
         with patch.object(
             server.scan_engine, "scan_file", side_effect=mock_scan_file_expanded
         ):
-            await server._handle_scan_file(
-                {
-                    "file_path": str(test_file),
-                    "working_directory": str(temp_project_dir),
-                }
-            )
+            with patch.object(
+                server, "_get_project_root", return_value=temp_project_dir
+            ):
+                await server._handle_scan_file(
+                    {
+                        "file_path": "vulnerable.py",
+                    }
+                )
 
         # Check final results
         with open(adversary_file) as f:
@@ -361,40 +373,39 @@ query = f"SELECT * FROM users WHERE id = {user_id}"
 
         async def mock_scan_code(*args, **kwargs):
             from adversary_mcp_server.scanner.scan_engine import EnhancedScanResult
-            from adversary_mcp_server.scanner.types import Language
+
+            # Language enum removed - using strings directly
 
             return EnhancedScanResult(
                 file_path="<code>",
-                language=Language.PYTHON,
                 llm_threats=[],
                 semgrep_threats=mock_threats,
-                scan_metadata={"language": "python"},
+                scan_metadata={},
             )
 
         with patch.object(server.scan_engine, "scan_code", side_effect=mock_scan_code):
-            # First code scan
-            await server._handle_scan_code(
-                {
-                    "content": test_code,
-                    "language": "python",
-                    "working_directory": str(temp_project_dir),
-                }
-            )
+            with patch.object(
+                server, "_get_project_root", return_value=temp_project_dir
+            ):
+                # First code scan
+                await server._handle_scan_code(
+                    {
+                        "content": test_code,
+                    }
+                )
 
-            # Get original UUIDs
-            with open(adversary_file) as f:
-                first_data = json.load(f)
+                # Get original UUIDs
+                with open(adversary_file) as f:
+                    first_data = json.load(f)
 
-            original_uuids = [t["uuid"] for t in first_data["threats"]]
+                original_uuids = [t["uuid"] for t in first_data["threats"]]
 
-            # Second identical code scan
-            await server._handle_scan_code(
-                {
-                    "content": test_code,
-                    "language": "python",
-                    "working_directory": str(temp_project_dir),
-                }
-            )
+                # Second identical code scan
+                await server._handle_scan_code(
+                    {
+                        "content": test_code,
+                    }
+                )
 
             # Verify UUIDs were preserved
             with open(adversary_file) as f:

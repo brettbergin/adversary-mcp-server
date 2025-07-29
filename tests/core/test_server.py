@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from mcp import types
 
 from adversary_mcp_server.scanner.scan_engine import EnhancedScanResult
-from adversary_mcp_server.scanner.types import Category, Language, Severity, ThreatMatch
+from adversary_mcp_server.scanner.types import Category, Severity, ThreatMatch
 from adversary_mcp_server.server import (
     AdversaryMCPServer,
     AdversaryToolError,
@@ -134,7 +134,6 @@ class TestMCPToolHandlers:
         """Create a mock scan result for testing."""
         return EnhancedScanResult(
             file_path="test.py",
-            language=Language.PYTHON,
             llm_threats=[],
             semgrep_threats=[mock_threat],
             scan_metadata={"total_threats": 1},
@@ -145,7 +144,6 @@ class TestMCPToolHandlers:
         """Test basic scan_code tool handler."""
         arguments = {
             "content": "import pickle; pickle.loads(data)",
-            "language": "python",
             "severity_threshold": "medium",
             "include_exploits": False,
             "use_llm": False,
@@ -167,7 +165,6 @@ class TestMCPToolHandlers:
         """Test scan_code with exploit generation."""
         arguments = {
             "content": "import pickle; pickle.loads(data)",
-            "language": "python",
             "severity_threshold": "medium",
             "include_exploits": True,
             "use_llm": False,
@@ -194,7 +191,6 @@ class TestMCPToolHandlers:
         """Test scan_code with exploit generation failure."""
         arguments = {
             "content": "import pickle; pickle.loads(data)",
-            "language": "python",
             "severity_threshold": "medium",
             "include_exploits": True,
             "use_llm": False,
@@ -220,7 +216,6 @@ class TestMCPToolHandlers:
         """Test scan_code with JSON output format."""
         arguments = {
             "content": "import pickle; pickle.loads(data)",
-            "language": "python",
             "severity_threshold": "medium",
             "include_exploits": False,
             "use_llm": False,
@@ -249,7 +244,6 @@ class TestMCPToolHandlers:
         """Test scan_code with JSON output format and save failure."""
         arguments = {
             "content": "import pickle; pickle.loads(data)",
-            "language": "python",
             "severity_threshold": "medium",
             "include_exploits": False,
             "use_llm": False,
@@ -604,53 +598,6 @@ class TestMCPToolHandlers:
         assert isinstance(result[0], types.TextContent)
 
     @pytest.mark.asyncio
-    async def test_handle_generate_exploit_basic(self, server):
-        """Test basic generate_exploit tool handler."""
-        arguments = {
-            "vulnerability_type": "sql_injection",
-            "code_context": "SELECT * FROM users WHERE id = ?",
-            "target_language": "python",
-            "use_llm": False,
-        }
-
-        with patch.object(
-            server.exploit_generator,
-            "generate_exploits",
-            return_value=["exploit1", "exploit2"],
-        ):
-            result = await server._handle_generate_exploit(arguments)
-
-        assert len(result) == 1
-        assert isinstance(result[0], types.TextContent)
-        assert "sql_injection" in result[0].text.lower()
-        assert "exploit1" in result[0].text
-
-    @pytest.mark.asyncio
-    async def test_handle_generate_exploit_with_llm(self, server):
-        """Test generate_exploit with LLM prompts."""
-        arguments = {
-            "vulnerability_type": "xss",
-            "code_context": "<script>alert('xss')</script>",
-            "target_language": "javascript",
-            "use_llm": True,
-        }
-
-        with patch.object(
-            server.exploit_generator, "generate_exploits", return_value=["exploit1"]
-        ):
-            with patch.object(
-                server.exploit_generator, "create_exploit_prompt"
-            ) as mock_prompt:
-                mock_prompt.return_value = Mock(
-                    system_prompt="Test system prompt", user_prompt="Test user prompt"
-                )
-                result = await server._handle_generate_exploit(arguments)
-
-        assert len(result) == 1
-        assert isinstance(result[0], types.TextContent)
-        assert "Test system prompt" in result[0].text
-
-    @pytest.mark.asyncio
     async def test_handle_configure_settings(self, server):
         """Test configure_settings tool handler."""
         arguments = {
@@ -704,8 +651,8 @@ class TestMCPToolHandlers:
             mock_fp_instance.mark_false_positive.return_value = True
             mock_fp_class.return_value = mock_fp_instance
 
-            # Mock _get_current_working_directory() to avoid using actual working directory
-            with patch.object(server, "_get_current_working_directory") as mock_cwd:
+            # Mock _get_project_root() to avoid using actual working directory
+            with patch.object(server, "_get_project_root") as mock_cwd:
                 mock_cwd.return_value = Path("/mock/working/dir")
                 result = await server._handle_mark_false_positive(arguments)
 
@@ -716,7 +663,7 @@ class TestMCPToolHandlers:
         expected_path = "/mock/working/dir/.adversary.json"
         mock_fp_class.assert_called_once_with(adversary_file_path=expected_path)
         mock_fp_instance.mark_false_positive.assert_called_once_with(
-            "test-uuid-123", "False positive", "user"
+            "test-uuid-123", "False positive", "MCP User"
         )
 
     @pytest.mark.asyncio
@@ -732,8 +679,8 @@ class TestMCPToolHandlers:
             mock_fp_instance.unmark_false_positive.return_value = True
             mock_fp_class.return_value = mock_fp_instance
 
-            # Mock _get_current_working_directory() to avoid using actual working directory
-            with patch.object(server, "_get_current_working_directory") as mock_cwd:
+            # Mock _get_project_root() to avoid using actual working directory
+            with patch.object(server, "_get_project_root") as mock_cwd:
                 mock_cwd.return_value = Path("/mock/working/dir")
                 result = await server._handle_unmark_false_positive(arguments)
 
@@ -768,8 +715,8 @@ class TestMCPToolHandlers:
             mock_fp_instance.get_false_positives.return_value = mock_false_positives
             mock_fp_class.return_value = mock_fp_instance
 
-            # Mock _get_current_working_directory() to avoid using actual working directory
-            with patch.object(server, "_get_current_working_directory") as mock_cwd:
+            # Mock _get_project_root() to avoid using actual working directory
+            with patch.object(server, "_get_project_root") as mock_cwd:
                 mock_cwd.return_value = Path("/mock/working/dir")
                 result = await server._handle_list_false_positives(arguments)
 
@@ -786,7 +733,6 @@ class TestMCPToolHandlers:
         """Test scan_code exception handling."""
         arguments = {
             "content": "test code",
-            "language": "python",
             "severity_threshold": "medium",
             "include_exploits": False,
             "use_llm": False,
@@ -825,7 +771,6 @@ class TestServerIntegration:
         assert hasattr(server, "_handle_scan_file")
         assert hasattr(server, "_handle_scan_directory")
         assert hasattr(server, "_handle_diff_scan")
-        assert hasattr(server, "_handle_generate_exploit")
         assert hasattr(server, "_handle_configure_settings")
         assert hasattr(server, "_handle_get_status")
         assert hasattr(server, "_handle_get_version")
@@ -861,13 +806,12 @@ class TestServerUtilities:
         """Test ScanRequest model."""
         request = ScanRequest(
             content="test code",
-            language="python",
             severity_threshold="high",
             include_exploits=True,
             use_llm=False,
         )
         assert request.content == "test code"
-        assert request.language == "python"
+        # Language parameter has been removed - no longer part of ScanRequest
         assert request.severity_threshold == "high"
         assert request.include_exploits is True
         assert request.use_llm is False
@@ -921,7 +865,6 @@ class TestServerUtilityMethods:
         """Create a mock scan result for testing."""
         return EnhancedScanResult(
             file_path="test.py",
-            language=Language.PYTHON,
             llm_threats=[],
             semgrep_threats=[mock_threat],
             scan_metadata={
@@ -961,7 +904,6 @@ class TestServerUtilityMethods:
         """Test _format_enhanced_scan_results with no threats."""
         empty_result = EnhancedScanResult(
             file_path="test.py",
-            language=Language.PYTHON,
             llm_threats=[],
             semgrep_threats=[],
             scan_metadata={},
@@ -984,7 +926,7 @@ class TestServerUtilityMethods:
         # Parse JSON to verify structure
         data = json.loads(result)
         assert data["scan_metadata"]["target"] == "test.py"
-        assert data["scan_metadata"]["language"] == "python"
+        # Language is now auto-detected, no longer in metadata assertions
         assert len(data["threats"]) == 1
         assert data["threats"][0]["rule_id"] == "test_rule"
         assert data["threats"][0]["severity"] == "high"
@@ -1101,7 +1043,7 @@ class TestServerUtilityMethods:
     def test_add_llm_analysis_prompts(self, server):
         """Test _add_llm_analysis_prompts utility method."""
         content = "import pickle; pickle.loads(data)"
-        language = Language.PYTHON
+        # Language is now auto-detected
         file_path = "test.py"
 
         mock_prompt = Mock()
@@ -1113,7 +1055,7 @@ class TestServerUtilityMethods:
             "create_analysis_prompt",
             return_value=mock_prompt,
         ):
-            result = server._add_llm_analysis_prompts(content, language, file_path)
+            result = server._add_llm_analysis_prompts(content, file_path)
 
         assert "LLM Security Analysis" in result
         assert "Test system prompt" in result
@@ -1123,7 +1065,7 @@ class TestServerUtilityMethods:
     def test_add_llm_analysis_prompts_no_header(self, server):
         """Test _add_llm_analysis_prompts without header."""
         content = "import pickle; pickle.loads(data)"
-        language = Language.PYTHON
+        # Language is now auto-detected
         file_path = "test.py"
 
         mock_prompt = Mock()
@@ -1136,7 +1078,7 @@ class TestServerUtilityMethods:
             return_value=mock_prompt,
         ):
             result = server._add_llm_analysis_prompts(
-                content, language, file_path, include_header=False
+                content, file_path, include_header=False
             )
 
         assert "LLM Security Analysis" not in result
@@ -1146,7 +1088,7 @@ class TestServerUtilityMethods:
     def test_add_llm_analysis_prompts_failure(self, server):
         """Test _add_llm_analysis_prompts with exception."""
         content = "import pickle; pickle.loads(data)"
-        language = Language.PYTHON
+        # Language is now auto-detected
         file_path = "test.py"
 
         with patch.object(
@@ -1154,7 +1096,7 @@ class TestServerUtilityMethods:
             "create_analysis_prompt",
             side_effect=Exception("Prompt failed"),
         ):
-            result = server._add_llm_analysis_prompts(content, language, file_path)
+            result = server._add_llm_analysis_prompts(content, file_path)
 
         assert "Failed to create prompts" in result
         assert "Prompt failed" in result
@@ -1207,7 +1149,6 @@ class TestServerUtilityMethods:
         """Test scan_code with LLM prompts enabled."""
         arguments = {
             "content": "import pickle; pickle.loads(data)",
-            "language": "python",
             "severity_threshold": "medium",
             "include_exploits": True,
             "use_llm": True,
@@ -1446,25 +1387,6 @@ class TestServerUtilityMethods:
 
         assert len(result) == 1
         assert isinstance(result[0], types.TextContent)
-
-    @pytest.mark.asyncio
-    async def test_handle_generate_exploit_no_exploits_generated(self, server):
-        """Test generate_exploit when no exploits are generated."""
-        arguments = {
-            "vulnerability_type": "unknown_type",
-            "code_context": "some code",
-            "target_language": "python",
-            "use_llm": False,
-        }
-
-        with patch.object(
-            server.exploit_generator, "generate_exploits", return_value=[]
-        ):
-            result = await server._handle_generate_exploit(arguments)
-
-        assert len(result) == 1
-        assert isinstance(result[0], types.TextContent)
-        assert "No template-based exploits available" in result[0].text
 
     @pytest.mark.asyncio
     async def test_handle_list_false_positives_empty_result(self, server):

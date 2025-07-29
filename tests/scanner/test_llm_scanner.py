@@ -16,7 +16,7 @@ from adversary_mcp_server.scanner.llm_scanner import (
     LLMScanner,
     LLMSecurityFinding,
 )
-from adversary_mcp_server.scanner.types import Category, Language, Severity, ThreatMatch
+from adversary_mcp_server.scanner.types import Category, Severity, ThreatMatch
 
 
 class TestLLMSecurityFinding:
@@ -183,7 +183,7 @@ class TestLLMScanner:
         analyzer = LLMScanner(mock_manager)
 
         # Even when disabled, analyzer should work (client-based)
-        result = analyzer.analyze_code("test code", "test.py", Language.PYTHON)
+        result = analyzer.analyze_code("test code", "test.py", "python")
 
         assert isinstance(result, list)
 
@@ -199,7 +199,7 @@ class TestLLMScanner:
         result = analyzer.analyze_code(
             "SELECT * FROM users WHERE id = user_input",
             "test.py",
-            Language.PYTHON,
+            "python",
             max_findings=5,
         )
 
@@ -216,7 +216,7 @@ class TestLLMScanner:
         analyzer = LLMScanner(mock_manager)
 
         # Client-based approach doesn't make API calls, so no API errors
-        result = analyzer.analyze_code("test code", "test.py", Language.PYTHON)
+        result = analyzer.analyze_code("test code", "test.py", "python")
 
         assert isinstance(result, list)
         assert len(result) == 0
@@ -245,13 +245,11 @@ class TestLLMScanner:
         analyzer = LLMScanner(mock_manager)
 
         source_code = "SELECT * FROM users WHERE id = user_input"
-        prompt = analyzer.create_analysis_prompt(
-            source_code, "test.py", Language.PYTHON, 5
-        )
+        prompt = analyzer.create_analysis_prompt(source_code, "test.py", "python", 5)
 
         assert isinstance(prompt, LLMAnalysisPrompt)
         assert prompt.file_path == "test.py"
-        assert prompt.language == Language.PYTHON
+        # Language parameter has been removed from LLMAnalysisPrompt
         assert prompt.max_findings == 5
         assert "SELECT * FROM users WHERE id = user_input" in prompt.user_prompt
         assert "security vulnerabilities" in prompt.user_prompt.lower()
@@ -268,9 +266,7 @@ class TestLLMScanner:
 
         # Create very long source code
         long_code = "print('test')\n" * 1000
-        prompt = analyzer.create_analysis_prompt(
-            long_code, "test.py", Language.PYTHON, 5
-        )
+        prompt = analyzer.create_analysis_prompt(long_code, "test.py", "python", 5)
 
         assert isinstance(prompt, LLMAnalysisPrompt)
         assert "truncated for analysis" in prompt.user_prompt
@@ -391,8 +387,8 @@ class TestLLMScanner:
         analyzer = LLMScanner(mock_manager)
 
         code_samples = [
-            ("code1", "file1.py", Language.PYTHON),
-            ("code2", "file2.py", Language.PYTHON),
+            ("code1", "file1.py", "python"),
+            ("code2", "file2.py", "python"),
         ]
 
         result = analyzer.batch_analyze_code(code_samples)

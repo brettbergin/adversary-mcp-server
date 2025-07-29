@@ -1,0 +1,31 @@
+{
+  "mcpServers": {
+    "threatmodel": {
+      "command": "uv",
+      "args": [
+        "run", 
+        "--directory", 
+        "~/code/threatmodel-mcp-server",
+        "python", 
+        "-m", 
+        "threatmodel_mcp_server.server"
+      ],
+      "cwd": "~/code/threatmodel-mcp-server",
+      "env": {
+        "THREATMODEL_CONFIG_DIR": "~/.local/share/threatmodel-mcp-server"
+      }
+    },
+    "adversary": {
+      "command": "~/code/adversary-mcp-server/.venv/bin/python",
+      "args": [
+        "-m",
+        "adversary_mcp_server.server"
+      ],
+      "cwd": "~/code/adversary-mcp-server",
+      "env": {
+        "PYTHONPATH": "~/code/adversary-mcp-server/src",
+        "ADVERSARY_DISABLE_LLM": "true"
+      }
+    }
+  }
+}

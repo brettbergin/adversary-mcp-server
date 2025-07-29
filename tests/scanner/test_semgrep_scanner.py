@@ -15,7 +15,7 @@ from adversary_mcp_server.scanner.semgrep_scanner import (
     SemgrepError,
     SemgrepScanner,
 )
-from adversary_mcp_server.scanner.types import Category, Language, Severity, ThreatMatch
+from adversary_mcp_server.scanner.types import Category, Severity, ThreatMatch
 
 
 class TestSemgrepScanner:
@@ -268,9 +268,9 @@ class TestSemgrepScanner:
 
     def test_get_file_extension(self):
         """Test file extension mapping."""
-        assert self.scanner._get_file_extension(Language.PYTHON) == ".py"
-        assert self.scanner._get_file_extension(Language.JAVASCRIPT) == ".js"
-        assert self.scanner._get_file_extension(Language.TYPESCRIPT) == ".ts"
+        assert self.scanner._get_file_extension("python") == ".py"
+        assert self.scanner._get_file_extension("javascript") == ".js"
+        assert self.scanner._get_file_extension("typescript") == ".ts"
 
     @pytest.mark.asyncio
     async def test_scan_code_unavailable(self):
@@ -282,9 +282,7 @@ class TestSemgrepScanner:
                 side_effect=FileNotFoundError("semgrep not found"),
             ):
                 source_code = "eval(user_input)"
-                threats = await self.scanner.scan_code(
-                    source_code, "test.py", Language.PYTHON
-                )
+                threats = await self.scanner.scan_code(source_code, "test.py", "python")
 
                 assert threats == []
 
@@ -292,7 +290,7 @@ class TestSemgrepScanner:
     async def test_scan_file_unavailable(self):
         """Test file scanning when Semgrep is unavailable."""
         with patch.object(self.scanner, "is_available", return_value=False):
-            threats = await self.scanner.scan_file("test.py", Language.PYTHON)
+            threats = await self.scanner.scan_file("test.py", "python")
             assert threats == []
 
 
@@ -465,25 +463,23 @@ class TestSemgrepScannerIntegration:
     @pytest.mark.asyncio
     async def test_get_file_extension_mapping(self):
         """Test file extension mapping for different languages."""
-        assert self.scanner._get_file_extension(Language.PYTHON) == ".py"
-        assert self.scanner._get_file_extension(Language.JAVASCRIPT) == ".js"
-        assert self.scanner._get_file_extension(Language.TYPESCRIPT) == ".ts"
+        assert self.scanner._get_file_extension("python") == ".py"
+        assert self.scanner._get_file_extension("javascript") == ".js"
+        assert self.scanner._get_file_extension("typescript") == ".ts"
 
     @pytest.mark.asyncio
     async def test_scan_code_with_semgrep_unavailable(self):
         """Test scan_code when semgrep is not available."""
         # Create scanner with semgrep unavailable
         with patch.object(self.scanner, "is_available", return_value=False):
-            threats = await self.scanner.scan_code(
-                "test code", "test.py", Language.PYTHON
-            )
+            threats = await self.scanner.scan_code("test code", "test.py", "python")
             assert threats == []
 
     @pytest.mark.asyncio
     async def test_scan_file_with_semgrep_unavailable(self):
         """Test scan_file when semgrep is not available."""
         with patch.object(self.scanner, "is_available", return_value=False):
-            threats = await self.scanner.scan_file("test.py", Language.PYTHON)
+            threats = await self.scanner.scan_file("test.py", "python")
             assert threats == []
 
     @pytest.mark.asyncio
@@ -673,7 +669,7 @@ class TestSemgrepScannerEdgeCases:
 
         # Test cache hit with severity filtering
         threats = await scanner.scan_code(
-            "test code", "test.py", Language.PYTHON, severity_threshold=Severity.MEDIUM
+            "test code", "test.py", "python", severity_threshold=Severity.MEDIUM
         )
 
         assert len(threats) == 1
@@ -712,7 +708,7 @@ class TestSemgrepScannerEdgeCases:
                     ),
                 ]
 
-                threats = await scanner.scan_code("test", "test.py", Language.PYTHON)
+                threats = await scanner.scan_code("test", "test.py", "python")
 
                 # Should get one threat (second one that succeeded)
                 assert len(threats) == 1
@@ -726,7 +722,7 @@ class TestSemgrepScannerEdgeCases:
         with patch.object(scanner, "is_available", return_value=True):
             with patch("os.path.isfile", return_value=False):
                 with pytest.raises(SemgrepError, match="File not found"):
-                    await scanner.scan_file("nonexistent.py", Language.PYTHON)
+                    await scanner.scan_file("nonexistent.py", "python")
 
     @pytest.mark.asyncio
     async def test_scan_file_unicode_decode_error(self):
@@ -740,7 +736,7 @@ class TestSemgrepScannerEdgeCases:
                         "utf-8", b"", 0, 1, "invalid start byte"
                     )
 
-                    threats = await scanner.scan_file("binary.py", Language.PYTHON)
+                    threats = await scanner.scan_file("binary.py", "python")
                     assert threats == []  # Should return empty list for binary files
 
     @pytest.mark.asyncio
@@ -768,7 +764,7 @@ class TestSemgrepScannerEdgeCases:
                     scanner._cache[cache_key].timestamp = time.time()
                     scanner._cache[cache_key].file_hash = file_hash
 
-                    threats = await scanner.scan_file("test.py", Language.PYTHON)
+                    threats = await scanner.scan_file("test.py", "python")
 
                     assert len(threats) == 1
                     assert threats[0].description == "Cached finding"
@@ -799,7 +795,7 @@ class TestSemgrepScannerEdgeCases:
                         ]
 
                         threats = await scanner.scan_file(
-                            "test.py", Language.PYTHON, severity_threshold=Severity.HIGH
+                            "test.py", "python", severity_threshold=Severity.HIGH
                         )
 
                         # Should only get the high severity threat
@@ -1200,8 +1196,8 @@ class TestSemgrepScannerCompatibility:
         scanner = SemgrepScanner()
 
         # Test with Language enum
-        assert scanner._get_file_extension(Language.PYTHON) == ".py"
-        assert scanner._get_file_extension(Language.JAVASCRIPT) == ".js"
+        assert scanner._get_file_extension("python") == ".py"
+        assert scanner._get_file_extension("javascript") == ".js"
 
         # Test with string-like object
         class MockLanguage:

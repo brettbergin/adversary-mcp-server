@@ -7,7 +7,7 @@ from ..credentials import CredentialManager
 from ..logger import get_logger
 from .llm_scanner import LLMScanner
 from .semgrep_scanner import SemgrepScanner
-from .types import Language, LanguageSupport, Severity, ThreatMatch
+from .types import Severity, ThreatMatch
 
 logger = get_logger("scan_engine")
 
@@ -18,7 +18,6 @@ class EnhancedScanResult:
     def __init__(
         self,
         file_path: str,
-        language: Language,
         llm_threats: list[ThreatMatch],
         semgrep_threats: list[ThreatMatch],
         scan_metadata: dict[str, Any],
@@ -27,13 +26,13 @@ class EnhancedScanResult:
 
         Args:
             file_path: Path to the scanned file
-            language: Programming language
             llm_threats: Threats found by LLM analysis
             semgrep_threats: Threats found by Semgrep analysis
             scan_metadata: Metadata about the scan
         """
         self.file_path = file_path
-        self.language = language
+        # Auto-detect language from file path
+        self.language = self._detect_language_from_path(file_path)
         self.llm_threats = llm_threats
         self.semgrep_threats = semgrep_threats
         self.scan_metadata = scan_metadata
@@ -43,6 +42,19 @@ class EnhancedScanResult:
 
         # Calculate statistics
         self.stats = self._calculate_stats()
+
+    def _detect_language_from_path(self, file_path: str) -> str:
+        """Simple language detection for compatibility (not used for actual analysis).
+
+        Args:
+            file_path: Path to the file
+
+        Returns:
+            Generic language string (not used for actual analysis)
+        """
+        # Simplified: return generic for all files since semgrep handles language detection internally
+        # and we don't want users to think about language selection
+        return "generic"
 
     def _combine_threats(self) -> list[ThreatMatch]:
         """Combine and deduplicate threats from all sources.
@@ -195,21 +207,18 @@ class ScanEngine:
 
         logger.info("=== ScanEngine initialization complete ===")
 
-    def _detect_language(self, file_path: Path) -> Language:
-        """Detect programming language from file extension.
+    def _detect_language(self, file_path: Path) -> str:
+        """Simple language detection for compatibility (semgrep handles this internally).
 
         Args:
             file_path: Path to the file
 
         Returns:
-            Detected language
+            Generic language string (not used for actual analysis)
         """
-        language = LanguageSupport.detect_language(file_path)
-        file_path_abs = str(Path(file_path).resolve())
-        logger.debug(
-            f"Language detection: {file_path_abs} ({file_path.suffix}) -> {language.value}"
-        )
-        return language
+        # Simplified: return generic for all files since semgrep handles language detection internally
+        # and we don't want users to think about language selection
+        return "generic"
 
     def _filter_by_severity(
         self,
@@ -321,12 +330,11 @@ class ScanEngine:
         self,
         source_code: str,
         file_path: str,
-        language: Language,
         use_llm: bool = True,
         use_semgrep: bool = True,
         severity_threshold: Severity | None = None,
     ) -> EnhancedScanResult:
-        """Synchronous wrapper for scan_code for CLI usage."""
+        """Synchronous wrapper for scan_code for CLI usage with auto-detected language."""
         file_path_abs = str(Path(file_path).resolve())
         logger.debug(f"Synchronous code scan wrapper called for: {file_path_abs}")
         import asyncio
@@ -335,7 +343,6 @@ class ScanEngine:
             self.scan_code(
                 source_code=source_code,
                 file_path=file_path,
-                language=language,
                 use_llm=use_llm,
                 use_semgrep=use_semgrep,
                 severity_threshold=severity_threshold,
@@ -372,12 +379,11 @@ class ScanEngine:
     def scan_file_sync(
         self,
         file_path: Path,
-        language: Language | None = None,
         use_llm: bool = True,
         use_semgrep: bool = True,
         severity_threshold: Severity | None = None,
     ) -> EnhancedScanResult:
-        """Synchronous wrapper for scan_file for CLI usage."""
+        """Synchronous wrapper for scan_file for CLI usage with auto-detected language."""
         file_path_abs = str(Path(file_path).resolve())
         logger.debug(f"Synchronous file scan wrapper called for: {file_path_abs}")
         import asyncio
@@ -385,7 +391,6 @@ class ScanEngine:
         return asyncio.run(
             self.scan_file(
                 file_path=file_path,
-                language=language,
                 use_llm=use_llm,
                 use_semgrep=use_semgrep,
                 severity_threshold=severity_threshold,
@@ -396,17 +401,15 @@ class ScanEngine:
         self,
         source_code: str,
         file_path: str,
-        language: Language,
         use_llm: bool = True,
         use_semgrep: bool = True,
         severity_threshold: Severity | None = None,
     ) -> EnhancedScanResult:
-        """Scan source code using Semgrep and LLM analysis.
+        """Scan source code using Semgrep and LLM analysis with auto-detected language.
 
         Args:
             source_code: Source code to scan
-            file_path: Path to the source file
-            language: Programming language
+            file_path: Path to the source file (used for language auto-detection)
             use_llm: Whether to use LLM analysis
             use_semgrep: Whether to use Semgrep analysis
             severity_threshold: Minimum severity threshold for filtering
@@ -415,16 +418,20 @@ class ScanEngine:
             Enhanced scan result
         """
         file_path_abs = str(Path(file_path).resolve())
+
+        # Auto-detect language from file path
+        language = self._detect_language(Path(file_path))
+
         logger.info(f"=== Starting code scan for {file_path_abs} ===")
         logger.debug(
-            f"Scan parameters - Language: {language.value}, "
+            f"Scan parameters - Language: {language} (auto-detected), "
             f"LLM: {use_llm}, Semgrep: {use_semgrep}, "
             f"Severity threshold: {severity_threshold}"
         )
 
         scan_metadata = {
             "file_path": file_path,
-            "language": language.value,
+            "language": language,
             "use_llm": use_llm and self.enable_llm_analysis,
             "use_semgrep": use_semgrep and self.enable_semgrep_analysis,
             "source_lines": len(source_code.split("\n")),
@@ -615,7 +622,6 @@ class ScanEngine:
 
         result = EnhancedScanResult(
             file_path=file_path,
-            language=language,
             llm_threats=llm_threats,
             semgrep_threats=semgrep_threats,
             scan_metadata=scan_metadata,
@@ -631,16 +637,14 @@ class ScanEngine:
     async def scan_file(
         self,
         file_path: Path,
-        language: Language | None = None,
         use_llm: bool = True,
         use_semgrep: bool = True,
         severity_threshold: Severity | None = None,
     ) -> EnhancedScanResult:
-        """Scan a single file using enhanced scanning.
+        """Scan a single file using enhanced scanning with auto-detected language.
 
         Args:
-            file_path: Path to the file to scan
-            language: Programming language (auto-detected if not provided)
+            file_path: Path to the file to scan (used for language auto-detection)
             use_llm: Whether to use LLM analysis
             use_semgrep: Whether to use Semgrep analysis
             severity_threshold: Minimum severity threshold for filtering
@@ -655,17 +659,14 @@ class ScanEngine:
             logger.error(f"File not found: {file_path_abs}")
             raise FileNotFoundError(f"File not found: {file_path}")
 
-        # Detect language if not provided
-        if language is None:
-            logger.debug(f"Detecting language for: {file_path_abs}")
-            language = self._detect_language(file_path)
-            logger.info(f"Detected language: {language.value}")
-        else:
-            logger.debug(f"Using provided language: {language.value}")
+        # Auto-detect language from file extension
+        logger.debug(f"Auto-detecting language for: {file_path_abs}")
+        language = self._detect_language(file_path)
+        logger.info(f"Detected language: {language}")
 
         scan_metadata = {
             "file_path": str(file_path),
-            "language": language.value,
+            "language": language,
             "use_llm": use_llm and self.enable_llm_analysis,
             "use_semgrep": use_semgrep and self.enable_semgrep_analysis,
         }
@@ -804,7 +805,6 @@ class ScanEngine:
 
         result = EnhancedScanResult(
             file_path=str(file_path),
-            language=language,
             llm_threats=llm_threats,
             semgrep_threats=semgrep_threats,
             scan_metadata=scan_metadata,
@@ -851,17 +851,13 @@ class ScanEngine:
             logger.error(f"Directory not found: {directory_path_abs}")
             raise FileNotFoundError(f"Directory not found: {directory_path}")
 
-        # Get supported file extensions from centralized language support
-        supported_extensions = LanguageSupport.get_extension_to_language_map()
-        logger.debug(f"Supported extensions: {len(supported_extensions)} types")
-
-        # Find all files to scan
+        # Find all files to scan (simplified - scan all files since semgrep handles filtering)
         files_to_scan = []
         pattern = "**/*" if recursive else "*"
         logger.debug(f"Scanning for files with pattern: {pattern}")
 
         for file_path in directory_path.glob(pattern):
-            if file_path.is_file() and file_path.suffix in supported_extensions:
+            if file_path.is_file():
                 files_to_scan.append(file_path)
 
                 if max_files and len(files_to_scan) >= max_files:
@@ -1047,7 +1043,7 @@ class ScanEngine:
                 # Initialize file scan metadata
                 scan_metadata: dict[str, Any] = {
                     "file_path": str(file_path),
-                    "language": language.value,
+                    "language": language,
                     "use_llm": use_llm and self.enable_llm_analysis,
                     "use_semgrep": use_semgrep and self.enable_semgrep_analysis,
                     "directory_scan": True,
@@ -1090,7 +1086,6 @@ class ScanEngine:
                 # Create result for this file
                 result = EnhancedScanResult(
                     file_path=str(file_path),
-                    language=language,
                     llm_threats=file_llm_threats,
                     semgrep_threats=file_semgrep_threats,
                     scan_metadata=scan_metadata,
@@ -1110,7 +1105,6 @@ class ScanEngine:
                 # Create error result with consistent structure
                 error_result = EnhancedScanResult(
                     file_path=str(file_path),
-                    language=Language.GENERIC,  # Default for failed detection
                     llm_threats=[],
                     semgrep_threats=[],
                     scan_metadata={

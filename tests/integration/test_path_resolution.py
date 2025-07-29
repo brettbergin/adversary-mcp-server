@@ -27,7 +27,7 @@ class TestPathResolution:
         with tempfile.TemporaryDirectory() as temp_dir:
             with patch.object(
                 self.server,
-                "_get_current_working_directory",
+                "_get_project_root",
                 return_value=Path(temp_dir),
             ):
                 result = self.server._resolve_adversary_file_path(".adversary.json")
@@ -40,7 +40,7 @@ class TestPathResolution:
         with tempfile.TemporaryDirectory() as temp_dir:
             with patch.object(
                 self.server,
-                "_get_current_working_directory",
+                "_get_project_root",
                 return_value=Path(temp_dir),
             ):
                 result = self.server._resolve_adversary_file_path(
@@ -55,9 +55,7 @@ class TestPathResolution:
         """Test that parent directory references are resolved correctly."""
         with tempfile.TemporaryDirectory() as temp_dir:
             subdir = Path(temp_dir) / "subdir"
-            with patch.object(
-                self.server, "_get_current_working_directory", return_value=subdir
-            ):
+            with patch.object(self.server, "_get_project_root", return_value=subdir):
                 result = self.server._resolve_adversary_file_path("../.adversary.json")
                 expected = str((Path(temp_dir) / ".adversary.json").resolve())
                 assert result == expected
@@ -66,9 +64,7 @@ class TestPathResolution:
         """Test that complex relative paths with multiple .. are resolved correctly."""
         with tempfile.TemporaryDirectory() as temp_dir:
             deep_dir = Path(temp_dir) / "a" / "b" / "c"
-            with patch.object(
-                self.server, "_get_current_working_directory", return_value=deep_dir
-            ):
+            with patch.object(self.server, "_get_project_root", return_value=deep_dir):
                 result = self.server._resolve_adversary_file_path(
                     "../../other/.adversary.json"
                 )
@@ -82,7 +78,7 @@ class TestPathResolution:
         with tempfile.TemporaryDirectory() as temp_dir:
             with patch.object(
                 self.server,
-                "_get_current_working_directory",
+                "_get_project_root",
                 return_value=Path(temp_dir),
             ):
                 result = self.server._resolve_adversary_file_path("  .adversary.json  ")
@@ -115,7 +111,7 @@ class TestPathResolution:
         with tempfile.TemporaryDirectory() as temp_dir:
             with patch.object(
                 self.server,
-                "_get_current_working_directory",
+                "_get_project_root",
                 return_value=Path(temp_dir),
             ):
                 result = self.server._resolve_adversary_file_path("./.adversary.json")
@@ -133,7 +129,7 @@ class TestPathResolution:
             try:
                 link_dir.symlink_to(real_dir)
                 with patch.object(
-                    self.server, "_get_current_working_directory", return_value=link_dir
+                    self.server, "_get_project_root", return_value=link_dir
                 ):
                     result = self.server._resolve_adversary_file_path(".adversary.json")
                     # Should resolve symlinks to real path
@@ -148,7 +144,7 @@ class TestPathResolution:
         with tempfile.TemporaryDirectory() as temp_dir:
             with patch.object(
                 self.server,
-                "_get_current_working_directory",
+                "_get_project_root",
                 return_value=Path(temp_dir),
             ):
                 # Test forward slashes (should work on all platforms)
@@ -161,7 +157,7 @@ class TestPathResolution:
         with tempfile.TemporaryDirectory() as temp_dir:
             with patch.object(
                 self.server,
-                "_get_current_working_directory",
+                "_get_project_root",
                 return_value=Path(temp_dir),
             ):
                 test_filename = "custom-adversary-file.json"
@@ -173,7 +169,7 @@ class TestPathResolution:
         with tempfile.TemporaryDirectory() as temp_dir:
             with patch.object(
                 self.server,
-                "_get_current_working_directory",
+                "_get_project_root",
                 return_value=Path(temp_dir),
             ):
                 # Create a long relative path
@@ -191,7 +187,7 @@ class TestPathResolution:
         with tempfile.TemporaryDirectory() as temp_dir:
             with patch.object(
                 self.server,
-                "_get_current_working_directory",
+                "_get_project_root",
                 return_value=Path(temp_dir),
             ):
                 spaced_path = "my project/.adversary.json"
@@ -204,7 +200,7 @@ class TestPathResolution:
         with tempfile.TemporaryDirectory() as temp_dir:
             with patch.object(
                 self.server,
-                "_get_current_working_directory",
+                "_get_project_root",
                 return_value=Path(temp_dir),
             ):
                 special_path = "test-project_v2/.adversary.json"
@@ -217,7 +213,7 @@ class TestPathResolution:
         with tempfile.TemporaryDirectory() as temp_dir:
             with patch.object(
                 self.server,
-                "_get_current_working_directory",
+                "_get_project_root",
                 return_value=Path(temp_dir),
             ):
                 result = self.server._resolve_file_path("output.json", "output path")
@@ -252,7 +248,7 @@ class TestPathResolutionIntegration:
 
             with patch.object(
                 self.server,
-                "_get_current_working_directory",
+                "_get_project_root",
                 return_value=Path(temp_dir),
             ):
                 arguments = {
@@ -281,7 +277,7 @@ class TestPathResolutionIntegration:
 
             with patch.object(
                 self.server,
-                "_get_current_working_directory",
+                "_get_project_root",
                 return_value=Path(temp_dir),
             ):
                 arguments = {"adversary_file_path": ".adversary.json"}
@@ -327,7 +323,7 @@ class TestPathResolutionIntegration:
         with tempfile.TemporaryDirectory() as temp_dir:
             with patch.object(
                 self.server,
-                "_get_current_working_directory",
+                "_get_project_root",
                 return_value=Path(temp_dir),
             ):
                 # Create a test file

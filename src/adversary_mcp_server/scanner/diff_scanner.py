@@ -6,7 +6,7 @@ from pathlib import Path
 
 from ..logger import get_logger
 from .scan_engine import EnhancedScanResult, ScanEngine
-from .types import Language, LanguageSupport, Severity
+from .types import Severity
 
 logger = get_logger("diff_scanner")
 
@@ -305,41 +305,20 @@ class GitDiffScanner:
             logger.error(f"Branch validation failed: {e}")
             raise GitDiffError(f"Branch validation failed: {e}")
 
-    def _detect_language_from_path(self, file_path: str) -> Language | None:
-        """Detect programming language from file path.
+    def _detect_language_from_path(self, file_path: str) -> str:
+        """Detect programming language from file path (simplified to generic).
 
         Args:
             file_path: Path to the file
 
         Returns:
-            Detected language or None if not supported for security scanning
+            Always returns "generic" as language detection has been simplified
         """
-        extension = Path(file_path).suffix.lower()
         file_path_abs = str(Path(file_path).resolve())
-        logger.debug(f"Detecting language for {file_path_abs} (extension: {extension})")
-
-        language_map = LanguageSupport.get_extension_to_language_map()
-        detected_language = language_map.get(extension)
-
-        # Diff scanner only scans code files, not documentation or config files
-        if detected_language == Language.GENERIC:
-            file_path_abs = str(Path(file_path).resolve())
-            logger.debug(
-                f"Skipping {file_path_abs}: generic file type not supported for diff scanning"
-            )
-            return None
-
-        if detected_language:
-            file_path_abs = str(Path(file_path).resolve())
-            logger.debug(
-                f"Detected language for {file_path_abs}: {detected_language.value}"
-            )
-        else:
-            logger.debug(
-                f"No language detected for {file_path} (extension: {extension})"
-            )
-
-        return detected_language
+        logger.debug(
+            f"Language detection simplified - returning generic for {file_path_abs}"
+        )
+        return "generic"
 
     def get_diff_changes(
         self, source_branch: str, target_branch: str, working_dir: Path | None = None
@@ -435,14 +414,10 @@ class GitDiffScanner:
             file_path_abs = str(Path(file_path).resolve())
             logger.debug(f"Processing file: {file_path_abs}")
 
-            # Skip non-code files
+            # Get language (now always generic)
             language = self._detect_language_from_path(file_path)
-            if not language:
-                logger.debug(f"Skipping {file_path_abs}: unsupported file type")
-                files_skipped += 1
-                continue
 
-            logger.info(f"Scanning {file_path_abs} as {language.value}")
+            logger.info(f"Scanning {file_path_abs} as {language}")
 
             # Combine only the newly added lines from all chunks
             all_added_code = []
@@ -489,10 +464,8 @@ class GitDiffScanner:
                 scan_result = await self.scan_engine.scan_code(
                     source_code=full_added_code,
                     file_path=file_path,
-                    language=language,
                     use_llm=use_llm,
                     use_semgrep=use_semgrep,
-                    use_rules=use_rules,
                     severity_threshold=severity_threshold,
                 )
 
@@ -592,9 +565,9 @@ class GitDiffScanner:
             logger.debug(f"Processing {total_files} changed files for summary")
 
             for file_path, chunks in diff_changes.items():
-                if self._detect_language_from_path(file_path):
-                    supported_files += 1
-                    scannable_files.append(file_path)
+                # All files are now considered supported
+                supported_files += 1
+                scannable_files.append(file_path)
 
                 for chunk in chunks:
                     lines_added += len(chunk.added_lines)
