@@ -5,25 +5,25 @@
       "args": [
         "run", 
         "--directory", 
-        "/Users/brettbergin/code/threatmodel-mcp-server",
+        "~/code/threatmodel-mcp-server",
         "python", 
         "-m", 
         "threatmodel_mcp_server.server"
       ],
-      "cwd": "/Users/brettbergin/code/threatmodel-mcp-server",
+      "cwd": "~/code/threatmodel-mcp-server",
       "env": {
         "THREATMODEL_CONFIG_DIR": "~/.local/share/threatmodel-mcp-server"
       }
     },
     "adversary": {
-      "command": "/Users/brettbergin/code/adversary-mcp-server/.venv/bin/python",
+      "command": "~/code/adversary-mcp-server/.venv/bin/python",
       "args": [
         "-m",
         "threatmodel_mcp_server.server"
       ],
-      "cwd": "/Users/brettbergin/code/adversary-mcp-server",
+      "cwd": "~/code/adversary-mcp-server",
       "env": {
-        "PYTHONPATH": "/Users/brettbergin/code/adversary-mcp-server/src",
+        "PYTHONPATH": "~/code/adversary-mcp-server/src",
         "ADVERSARY_DISABLE_LLM": "true"
       }
     }
