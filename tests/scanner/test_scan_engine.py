@@ -505,6 +505,7 @@ class TestScanEngine:
             credential_manager=mock_credential_manager,
             enable_llm_analysis=True,
             enable_semgrep_analysis=True,
+            enable_llm_validation=False,  # Disable validation for this test
         )
 
         result = scanner.scan_code_sync(
@@ -1005,6 +1006,7 @@ class TestScanEngine:
         scanner = ScanEngine(
             credential_manager=mock_credential_manager,
             enable_llm_analysis=True,
+            enable_llm_validation=False,  # Disable validation for this test
         )
 
         # Create a temporary file
@@ -1178,6 +1180,7 @@ class TestScanEngine:
         scanner = ScanEngine(
             credential_manager=mock_credential_manager,
             enable_llm_analysis=True,
+            enable_llm_validation=False,  # Disable validation for this test
         )
 
         # Create a temporary directory with files
@@ -1486,6 +1489,7 @@ class TestScanEngine:
                 credential_manager=mock_credential_manager,
                 enable_llm_analysis=False,
                 enable_semgrep_analysis=True,
+                enable_llm_validation=False,  # Disable validation for this test
             )
 
             # Scan with HIGH severity threshold
@@ -1797,3 +1801,159 @@ class TestScanEngine:
 
         finally:
             temp_file.unlink()
+
+
+class TestScanEngineValidation:
+    """Test ScanEngine with LLM validation integration."""
+
+    @patch("adversary_mcp_server.scanner.scan_engine.SemgrepScanner")
+    @patch("adversary_mcp_server.scanner.scan_engine.LLMScanner")
+    @patch("adversary_mcp_server.scanner.scan_engine.LLMValidator")
+    def test_scan_code_with_validation(
+        self, mock_llm_validator_class, mock_llm_scanner, mock_semgrep_scanner
+    ):
+        """Test code scanning with LLM validation enabled."""
+        mock_credential_manager = Mock()
+        mock_config = Mock()
+        mock_config.enable_semgrep_scanning = True
+        mock_config.semgrep_config = None
+        mock_config.semgrep_rules = None
+        mock_config.semgrep_timeout = 60
+        mock_credential_manager.load_config.return_value = mock_config
+
+        # Mock Semgrep scanner
+        mock_semgrep_instance = Mock()
+        mock_semgrep_instance.is_available.return_value = True
+        mock_semgrep_instance.get_status.return_value = {
+            "available": True,
+            "version": "1.0.0",
+        }
+        semgrep_threat = ThreatMatch(
+            rule_id="semgrep_rule",
+            rule_name="Semgrep Rule",
+            description="Semgrep finding",
+            category=Category.INJECTION,
+            severity=Severity.HIGH,
+            file_path="test.py",
+            line_number=10,
+            uuid="semgrep-uuid",
+        )
+        mock_semgrep_instance.scan_code = AsyncMock(return_value=[semgrep_threat])
+        mock_semgrep_scanner.return_value = mock_semgrep_instance
+
+        # Mock LLM scanner
+        mock_llm_instance = Mock()
+        mock_llm_instance.is_available.return_value = False
+        mock_llm_scanner.return_value = mock_llm_instance
+
+        # Mock LLM validator
+        from adversary_mcp_server.scanner.llm_validator import ValidationResult
+
+        mock_validator_instance = Mock()
+        validation_results = {
+            "semgrep-uuid": ValidationResult(
+                finding_uuid="semgrep-uuid",
+                is_legitimate=True,
+                confidence=0.9,
+                reasoning="Confirmed vulnerability",
+                exploitation_vector="SQL injection",
+                exploit_poc=["test exploit"],
+            )
+        }
+        mock_validator_instance.validate_findings.return_value = validation_results
+        mock_validator_instance.filter_false_positives.return_value = [semgrep_threat]
+        mock_validator_instance.get_validation_stats.return_value = {
+            "total_validated": 1,
+            "legitimate_findings": 1,
+            "false_positives": 0,
+        }
+        mock_llm_validator_class.return_value = mock_validator_instance
+
+        scanner = ScanEngine(
+            credential_manager=mock_credential_manager,
+            enable_llm_analysis=False,
+            enable_semgrep_analysis=True,
+            enable_llm_validation=True,
+        )
+
+        result = scanner.scan_code_sync(
+            source_code="test code",
+            file_path="test.py",
+            use_llm=False,
+            use_semgrep=True,
+            use_validation=True,
+        )
+
+        assert isinstance(result, EnhancedScanResult)
+        assert len(result.semgrep_threats) == 1
+        assert result.scan_metadata["llm_validation_success"] is True
+        assert result.scan_metadata["llm_validation_stats"]["total_validated"] == 1
+        assert result.validation_results == validation_results
+
+        mock_validator_instance.validate_findings.assert_called_once()
+        mock_validator_instance.filter_false_positives.assert_called()
+
+    @patch("adversary_mcp_server.scanner.scan_engine.SemgrepScanner")
+    @patch("adversary_mcp_server.scanner.scan_engine.LLMScanner")
+    @patch("adversary_mcp_server.scanner.scan_engine.LLMValidator")
+    def test_scan_code_validation_disabled(
+        self, mock_llm_validator_class, mock_llm_scanner, mock_semgrep_scanner
+    ):
+        """Test scan_code with validation disabled."""
+        mock_credential_manager = Mock()
+        mock_config = Mock()
+        mock_config.enable_semgrep_scanning = True
+        mock_config.semgrep_config = None
+        mock_config.semgrep_rules = None
+        mock_config.semgrep_timeout = 60
+        mock_credential_manager.load_config.return_value = mock_config
+
+        # Mock Semgrep scanner
+        mock_semgrep_instance = Mock()
+        mock_semgrep_instance.is_available.return_value = True
+        mock_semgrep_instance.get_status.return_value = {
+            "available": True,
+            "version": "1.0.0",
+        }
+        threat = ThreatMatch(
+            rule_id="rule1",
+            rule_name="Rule 1",
+            description="Test threat",
+            category=Category.INJECTION,
+            severity=Severity.HIGH,
+            file_path="test.py",
+            line_number=10,
+        )
+        mock_semgrep_instance.scan_code = AsyncMock(return_value=[threat])
+        mock_semgrep_scanner.return_value = mock_semgrep_instance
+
+        # Mock LLM scanner
+        mock_llm_instance = Mock()
+        mock_llm_instance.is_available.return_value = False
+        mock_llm_scanner.return_value = mock_llm_instance
+
+        # Mock LLM validator
+        mock_validator_instance = Mock()
+        mock_llm_validator_class.return_value = mock_validator_instance
+
+        scanner = ScanEngine(
+            credential_manager=mock_credential_manager,
+            enable_llm_analysis=False,
+            enable_semgrep_analysis=True,
+            enable_llm_validation=True,
+        )
+
+        result = scanner.scan_code_sync(
+            source_code="test code",
+            file_path="test.py",
+            use_llm=False,
+            use_semgrep=True,
+            use_validation=False,  # Disabled by user
+        )
+
+        assert len(result.all_threats) == 1
+        assert result.scan_metadata["llm_validation_success"] is False
+        assert result.scan_metadata["llm_validation_reason"] == "disabled"
+
+        # Validator should not be called
+        mock_validator_instance.validate_findings.assert_not_called()

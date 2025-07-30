@@ -3,7 +3,7 @@
 //     "adversary-server": {
 //       "command": "uv",
 //       "args": ["run", "python", "-m", "adversary_mcp_server.server"],
-//       "cwd": "~/code/adversary-mcp-server", 
+//       "cwd": "~/code/adversary-mcp-server",
 //       "env": {
 //         "ADVERSARY_CONFIG_DIR": "~/.local/share/adversary-mcp-server"
 //       }

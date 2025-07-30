@@ -6,6 +6,7 @@ from typing import Any
 from ..credentials import CredentialManager
 from ..logger import get_logger
 from .llm_scanner import LLMScanner
+from .llm_validator import LLMValidator
 from .semgrep_scanner import SemgrepScanner
 from .types import Severity, ThreatMatch
 
@@ -21,6 +22,7 @@ class EnhancedScanResult:
         llm_threats: list[ThreatMatch],
         semgrep_threats: list[ThreatMatch],
         scan_metadata: dict[str, Any],
+        validation_results: dict[str, Any] | None = None,
     ):
         """Initialize enhanced scan result.
 
@@ -29,6 +31,7 @@ class EnhancedScanResult:
             llm_threats: Threats found by LLM analysis
             semgrep_threats: Threats found by Semgrep analysis
             scan_metadata: Metadata about the scan
+            validation_results: Optional validation results from LLM validator
         """
         self.file_path = file_path
         # Auto-detect language from file path
@@ -36,6 +39,7 @@ class EnhancedScanResult:
         self.llm_threats = llm_threats
         self.semgrep_threats = semgrep_threats
         self.scan_metadata = scan_metadata
+        self.validation_results = validation_results or {}
 
         # Combine and deduplicate threats
         self.all_threats = self._combine_threats()
@@ -152,6 +156,7 @@ class ScanEngine:
         credential_manager: CredentialManager | None = None,
         enable_llm_analysis: bool = True,
         enable_semgrep_analysis: bool = True,
+        enable_llm_validation: bool = True,
     ):
         """Initialize enhanced scanner.
 
@@ -159,6 +164,7 @@ class ScanEngine:
             credential_manager: Credential manager for configuration
             enable_llm_analysis: Whether to enable LLM analysis
             enable_semgrep_analysis: Whether to enable Semgrep analysis
+            enable_llm_validation: Whether to enable LLM validation of findings
         """
         logger.info("=== Initializing ScanEngine ===")
         self.credential_manager = credential_manager or CredentialManager()
@@ -167,8 +173,10 @@ class ScanEngine:
         # Set analysis parameters
         self.enable_llm_analysis = enable_llm_analysis
         self.enable_semgrep_analysis = enable_semgrep_analysis
+        self.enable_llm_validation = enable_llm_validation
         logger.info(f"LLM analysis enabled: {self.enable_llm_analysis}")
         logger.info(f"Semgrep analysis enabled: {self.enable_semgrep_analysis}")
+        logger.info(f"LLM validation enabled: {self.enable_llm_validation}")
 
         # Initialize Semgrep scanner
         logger.debug("Initializing Semgrep scanner...")
@@ -204,6 +212,15 @@ class ScanEngine:
                 logger.info("LLM analyzer initialized successfully")
         else:
             logger.debug("LLM analysis disabled")
+
+        # Initialize LLM validator if enabled
+        self.llm_validator = None
+        if self.enable_llm_validation:
+            logger.debug("Initializing LLM validator...")
+            self.llm_validator = LLMValidator(self.credential_manager)
+            logger.info("LLM validator initialized successfully")
+        else:
+            logger.debug("LLM validation disabled")
 
         logger.info("=== ScanEngine initialization complete ===")
 
@@ -332,6 +349,7 @@ class ScanEngine:
         file_path: str,
         use_llm: bool = True,
         use_semgrep: bool = True,
+        use_validation: bool = True,
         severity_threshold: Severity | None = None,
     ) -> EnhancedScanResult:
         """Synchronous wrapper for scan_code for CLI usage with auto-detected language."""
@@ -345,6 +363,7 @@ class ScanEngine:
                 file_path=file_path,
                 use_llm=use_llm,
                 use_semgrep=use_semgrep,
+                use_validation=use_validation,
                 severity_threshold=severity_threshold,
             )
         )
@@ -355,6 +374,7 @@ class ScanEngine:
         recursive: bool = True,
         use_llm: bool = True,
         use_semgrep: bool = True,
+        use_validation: bool = True,
         severity_threshold: Severity | None = None,
         max_files: int | None = None,
     ) -> list[EnhancedScanResult]:
@@ -371,6 +391,7 @@ class ScanEngine:
                 recursive=recursive,
                 use_llm=use_llm,
                 use_semgrep=use_semgrep,
+                use_validation=use_validation,
                 severity_threshold=severity_threshold,
                 max_files=max_files,
             )
@@ -381,6 +402,7 @@ class ScanEngine:
         file_path: Path,
         use_llm: bool = True,
         use_semgrep: bool = True,
+        use_validation: bool = True,
         severity_threshold: Severity | None = None,
     ) -> EnhancedScanResult:
         """Synchronous wrapper for scan_file for CLI usage with auto-detected language."""
@@ -393,6 +415,7 @@ class ScanEngine:
                 file_path=file_path,
                 use_llm=use_llm,
                 use_semgrep=use_semgrep,
+                use_validation=use_validation,
                 severity_threshold=severity_threshold,
             )
         )
@@ -403,6 +426,7 @@ class ScanEngine:
         file_path: str,
         use_llm: bool = True,
         use_semgrep: bool = True,
+        use_validation: bool = True,
         severity_threshold: Severity | None = None,
     ) -> EnhancedScanResult:
         """Scan source code using Semgrep and LLM analysis with auto-detected language.
@@ -412,6 +436,7 @@ class ScanEngine:
             file_path: Path to the source file (used for language auto-detection)
             use_llm: Whether to use LLM analysis
             use_semgrep: Whether to use Semgrep analysis
+            use_validation: Whether to use LLM validation for findings
             severity_threshold: Minimum severity threshold for filtering
 
         Returns:
@@ -606,25 +631,60 @@ class ScanEngine:
                 f"LLM: {original_counts['llm']} -> {filtered_counts['llm']}"
             )
 
-        # # Apply false positive filtering
-        # logger.debug("Applying false positive filtering...")
-        # original_total = len(llm_threats) + len(semgrep_threats)
-        # llm_threats = self.false_positive_manager.filter_false_positives(llm_threats)
-        # semgrep_threats = self.false_positive_manager.filter_false_positives(
-        #     semgrep_threats
-        # )
-        # final_total = len(llm_threats) + len(semgrep_threats)
+        # Apply LLM validation if enabled
+        validation_results = {}
+        if use_validation and self.enable_llm_validation and self.llm_validator:
+            # Combine all threats for validation
+            all_threats_for_validation = llm_threats + semgrep_threats
 
-        # if original_total != final_total:
-        #     logger.info(
-        #         f"False positive filtering: {original_total} -> {final_total} threats"
-        #     )
+            if all_threats_for_validation:
+                logger.info(
+                    f"Validating {len(all_threats_for_validation)} findings with LLM validator"
+                )
+                try:
+                    validation_results = self.llm_validator.validate_findings(
+                        findings=all_threats_for_validation,
+                        source_code=source_code,
+                        file_path=file_path,
+                        generate_exploits=True,
+                    )
+
+                    # Filter false positives based on validation
+                    llm_threats = self.llm_validator.filter_false_positives(
+                        llm_threats, validation_results
+                    )
+                    semgrep_threats = self.llm_validator.filter_false_positives(
+                        semgrep_threats, validation_results
+                    )
+
+                    # Add validation stats to metadata
+                    scan_metadata["llm_validation_success"] = True
+                    scan_metadata["llm_validation_stats"] = (
+                        self.llm_validator.get_validation_stats(validation_results)
+                    )
+                    logger.info(
+                        f"Validation complete - filtered to {len(llm_threats) + len(semgrep_threats)} legitimate findings"
+                    )
+
+                except Exception as e:
+                    logger.error(f"LLM validation failed: {e}")
+                    scan_metadata["llm_validation_success"] = False
+                    scan_metadata["llm_validation_error"] = str(e)
+        else:
+            scan_metadata["llm_validation_success"] = False
+            if not use_validation:
+                scan_metadata["llm_validation_reason"] = "disabled"
+            elif not self.enable_llm_validation:
+                scan_metadata["llm_validation_reason"] = "disabled"
+            else:
+                scan_metadata["llm_validation_reason"] = "not_available"
 
         result = EnhancedScanResult(
             file_path=file_path,
             llm_threats=llm_threats,
             semgrep_threats=semgrep_threats,
             scan_metadata=scan_metadata,
+            validation_results=validation_results,
         )
 
         logger.info(
@@ -639,6 +699,7 @@ class ScanEngine:
         file_path: Path,
         use_llm: bool = True,
         use_semgrep: bool = True,
+        use_validation: bool = True,
         severity_threshold: Severity | None = None,
     ) -> EnhancedScanResult:
         """Scan a single file using enhanced scanning with auto-detected language.
@@ -647,6 +708,7 @@ class ScanEngine:
             file_path: Path to the file to scan (used for language auto-detection)
             use_llm: Whether to use LLM analysis
             use_semgrep: Whether to use Semgrep analysis
+            use_validation: Whether to use LLM validation for findings
             severity_threshold: Minimum severity threshold for filtering
 
         Returns:
@@ -803,11 +865,64 @@ class ScanEngine:
                 semgrep_threats, severity_threshold
             )
 
+        # Apply LLM validation if enabled
+        validation_results = {}
+        if use_validation and self.enable_llm_validation and self.llm_validator:
+            # Combine all threats for validation
+            all_threats_for_validation = llm_threats + semgrep_threats
+
+            if all_threats_for_validation:
+                logger.info(
+                    f"Validating {len(all_threats_for_validation)} findings with LLM validator"
+                )
+                try:
+                    # Read file content for validation
+                    with open(file_path, encoding="utf-8") as f:
+                        source_code = f.read()
+
+                    validation_results = self.llm_validator.validate_findings(
+                        findings=all_threats_for_validation,
+                        source_code=source_code,
+                        file_path=str(file_path),
+                        generate_exploits=True,
+                    )
+
+                    # Filter false positives based on validation
+                    llm_threats = self.llm_validator.filter_false_positives(
+                        llm_threats, validation_results
+                    )
+                    semgrep_threats = self.llm_validator.filter_false_positives(
+                        semgrep_threats, validation_results
+                    )
+
+                    # Add validation stats to metadata
+                    scan_metadata["llm_validation_success"] = True
+                    scan_metadata["llm_validation_stats"] = (
+                        self.llm_validator.get_validation_stats(validation_results)
+                    )
+                    logger.info(
+                        f"Validation complete - filtered to {len(llm_threats) + len(semgrep_threats)} legitimate findings"
+                    )
+
+                except Exception as e:
+                    logger.error(f"LLM validation failed: {e}")
+                    scan_metadata["llm_validation_success"] = False
+                    scan_metadata["llm_validation_error"] = str(e)
+        else:
+            scan_metadata["llm_validation_success"] = False
+            if not use_validation:
+                scan_metadata["llm_validation_reason"] = "disabled"
+            elif not self.enable_llm_validation:
+                scan_metadata["llm_validation_reason"] = "disabled"
+            else:
+                scan_metadata["llm_validation_reason"] = "not_available"
+
         result = EnhancedScanResult(
             file_path=str(file_path),
             llm_threats=llm_threats,
             semgrep_threats=semgrep_threats,
             scan_metadata=scan_metadata,
+            validation_results=validation_results,
         )
 
         logger.info(
@@ -823,6 +938,7 @@ class ScanEngine:
         recursive: bool = True,
         use_llm: bool = True,
         use_semgrep: bool = True,
+        use_validation: bool = True,
         severity_threshold: Severity | None = None,
         max_files: int | None = None,
     ) -> list[EnhancedScanResult]:
@@ -833,6 +949,7 @@ class ScanEngine:
             recursive: Whether to scan subdirectories
             use_llm: Whether to use LLM analysis
             use_semgrep: Whether to use Semgrep analysis
+            use_validation: Whether to use LLM validation for findings
             severity_threshold: Minimum severity threshold for filtering
             max_files: Maximum number of files to scan
 
@@ -1083,12 +1200,71 @@ class ScanEngine:
                     file_semgrep_threats = self._filter_by_severity(
                         file_semgrep_threats, severity_threshold
                     )
+
+                # Apply LLM validation if enabled
+                validation_results = {}
+                if use_validation and self.enable_llm_validation and self.llm_validator:
+                    # Combine all threats for validation
+                    all_threats_for_validation = file_llm_threats + file_semgrep_threats
+
+                    if all_threats_for_validation:
+                        logger.debug(
+                            f"Validating {len(all_threats_for_validation)} findings for {file_path.name}"
+                        )
+                        try:
+                            # Read file content for validation
+                            with open(file_path, encoding="utf-8") as f:
+                                source_code = f.read()
+
+                            validation_results = self.llm_validator.validate_findings(
+                                findings=all_threats_for_validation,
+                                source_code=source_code,
+                                file_path=str(file_path),
+                                generate_exploits=True,
+                            )
+
+                            # Filter false positives based on validation
+                            file_llm_threats = (
+                                self.llm_validator.filter_false_positives(
+                                    file_llm_threats, validation_results
+                                )
+                            )
+                            file_semgrep_threats = (
+                                self.llm_validator.filter_false_positives(
+                                    file_semgrep_threats, validation_results
+                                )
+                            )
+
+                            # Add validation stats to metadata
+                            scan_metadata["llm_validation_success"] = True
+                            scan_metadata["llm_validation_stats"] = (
+                                self.llm_validator.get_validation_stats(
+                                    validation_results
+                                )
+                            )
+
+                        except Exception as e:
+                            logger.debug(
+                                f"LLM validation failed for {file_path.name}: {e}"
+                            )
+                            scan_metadata["llm_validation_success"] = False
+                            scan_metadata["llm_validation_error"] = str(e)
+                else:
+                    scan_metadata["llm_validation_success"] = False
+                    if not use_validation:
+                        scan_metadata["llm_validation_reason"] = "disabled"
+                    elif not self.enable_llm_validation:
+                        scan_metadata["llm_validation_reason"] = "disabled"
+                    else:
+                        scan_metadata["llm_validation_reason"] = "not_available"
+
                 # Create result for this file
                 result = EnhancedScanResult(
                     file_path=str(file_path),
                     llm_threats=file_llm_threats,
                     semgrep_threats=file_semgrep_threats,
                     scan_metadata=scan_metadata,
+                    validation_results=validation_results,
                 )
 
                 results.append(result)

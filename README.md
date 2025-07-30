@@ -9,7 +9,9 @@
 [![Coverage](https://img.shields.io/badge/coverage-86.02%25-brightgreen.svg)](https://github.com/brettbergin/adversary-mcp-server)
 [![Version](https://img.shields.io/badge/version-v0.9.6-blue.svg)](https://pypi.org/project/adversary-mcp-server/)
 
-**Software security analysis with hybrid AI-powered threat detection and configurable built-in and custom rule management**
+**Software security analysis with AI-powered vulnerability detection and validation. Semgrep and LLM powered - and validated by: not-an-appsec-engineer. Implemented as an MCP server as well as a command-line interface.**
+
+**We think about your vulns so you dont have to.**
 
 [Installation](#installation) • [Quick Start](#quick-start) • [AI-Powered Analysis](#ai-powered-analysis) • [MCP Integration](#mcp-integration) • [Rule Management](#rule-management) • [CLI Reference](#cli-reference)
 
@@ -58,12 +60,13 @@ Create `.cursor/mcp.json` in your project or `~/.cursor/mcp.json` globally:
 ```json
 {
   "mcpServers": {
-    "adversary-security": {
-      "command": "/Users/<user>/.venv/bin/python",
-      "args": ["-m", "adversary_mcp_server.server"],
-      "env": {
-        "ADVERSARY_CONFIG_DIR": "~/.local/share/adversary-mcp-server"
-      }
+    "adversary": {
+      "command": "~/code/adversary-mcp-server/.venv/bin/python",
+      "args": [
+        "-m",
+        "adversary_mcp_server.server"
+      ],
+      "cwd": "/path/to/my-code-under-test",
     }
   }
 }
@@ -82,7 +85,6 @@ Once configured, you can use these MCP tools in Cursor:
 - `adv_get_version` - Get version information
 - `adv_mark_false_positive` - Mark false positive
 - `adv_unmark_false_positive` - Unmark false positive
-- `adv_list_false_positives` - List false positives
 
 ### 4. Run Demo (Optional)
 
@@ -157,7 +159,6 @@ adv_scan_folder
 | `adv_get_version` | Get version information | Shows AI capabilities |
 | `adv_mark_false_positive` | Mark false positive | Mark false positive |
 | `adv_unmark_false_positive` | Unmark false positive | unmark false positive |
-| `adv_list_false_positives` | list false positives | list false positives |
 
 ### **🆕 Git Diff-Aware Scanning**
 
@@ -170,15 +171,14 @@ The `adv_diff_scan` tool enables intelligent scanning of only changed files betw
 - **Statistics Generation**: Provides comprehensive diff statistics and threat metrics
 - **Full Integration**: Works with all existing scan options (LLM, exploits, severity filtering)
 
-#### **🎯 Scanning Scope (Updated)**
+#### **Scanning Scope (Updated)**
 - ✅ **Newly added lines** (lines starting with `+` in git diff)
 - ❌ **Context lines** (unchanged code shown for reference)
 - ❌ **Removed lines** (deleted code)
 - ❌ **Existing code** in the repository
 
-This prevents false positives from flagging existing code as new vulnerabilities.
 
-#### **Example Usage:**
+#### **Example MCP Tool Usage:**
 ```bash
 # Scan changes in current branch vs main
 adv_diff_scan
@@ -195,19 +195,13 @@ adv_diff_scan
  working_directory="/path/to/your/repo"
 ```
 
-
 ## **🆕 Semgrep Integration**
 
 ### **Overview**
 
-The Adversary MCP Server now includes integrated Semgrep static analysis as a third scanning engine, providing comprehensive security coverage through:
-
-- **Built-in Rules Engine** (95+ custom rules)
-- **AI-Powered Analysis** (LLM prompts and insights)
-- **Semgrep Static Analysis** (industry-standard rule database)
+The Adversary MCP Server includes integrated Semgrep static analysis as a third party scanning engine.
 
 ### **Automatic Setup**
-
 Semgrep integration works out-of-the-box with automatic detection:
 
 ```bash
@@ -384,7 +378,7 @@ adversary-mcp-cli scan --source-branch=main --target-branch=feature/auth
 #### **🆕 Semgrep Static Analysis**
 - **Industry-Standard Scanning**: Leverages Semgrep's extensive rule database
 - **Free & Pro Support**: Automatically detects `SEMGREP_APP_TOKEN` for Pro features
-- **Smart Deduplication**: Intelligently merges Semgrep findings with other engine results
+- **Smart Deduplication**: Intelligently merges Semgrep findings with LLM scanner engine results
 - **Category Mapping**: Automatically maps Semgrep rule IDs to threat categories
 - **Performance Optimized**: Efficient scanning with configurable timeouts
 
@@ -396,97 +390,95 @@ adversary-mcp-cli scan --source-branch=main --target-branch=feature/auth
 - **Industry best practices** - SANS, CERT guidelines + AI insights
 
 
-## 🏗️ Enhanced Architecture
+## 🏗️ System Architecture
 
-The v0.9.8 release features a **triple-engine architecture** combining multiple analysis engines:
+The Adversary MCP Server features a **hybrid multi-engine architecture** with integrated validation:
 
 ```mermaid
 graph TB
-    A[Source Code] --> B[Enhanced Scanner]
-    B --> C[Rules Engine]
-    B --> D[LLM Analyzer]
-    B --> Q[Semgrep Scanner]
-
-    C --> J[Rule Matches]
-    D --> H[LLM Service]
-    H --> I[AI Security Analysis]
-
-    Q --> R[Semgrep Engine]
-    R --> T[Pro Rules - Optional]
-
-    D --> K[LLM Findings]
-    Q --> U[Semgrep Findings]
-
-    J --> L[🆕 Intelligent Merger]
-    K --> L
-    U --> L
-
-    L --> M[Enhanced Results]
-    M --> N[Confidence Scoring]
-    M --> O[Deduplication]
-    M --> P[Statistical Analysis]
-    M --> V[🆕 JSON Output]
-
-    subgraph "Built-in Rules"
-        C
-        J
+    subgraph "Client Layer"
+        A[Cursor IDE]
+        B[CLI Interface]
     end
 
-    subgraph "AI Analysis"
-        D
-        H
-        I
-        K
+    subgraph "Protocol Layer"
+        C[MCP Server]
+        D[CLI Commands]
     end
 
-    subgraph "Semgrep Integration"
-        Q
-        R
-        T
-        U
+    A -->|MCP Protocol| C
+    B --> D
+
+    subgraph "Core Engine"
+        E[ScanEngine]
+        F[GitDiffScanner]
     end
 
-    subgraph "Triple-Engine Output"
-        L
-        M
-        N
-        O
-        P
-        V
+    C --> E
+    D --> E
+    C --> F
+    D --> F
+
+    subgraph "Security Scanners"
+        G[SemgrepScanner]
+        H[LLMScanner]
     end
+
+    E --> G
+    E --> H
+    F --> E
+
+    subgraph "Validation & Enhancement"
+        I[LLMValidator]
+        J[ExploitGenerator]
+    end
+
+    E --> I
+    I --> J
+
+    subgraph "Support Services"
+        K[FalsePositiveManager]
+        L[CredentialManager]
+    end
+
+    E --> K
+    E --> L
+    I --> L
+
+    subgraph "Data Flow"
+        M[ThreatMatch Objects]
+        N[ValidationResults]
+        O[EnhancedScanResult]
+    end
+
+    G --> M
+    H --> M
+    M --> I
+    I --> N
+    N --> O
+
+    style E fill:#e1f5fe
+    style I fill:#f3e5f5
+    style G fill:#e8f5e8
+    style H fill:#fff3e0
 ```
 
-### **🆕 Integration Architecture**
+### **Multi-Engine Security Analysis**
 
-```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Cursor IDE    │───▶│🆕 Enhanced MCP  │───▶│🆕 Triple Engine │
-│                 │    │     Server      │    │                 │
-│ • Code editing  │    │ • adv_* tools   │    │ • Rules Engine  │
-│ • Chat interface│    │ • AI integration│    │ • LLM Analysis  │
-│ • Tool calling  │    │ • JSON output   │    │ • Semgrep Scan  │
-│ • Auto-save     │    │ • Protocol v2   │    │ • Hot-reload    │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-                                                        │
-                              ┌─────────────────────────┼─────────────────────────┐
-                              │                         ▼                         │
-                    ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-                    │🆕 Built-in Rules│    │  Custom Rules   │    │🆕 Semgrep Rules │
-                    │   (95+ rules)   │    │  User defined   │    │Industry Standard│
-                    │ Multi-language  │    │ Project specific│    │ Free + Pro Tiers│
-                    │ + AI Categories │    │ + AI Templates  │    │ Auto-detection  │
-                    └─────────────────┘    └─────────────────┘    └─────────────────┘
-                                                        │
-                              ┌─────────────────────────┼─────────────────────────┐
-                              │                         ▼                         │
-                    ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-                    │ 🆕 LLM Service  │     │🆕 Triple Merger │    │🆕 JSON + Stats  │
-                    │   Integration   │    │   Engine        │    │   Analysis      │
-                    │ • External APIs │    │ • Deduplication │    │ • Auto-save     │
-                    │ • Context-aware │    │ • Confidence    │    │ • Version Ctrl  │
-                    │ • NL Explanations│   │ • Smart Merging │    │ • CI/CD Ready   │
-                    └─────────────────┘    └─────────────────┘    └─────────────────┘
-```
+The system combines three analysis approaches:
+
+1. **Static Analysis (Semgrep)**: Industry-standard rule-based scanning
+2. **AI Analysis (LLM)**: Context-aware vulnerability detection
+3. **Intelligent Validation**: False positive filtering with confidence scoring
+
+### **Key Architecture Features**
+
+- **Hybrid Engine Design**: Static + AI + Validation for comprehensive coverage
+- **Client-Based LLM**: No API keys needed, uses Cursor's built-in AI
+- **Git-Aware Scanning**: Analyzes only changed code for efficient CI/CD
+- **False Positive Filtering**: LLMValidator reduces noise with confidence thresholds
+- **Educational Enhancement**: Exploit generation with safety warnings
+- **Rich Metadata**: Comprehensive statistics and analysis insights
 
 ### **🆕 Advanced Configuration**
 

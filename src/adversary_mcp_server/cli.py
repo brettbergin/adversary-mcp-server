@@ -213,6 +213,10 @@ def status():
                 else "No"
             ),
         )
+        config_table.add_row(
+            "LLM Validation Available",
+            "Yes" if scan_engine.llm_validator else "No",
+        )
 
         console.print(config_table)
 
@@ -241,6 +245,11 @@ def status():
             ),
             "AI-powered analysis",
         )
+        scanners_table.add_row(
+            "LLM Validation",
+            "Available" if scan_engine.llm_validator else "Unavailable",
+            "False positive filtering",
+        )
 
         console.print(scanners_table)
 
@@ -266,6 +275,11 @@ def status():
 @click.option("--use-llm/--no-llm", default=True, help="Use LLM analysis")
 @click.option("--use-semgrep/--no-semgrep", default=True, help="Use Semgrep analysis")
 @click.option(
+    "--use-validation/--no-validation",
+    default=True,
+    help="Use LLM validation to filter false positives",
+)
+@click.option(
     "--severity",
     type=click.Choice(["low", "medium", "high", "critical"]),
     help="Minimum severity threshold",
@@ -282,6 +296,7 @@ def scan(
     target_branch: str | None,
     use_llm: bool,
     use_semgrep: bool,
+    use_validation: bool,
     severity: str | None,
     output: str | None,
     include_exploits: bool,
@@ -292,15 +307,18 @@ def scan(
     logger.debug(
         f"Scan parameters - Target: {target}, Source: {source_branch}, "
         f"Target branch: {target_branch}, "
-        f"LLM: {use_llm}, Semgrep: {use_semgrep}, Severity: {severity}, "
-        f"Output: {output}, Include exploits: {include_exploits}"
+        f"LLM: {use_llm}, Semgrep: {use_semgrep}, Validation: {use_validation}, "
+        f"Severity: {severity}, Output: {output}, Include exploits: {include_exploits}"
     )
 
     try:
         # Initialize scanner components
         logger.debug("Initializing scan engine...")
         credential_manager = CredentialManager()
-        scan_engine = ScanEngine(credential_manager)
+        scan_engine = ScanEngine(
+            credential_manager=credential_manager,
+            enable_llm_validation=use_validation,
+        )
 
         # Git diff scanning mode
         if source_branch and target_branch:
@@ -324,6 +342,7 @@ def scan(
                 target_branch=target_branch,
                 use_llm=use_llm,
                 use_semgrep=use_semgrep,
+                use_validation=use_validation,
                 severity_threshold=severity_enum,
             )
             logger.info(f"Diff scan completed - {len(scan_results)} files scanned")
@@ -375,6 +394,7 @@ def scan(
                     target_path,
                     use_llm=use_llm,
                     use_semgrep=use_semgrep,
+                    use_validation=use_validation,
                     severity_threshold=severity_enum,
                 )
                 threats = scan_result.all_threats
@@ -393,6 +413,7 @@ def scan(
                     recursive=True,
                     use_llm=use_llm,
                     use_semgrep=use_semgrep,
+                    use_validation=use_validation,
                     severity_threshold=severity_enum,
                 )
 

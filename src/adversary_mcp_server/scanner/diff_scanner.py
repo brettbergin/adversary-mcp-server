@@ -368,6 +368,7 @@ class GitDiffScanner:
         working_dir: Path | None = None,
         use_llm: bool = False,
         use_semgrep: bool = True,
+        use_validation: bool = True,
         use_rules: bool = True,
         severity_threshold: Severity | None = None,
     ) -> dict[str, list[EnhancedScanResult]]:
@@ -379,6 +380,7 @@ class GitDiffScanner:
             working_dir: Working directory for git operations (uses self.working_dir if not specified)
             use_llm: Whether to use LLM analysis
             use_semgrep: Whether to use Semgrep analysis
+            use_validation: Whether to use LLM validation to filter false positives
             use_rules: Whether to use rules-based scanner
             severity_threshold: Minimum severity threshold for filtering
 
@@ -391,7 +393,7 @@ class GitDiffScanner:
         logger.info(f"=== Starting diff scan: {source_branch} -> {target_branch} ===")
         logger.debug(
             f"Scan parameters - LLM: {use_llm}, Semgrep: {use_semgrep}, "
-            f"Rules: {use_rules}, Severity: {severity_threshold}"
+            f"Validation: {use_validation}, Rules: {use_rules}, Severity: {severity_threshold}"
         )
 
         # Get diff changes
@@ -466,6 +468,7 @@ class GitDiffScanner:
                     file_path=file_path,
                     use_llm=use_llm,
                     use_semgrep=use_semgrep,
+                    use_validation=use_validation,
                     severity_threshold=severity_threshold,
                 )
 
@@ -513,6 +516,7 @@ class GitDiffScanner:
         working_dir: Path | None = None,
         use_llm: bool = False,
         use_semgrep: bool = True,
+        use_validation: bool = True,
         use_rules: bool = True,
         severity_threshold: Severity | None = None,
     ) -> dict[str, list[EnhancedScanResult]]:
@@ -529,6 +533,7 @@ class GitDiffScanner:
                 working_dir=working_dir,
                 use_llm=use_llm,
                 use_semgrep=use_semgrep,
+                use_validation=use_validation,
                 use_rules=use_rules,
                 severity_threshold=severity_threshold,
             )
