@@ -40,7 +40,78 @@ source .venv/bin/activate
 
 ## Architecture Overview
 
-This is a security analysis MCP (Model Context Protocol) server that provides vulnerability scanning capabilities through Cursor IDE integration. The system uses a hybrid approach combining traditional rule-based detection with optional AI-enhanced analysis.
+This is a security analysis MCP (Model Context Protocol) server that provides vulnerability scanning capabilities through Cursor IDE integration. The system uses a **hybrid multi-engine approach** combining static analysis (Semgrep), AI-powered analysis (LLM), and intelligent validation for comprehensive security scanning.
+
+## System Architecture
+
+```mermaid
+graph TB
+    subgraph "Client Layer"
+        A[Cursor IDE]
+        B[CLI Interface]
+    end
+
+    subgraph "Protocol Layer"
+        C[MCP Server]
+        D[CLI Commands]
+    end
+
+    A -->|MCP Protocol| C
+    B --> D
+
+    subgraph "Core Engine"
+        E[ScanEngine]
+        F[GitDiffScanner]
+    end
+
+    C --> E
+    D --> E
+    C --> F
+    D --> F
+
+    subgraph "Security Scanners"
+        G[SemgrepScanner]
+        H[LLMScanner]
+    end
+
+    E --> G
+    E --> H
+    F --> E
+
+    subgraph "Validation & Enhancement"
+        I[LLMValidator]
+        J[ExploitGenerator]
+    end
+
+    E --> I
+    I --> J
+
+    subgraph "Support Services"
+        K[FalsePositiveManager]
+        L[CredentialManager]
+    end
+
+    E --> K
+    E --> L
+    I --> L
+
+    subgraph "Data Flow"
+        M[ThreatMatch Objects]
+        N[ValidationResults]
+        O[EnhancedScanResult]
+    end
+
+    G --> M
+    H --> M
+    M --> I
+    I --> N
+    N --> O
+
+    style E fill:#e1f5fe
+    style I fill:#f3e5f5
+    style G fill:#e8f5e8
+    style H fill:#fff3e0
+```
 
 ### Core Components
 
@@ -48,62 +119,116 @@ This is a security analysis MCP (Model Context Protocol) server that provides vu
 - Main MCP server implementation providing `adv_*` tools for Cursor IDE
 - Tools include: `adv_scan_code`, `adv_scan_file`, `adv_diff_scan`, `adv_generate_exploit`
 - Handles tool registration, parameter validation, and error handling
+- Supports both standard scanning and git diff-aware scanning
 
-#### Scanning Engines
-- **ScanEngine** (`scan_engine.py`) - Enhanced scanner combining multiple analysis methods
-- **ASTScanner** (`ast_scanner.py`) - AST-based static analysis for Python/JS/TS
-- **ThreatEngine** (`threat_engine.py`) - Rule-based pattern matching engine
-- **LLMScanner** (`llm_scanner.py`) - AI-powered analysis prompts
-- **GitDiffScanner** (`diff_scanner.py`) - Git diff-aware scanning for CI/CD
+#### Enhanced Scanning Architecture
 
-#### Supporting Systems
-- **CredentialManager** (`credential_manager.py`) - Configuration and secrets management
-- **ExploitGenerator** (`exploit_generator.py`) - Educational exploit generation
-- **HotReload** (`hot_reload.py`) - Real-time rule updates during development
+**ScanEngine** (`scan_engine.py`) - Central orchestration layer that:
+- Manages **SemgrepScanner** and **LLMScanner** execution
+- Integrates **LLMValidator** for false positive filtering
+- Provides unified results through **EnhancedScanResult**
+- Supports file, directory, and code snippet scanning
+- Handles severity filtering and threat deduplication
 
-### Security Rules Architecture
+**LLMValidator** (`llm_validator.py`) - **NEW** validation system that:
+- Validates findings from all scanners to reduce false positives
+- Generates confidence scores (0.0-1.0) for each finding
+- Creates exploitation vectors for confirmed vulnerabilities
+- Integrates with **ExploitGenerator** for proof-of-concept creation
+- Provides client-based LLM prompts for validation analysis
 
-Rules are organized in `rules/built-in/` by language and category:
-- `python-rules.yaml` - Python-specific vulnerabilities (25+ rules)
-- `javascript-rules.yaml` - JavaScript vulnerabilities (30+ rules)
-- `typescript-rules.yaml` - TypeScript-specific issues
-- `web-security-rules.yaml` - Web application security (18+ rules)
-- `api-security-rules.yaml` - API security patterns (15+ rules)
-- `cryptography-rules.yaml` - Cryptographic vulnerabilities (15+ rules)
-- `configuration-rules.yaml` - Configuration security issues (15+ rules)
+#### Security Scanner Engines
 
-Each rule includes:
-- Pattern matching conditions (regex, AST patterns)
-- Severity levels (low, medium, high, critical)
-- Categories (injection, crypto, authentication, etc.)
-- CWE and OWASP mappings
-- Remediation guidance
+**SemgrepScanner** (`semgrep_scanner.py`) - Static analysis engine:
+- Industry-standard rule-based scanning
+- Language-agnostic pattern matching
+- High-performance subprocess execution
+- Configurable rulesets and timeouts
+- Automatic result categorization and severity assignment
 
-### Key Workflows
+**LLMScanner** (`llm_scanner.py`) - AI-powered analysis engine:
+- Client-based LLM integration (no API keys needed)
+- Context-aware vulnerability detection
+- Business logic flaw identification
+- Generates structured prompts for external LLM analysis
+- Provides detailed explanations and remediation guidance
 
-#### Standard Vulnerability Scanning
-1. Code is parsed by ASTScanner for language-specific analysis
-2. ThreatEngine applies 95+ built-in rules
-3. Results are categorized by severity and type
-4. Optional LLM analysis provides additional context
+#### Specialized Components
+
+**GitDiffScanner** (`diff_scanner.py`) - Git-aware scanning:
+- Analyzes only newly added lines between branches
+- Prevents false positives from existing code
+- Ideal for CI/CD pipeline integration
+- Supports branch comparison and commit analysis
+- Maps findings back to original line numbers
+
+**ExploitGenerator** (`exploit_generator.py`) - Educational exploit creation:
+- Template-based exploit generation
+- LLM-enhanced exploitation scenarios
+- Safety warnings and educational context
+- Multiple exploit variations per vulnerability
+- Integration with validation workflow
+
+**FalsePositiveManager** (`false_positive_manager.py`) - Noise reduction:
+- UUID-based finding tracking
+- Persistent SQLite storage
+- Reviewer attribution system
+- Batch operations support
+- Cross-scanner false positive filtering
+
+### Data Flow Architecture
+
+#### Standard Scanning Workflow
+1. **Input Processing**: Code/file received via MCP tool or CLI
+2. **Parallel Analysis**: SemgrepScanner and LLMScanner execute concurrently
+3. **Result Collection**: ThreatMatch objects collected from both scanners
+4. **Validation Processing**: LLMValidator analyzes findings for legitimacy
+5. **False Positive Filtering**: Validated results filtered by confidence threshold
+6. **Exploit Generation**: Confirmed vulnerabilities enhanced with POCs
+7. **Result Synthesis**: EnhancedScanResult with metadata and statistics
+8. **Client Response**: Formatted results returned to Cursor IDE or CLI
 
 #### Git Diff-Aware Scanning
-1. GitDiffScanner identifies newly added lines between branches
-2. Only new code is analyzed (not context lines or existing code)
-3. Ideal for CI/CD pipelines to scan only changes
-4. Prevents false positives from existing codebase
+1. **Branch Analysis**: GitDiffScanner extracts changed lines between branches
+2. **Context Building**: Full file context built around changed lines
+3. **Targeted Scanning**: Only new/modified code analyzed by scan engines
+4. **Line Mapping**: Results mapped back to original file line numbers
+5. **Validation & Enhancement**: Same validation workflow as standard scanning
 
-#### AI-Enhanced Analysis
-1. Traditional rules provide baseline detection
-2. LLM prompts analyze context and business logic
-3. Results are merged with confidence scoring
-4. Intelligent deduplication prevents duplicate findings
+#### LLM Validation Workflow
+1. **Finding Collection**: Threats from all scanners aggregated
+2. **Prompt Generation**: Structured validation prompts created
+3. **Client Analysis**: Prompts sent to client-side LLM for analysis
+4. **Result Parsing**: JSON responses parsed into ValidationResult objects
+5. **Confidence Filtering**: Findings below threshold marked as false positives
+6. **Enhancement**: Legitimate findings enhanced with exploitation details
+
+### Key Features
+
+#### Multi-Engine Analysis
+- **Complementary Coverage**: Static analysis + AI reasoning + validation
+- **Intelligent Deduplication**: Similar findings merged across engines
+- **Confidence Scoring**: Each finding assigned reliability metrics
+- **Smart Result Merging**: Best-of-breed approach for maximum accuracy
+
+#### Advanced Validation System
+- **False Positive Reduction**: LLMValidator filters noise with 70% default confidence threshold
+- **Exploitation Analysis**: Confirmed vulnerabilities include attack vectors
+- **Severity Adjustment**: Validator can modify threat severity based on context
+- **Educational Enhancement**: Detailed remediation advice and exploit examples
+
+#### Developer Experience
+- **Real-Time Analysis**: Background scanning in Cursor IDE
+- **Git Integration**: Diff-aware scanning for efficient CI/CD
+- **CLI Flexibility**: Full command-line interface with validation controls
+- **Rich Output**: Structured JSON results with comprehensive metadata
 
 ### Testing Strategy
 
 - **Unit Tests**: Individual component testing with mocks
 - **Integration Tests**: Full workflow testing with real files
-- **Security Tests**: Validate rule accuracy and exploit safety
+- **Security Tests**: Validate detection accuracy and exploit safety
+- **Validation Tests**: Comprehensive LLMValidator functionality testing
 - **Coverage**: Maintain 80%+ test coverage requirement
 - **Markers**: Tests marked as `unit`, `integration`, `security`, `slow`
 
@@ -120,12 +245,14 @@ Each rule includes:
 - Exploit generation includes safety warnings and educational context
 - All analysis focuses on vulnerability detection and remediation
 - No malicious code generation or attack facilitation
+- LLM validation runs client-side (no API keys transmitted)
 
 #### Error Handling
 - Use `AdversaryToolError` for tool-specific failures
 - Comprehensive logging with structured messages
 - Graceful degradation when LLM analysis unavailable
 - Input validation using pydantic models
+- Fail-safe validation (unknown findings kept when validation fails)
 
 ### MCP Integration
 
@@ -133,4 +260,14 @@ The server provides tools for Cursor IDE through the MCP protocol:
 - Configure in `.cursor/mcp.json` with Python path and environment variables
 - Tools accept structured parameters with validation
 - Results include detailed findings, metadata, and remediation guidance
+- Validation can be enabled/disabled per scan operation
 - Hot-reload capability for real-time rule updates during development
+
+### CLI Integration
+
+Full command-line interface with validation support:
+- `--use-validation/--no-validation` flags control LLM validation
+- `--use-llm/--no-llm` and `--use-semgrep/--no-semgrep` control scan engines
+- Status command shows validation availability and configuration
+- Git diff scanning fully supported with validation
+- JSON output includes validation statistics and metadata

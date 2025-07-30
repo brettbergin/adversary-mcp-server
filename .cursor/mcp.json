@@ -3,11 +3,11 @@
     "threatmodel": {
       "command": "uv",
       "args": [
-        "run", 
-        "--directory", 
+        "run",
+        "--directory",
         "~/code/threatmodel-mcp-server",
-        "python", 
-        "-m", 
+        "python",
+        "-m",
         "threatmodel_mcp_server.server"
       ],
       "cwd": "~/code/threatmodel-mcp-server",
