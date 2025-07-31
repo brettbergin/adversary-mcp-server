@@ -1,13 +1,17 @@
 """Enhanced scanner that combines Semgrep and LLM analysis for comprehensive security scanning."""
 
+import asyncio
+import os
 from pathlib import Path
 from typing import Any
 
 from ..credentials import CredentialManager
 from ..logger import get_logger
+from .file_filter import FileFilter
 from .llm_scanner import LLMScanner
 from .llm_validator import LLMValidator
 from .semgrep_scanner import SemgrepScanner
+from .streaming_utils import StreamingFileReader, is_file_too_large
 from .types import Severity, ThreatMatch
 
 logger = get_logger("scan_engine")
@@ -376,7 +380,6 @@ class ScanEngine:
         use_semgrep: bool = True,
         use_validation: bool = True,
         severity_threshold: Severity | None = None,
-        max_files: int | None = None,
     ) -> list[EnhancedScanResult]:
         """Synchronous wrapper for scan_directory for CLI usage."""
         directory_path_abs = str(Path(directory_path).resolve())
@@ -393,7 +396,6 @@ class ScanEngine:
                 use_semgrep=use_semgrep,
                 use_validation=use_validation,
                 severity_threshold=severity_threshold,
-                max_files=max_files,
             )
         )
 
@@ -780,6 +782,7 @@ class ScanEngine:
                     logger.debug("Calling Semgrep scanner...")
                     semgrep_threats = await self.semgrep_scanner.scan_file(
                         file_path=str(file_path),
+                        language=language,
                         config=config.semgrep_config,
                         rules=config.semgrep_rules,
                         timeout=config.semgrep_timeout,
@@ -940,7 +943,6 @@ class ScanEngine:
         use_semgrep: bool = True,
         use_validation: bool = True,
         severity_threshold: Severity | None = None,
-        max_files: int | None = None,
     ) -> list[EnhancedScanResult]:
         """Scan a directory using enhanced scanning with optimized approach.
 
@@ -951,37 +953,49 @@ class ScanEngine:
             use_semgrep: Whether to use Semgrep analysis
             use_validation: Whether to use LLM validation for findings
             severity_threshold: Minimum severity threshold for filtering
-            max_files: Maximum number of files to scan
 
         Returns:
             List of enhanced scan results
         """
-        directory_path_abs = str(Path(directory_path).resolve())
+        directory_path_obj = Path(directory_path).resolve()
+        directory_path_abs = str(directory_path_obj)
         logger.info(f"=== Starting directory scan: {directory_path_abs} ===")
         logger.debug(
             f"Directory scan parameters - Recursive: {recursive}, "
-            f"Max files: {max_files}, LLM: {use_llm}, "
-            f"Semgrep: {use_semgrep}"
+            f"LLM: {use_llm}, Semgrep: {use_semgrep}"
         )
 
-        if not directory_path.exists():
+        if not directory_path_obj.exists():
             logger.error(f"Directory not found: {directory_path_abs}")
             raise FileNotFoundError(f"Directory not found: {directory_path}")
 
-        # Find all files to scan (simplified - scan all files since semgrep handles filtering)
-        files_to_scan = []
+        # Initialize file filter with smart exclusions
+        config = self.credential_manager.load_config()
+        file_filter = FileFilter(
+            root_path=directory_path_obj,
+            max_file_size_mb=config.max_file_size_mb,
+            respect_gitignore=True,
+        )
+
+        # Find all files to scan with intelligent filtering
+        all_files = []
         pattern = "**/*" if recursive else "*"
-        logger.debug(f"Scanning for files with pattern: {pattern}")
+        logger.debug(f"Discovering files with pattern: {pattern}")
 
-        for file_path in directory_path.glob(pattern):
+        for file_path in directory_path_obj.glob(pattern):
             if file_path.is_file():
-                files_to_scan.append(file_path)
+                all_files.append(file_path)
 
-                if max_files and len(files_to_scan) >= max_files:
-                    logger.info(f"Reached max file limit: {max_files}")
-                    break
+        logger.info(f"Discovered {len(all_files)} total files")
 
-        logger.info(f"Found {len(files_to_scan)} files to scan")
+        # Apply smart filtering
+        files_to_scan = file_filter.filter_files(all_files)
+
+        logger.info(f"After filtering: {len(files_to_scan)} files to scan")
+        if len(all_files) > len(files_to_scan):
+            logger.info(
+                f"Filtered out {len(all_files) - len(files_to_scan)} files (.gitignore, binary, too large, etc.)"
+            )
 
         # Perform Semgrep scanning once for entire directory if enabled
         directory_semgrep_threats = {}  # Map file_path -> list[ThreatMatch]
@@ -1081,7 +1095,6 @@ class ScanEngine:
                 all_llm_findings = await self.llm_analyzer.analyze_directory(
                     directory_path=directory_path,
                     recursive=recursive,
-                    max_files=max_files,
                 )
 
                 # Convert LLM findings to threats and group by file
@@ -1131,172 +1144,402 @@ class ScanEngine:
                 "llm_scan_reason": reason,
             }
 
-        # Process each file for rules-based analysis and collect results
-        logger.info(
-            f"Processing {len(files_to_scan)} files for rules analysis and result compilation..."
-        )
-        results = []
+        # Process files in parallel with concurrency control
+        logger.info(f"Processing {len(files_to_scan)} files in parallel...")
+
+        # Handle case when no files to scan
+        if not files_to_scan:
+            logger.info("No files to scan after filtering")
+            return []
+
+        # Create a semaphore to limit concurrent operations
+        cpu_count = os.cpu_count() or 4  # Default to 4 if cpu_count returns None
+        max_workers = min(32, cpu_count + 4, len(files_to_scan))
+        semaphore = asyncio.Semaphore(max_workers)
+        logger.info(f"Using {max_workers} parallel workers")
+
+        # Create tasks for parallel processing
+        tasks = []
+        for file_path in files_to_scan:
+            task = self._process_single_file(
+                file_path=file_path,
+                directory_semgrep_threats=directory_semgrep_threats,
+                directory_llm_threats=directory_llm_threats,
+                semgrep_scan_metadata=semgrep_scan_metadata,
+                llm_scan_metadata=llm_scan_metadata,
+                semgrep_status=semgrep_status,
+                use_llm=use_llm,
+                use_semgrep=use_semgrep,
+                use_validation=use_validation,
+                severity_threshold=severity_threshold,
+                semaphore=semaphore,
+            )
+            tasks.append(task)
+
+        # Execute tasks in batches to avoid overwhelming memory
+        batch_size = min(max_workers * 2, 50)  # Process in batches
+        final_results: list[EnhancedScanResult] = []
         successful_scans = 0
         failed_scans = 0
 
-        for i, file_path in enumerate(files_to_scan):
-            try:
-                file_path_abs = str(Path(file_path).resolve())
-                logger.debug(
-                    f"Processing file {i+1}/{len(files_to_scan)}: {file_path_abs}"
-                )
+        logger.info(f"Processing {len(tasks)} tasks in batches of {batch_size}")
 
-                # Detect language
-                language = self._detect_language(file_path)
+        for i in range(0, len(tasks), batch_size):
+            batch_tasks = tasks[i : i + batch_size]
+            batch_files = files_to_scan[i : i + batch_size]
 
-                # Get threats for this file from directory scans
-                file_semgrep_threats = directory_semgrep_threats.get(str(file_path), [])
-                file_llm_threats = directory_llm_threats.get(str(file_path), [])
-                logger.debug(
-                    f"File {file_path.name}: {len(file_semgrep_threats)} Semgrep threats, "
-                    f"{len(file_llm_threats)} LLM threats from directory scans"
-                )
+            logger.debug(
+                f"Processing batch {i//batch_size + 1}: files {i+1}-{min(i+batch_size, len(tasks))}"
+            )
 
-                # Initialize file scan metadata
-                scan_metadata: dict[str, Any] = {
-                    "file_path": str(file_path),
-                    "language": language,
-                    "use_llm": use_llm and self.enable_llm_analysis,
-                    "use_semgrep": use_semgrep and self.enable_semgrep_analysis,
-                    "directory_scan": True,
-                    "semgrep_source": "directory_scan",
-                    "llm_source": "directory_scan",
+            # Execute current batch
+            batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+
+            # Process batch results
+            for j, result in enumerate(batch_results):
+                if isinstance(result, Exception):
+                    logger.error(f"Failed to process file {batch_files[j]}: {result}")
+                    failed_scans += 1
+                    # Create error result
+                    error_result = EnhancedScanResult(
+                        file_path=str(batch_files[j]),
+                        llm_threats=[],
+                        semgrep_threats=[],
+                        scan_metadata={
+                            "file_path": str(batch_files[j]),
+                            "error": str(result),
+                            "directory_scan": True,
+                            "parallel_processing": True,
+                            "batch_processing": True,
+                            **semgrep_scan_metadata,
+                            **llm_scan_metadata,
+                        },
+                    )
+                    final_results.append(error_result)
+                elif isinstance(result, EnhancedScanResult):
+                    successful_scans += 1
+                    final_results.append(result)
+                else:
+                    # This shouldn't happen, but handle it gracefully
+                    logger.warning(
+                        f"Unexpected result type for {batch_files[j]}: {type(result)}"
+                    )
+                    failed_scans += 1
+
+            # Log progress after each batch
+            logger.info(
+                f"Completed batch {i//batch_size + 1}/{(len(tasks) + batch_size - 1)//batch_size}"
+            )
+
+            # Optional: Yield results incrementally (for future streaming support)
+            # This could be expanded to yield batches to the caller
+
+        logger.info(
+            f"=== Parallel directory scan complete - Processed {len(final_results)} files "
+            f"(Success: {successful_scans}, Failed: {failed_scans}) in {(len(tasks) + batch_size - 1)//batch_size} batches ==="
+        )
+        return final_results
+
+    async def _process_single_file(
+        self,
+        file_path: Path,
+        directory_semgrep_threats: dict[str, list[ThreatMatch]],
+        directory_llm_threats: dict[str, list[ThreatMatch]],
+        semgrep_scan_metadata: dict[str, Any],
+        llm_scan_metadata: dict[str, Any],
+        semgrep_status: dict[str, Any],
+        use_llm: bool,
+        use_semgrep: bool,
+        use_validation: bool,
+        severity_threshold: Severity | None,
+        semaphore: asyncio.Semaphore,
+    ) -> EnhancedScanResult:
+        """Process a single file for scanning (used in parallel processing).
+
+        Args:
+            file_path: Path to the file to process
+            directory_semgrep_threats: Threats found by directory-level Semgrep scan
+            directory_llm_threats: Threats found by directory-level LLM scan
+            semgrep_scan_metadata: Metadata from Semgrep scan
+            llm_scan_metadata: Metadata from LLM scan
+            semgrep_status: Semgrep status information
+            use_llm: Whether LLM analysis is enabled
+            use_semgrep: Whether Semgrep analysis is enabled
+            use_validation: Whether LLM validation is enabled
+            severity_threshold: Minimum severity threshold
+            semaphore: Semaphore for concurrency control
+
+        Returns:
+            EnhancedScanResult for the file
+        """
+        async with semaphore:  # Limit concurrent operations
+            file_path_abs = str(Path(file_path).resolve())
+            logger.debug(f"Processing file: {file_path_abs}")
+
+            # Detect language
+            language = self._detect_language(file_path)
+
+            # Get threats for this file from directory scans
+            file_semgrep_threats = directory_semgrep_threats.get(str(file_path), [])
+            file_llm_threats = directory_llm_threats.get(str(file_path), [])
+            logger.debug(
+                f"File {file_path.name}: {len(file_semgrep_threats)} Semgrep threats, "
+                f"{len(file_llm_threats)} LLM threats from directory scans"
+            )
+
+            # Initialize file scan metadata
+            scan_metadata: dict[str, Any] = {
+                "file_path": str(file_path),
+                "language": language,
+                "use_llm": use_llm and self.enable_llm_analysis,
+                "use_semgrep": use_semgrep and self.enable_semgrep_analysis,
+                "directory_scan": True,
+                "parallel_processing": True,
+                "semgrep_source": "directory_scan",
+                "llm_source": "directory_scan",
+            }
+
+            # Add directory scan metadata
+            scan_metadata.update(semgrep_scan_metadata)
+            scan_metadata.update(llm_scan_metadata)
+
+            # Add semgrep status
+            scan_metadata["semgrep_status"] = semgrep_status
+
+            # Add LLM status for consistency
+            if self.llm_analyzer:
+                llm_status = self.llm_analyzer.get_status()
+                scan_metadata["llm_status"] = llm_status
+            else:
+                scan_metadata["llm_status"] = {
+                    "available": False,
+                    "installation_status": "not_initialized",
+                    "description": "LLM analyzer not initialized",
                 }
 
-                # Add directory scan metadata
-                scan_metadata.update(semgrep_scan_metadata)
-                scan_metadata.update(llm_scan_metadata)
+            # Filter by severity threshold if specified
+            if severity_threshold:
+                file_llm_threats = self._filter_by_severity(
+                    file_llm_threats, severity_threshold
+                )
+                file_semgrep_threats = self._filter_by_severity(
+                    file_semgrep_threats, severity_threshold
+                )
 
-                # Add semgrep status (missing from directory scans, but present in single file scans)
-                scan_metadata["semgrep_status"] = semgrep_status
+            # Apply LLM validation if enabled
+            validation_results = {}
+            if use_validation and self.enable_llm_validation and self.llm_validator:
+                # Combine all threats for validation
+                all_threats_for_validation = file_llm_threats + file_semgrep_threats
 
-                # Add LLM status for consistency with single file scans
-                if self.llm_analyzer:
-                    llm_status = self.llm_analyzer.get_status()
-                    scan_metadata["llm_status"] = llm_status
-                else:
-                    scan_metadata["llm_status"] = {
-                        "available": False,
-                        "installation_status": "not_initialized",
-                        "description": "LLM analyzer not initialized",
-                    }
-
-                # Initialize rules_threats as empty (AST scanning removed)
-                rules_threats = []
-
-                # Filter by severity threshold if specified
-                if severity_threshold:
-                    rules_threats = self._filter_by_severity(
-                        rules_threats, severity_threshold
+                if all_threats_for_validation:
+                    logger.debug(
+                        f"Validating {len(all_threats_for_validation)} findings for {file_path.name}"
                     )
-                    file_llm_threats = self._filter_by_severity(
-                        file_llm_threats, severity_threshold
-                    )
-                    file_semgrep_threats = self._filter_by_severity(
-                        file_semgrep_threats, severity_threshold
-                    )
-
-                # Apply LLM validation if enabled
-                validation_results = {}
-                if use_validation and self.enable_llm_validation and self.llm_validator:
-                    # Combine all threats for validation
-                    all_threats_for_validation = file_llm_threats + file_semgrep_threats
-
-                    if all_threats_for_validation:
-                        logger.debug(
-                            f"Validating {len(all_threats_for_validation)} findings for {file_path.name}"
-                        )
-                        try:
-                            # Read file content for validation
+                    try:
+                        # Use streaming for large files, regular read for small files
+                        config = self.credential_manager.load_config()
+                        if is_file_too_large(
+                            file_path, max_size_mb=config.max_file_size_mb
+                        ):
+                            logger.debug(
+                                f"Using streaming read for large file: {file_path}"
+                            )
+                            streaming_reader = StreamingFileReader()
+                            source_code = await streaming_reader.get_file_preview(
+                                file_path,
+                                preview_size=10000,  # 10KB preview for validation
+                            )
+                        else:
+                            # Read small files normally
                             with open(file_path, encoding="utf-8") as f:
                                 source_code = f.read()
 
-                            validation_results = self.llm_validator.validate_findings(
-                                findings=all_threats_for_validation,
-                                source_code=source_code,
-                                file_path=str(file_path),
-                                generate_exploits=True,
-                            )
+                        validation_results = self.llm_validator.validate_findings(
+                            findings=all_threats_for_validation,
+                            source_code=source_code,
+                            file_path=str(file_path),
+                            generate_exploits=True,
+                        )
 
-                            # Filter false positives based on validation
-                            file_llm_threats = (
-                                self.llm_validator.filter_false_positives(
-                                    file_llm_threats, validation_results
-                                )
+                        # Filter false positives based on validation
+                        file_llm_threats = self.llm_validator.filter_false_positives(
+                            file_llm_threats, validation_results
+                        )
+                        file_semgrep_threats = (
+                            self.llm_validator.filter_false_positives(
+                                file_semgrep_threats, validation_results
                             )
-                            file_semgrep_threats = (
-                                self.llm_validator.filter_false_positives(
-                                    file_semgrep_threats, validation_results
-                                )
-                            )
+                        )
 
-                            # Add validation stats to metadata
-                            scan_metadata["llm_validation_success"] = True
-                            scan_metadata["llm_validation_stats"] = (
-                                self.llm_validator.get_validation_stats(
-                                    validation_results
-                                )
-                            )
+                        # Add validation stats to metadata
+                        scan_metadata["llm_validation_success"] = True
+                        scan_metadata["llm_validation_stats"] = (
+                            self.llm_validator.get_validation_stats(validation_results)
+                        )
 
-                        except Exception as e:
-                            logger.debug(
-                                f"LLM validation failed for {file_path.name}: {e}"
-                            )
-                            scan_metadata["llm_validation_success"] = False
-                            scan_metadata["llm_validation_error"] = str(e)
+                    except Exception as e:
+                        logger.debug(f"LLM validation failed for {file_path.name}: {e}")
+                        scan_metadata["llm_validation_success"] = False
+                        scan_metadata["llm_validation_error"] = str(e)
+            else:
+                scan_metadata["llm_validation_success"] = False
+                if not use_validation:
+                    scan_metadata["llm_validation_reason"] = "disabled"
+                elif not self.enable_llm_validation:
+                    scan_metadata["llm_validation_reason"] = "disabled"
                 else:
-                    scan_metadata["llm_validation_success"] = False
-                    if not use_validation:
-                        scan_metadata["llm_validation_reason"] = "disabled"
-                    elif not self.enable_llm_validation:
-                        scan_metadata["llm_validation_reason"] = "disabled"
-                    else:
-                        scan_metadata["llm_validation_reason"] = "not_available"
+                    scan_metadata["llm_validation_reason"] = "not_available"
 
-                # Create result for this file
-                result = EnhancedScanResult(
-                    file_path=str(file_path),
-                    llm_threats=file_llm_threats,
-                    semgrep_threats=file_semgrep_threats,
-                    scan_metadata=scan_metadata,
-                    validation_results=validation_results,
+            # Create result for this file
+            result = EnhancedScanResult(
+                file_path=str(file_path),
+                llm_threats=file_llm_threats,
+                semgrep_threats=file_semgrep_threats,
+                scan_metadata=scan_metadata,
+                validation_results=validation_results,
+            )
+
+            return result
+
+    async def scan_directory_streaming(
+        self,
+        directory_path: Path,
+        recursive: bool = True,
+        use_llm: bool = True,
+        use_semgrep: bool = True,
+        use_validation: bool = True,
+        severity_threshold: Severity | None = None,
+        batch_size: int = 10,
+    ):
+        """Streaming version of scan_directory that yields results in batches.
+
+        This method yields EnhancedScanResult objects as they are completed,
+        allowing for progressive processing of large directories without
+        accumulating all results in memory.
+
+        Args:
+            directory_path: Path to the directory to scan
+            recursive: Whether to scan subdirectories
+            use_llm: Whether to use LLM analysis
+            use_semgrep: Whether to use Semgrep analysis
+            use_validation: Whether to use LLM validation for findings
+            severity_threshold: Minimum severity threshold for filtering
+            batch_size: Number of files to process in each batch
+
+        Yields:
+            EnhancedScanResult objects as they are completed
+        """
+        directory_path_obj = Path(directory_path).resolve()
+        directory_path_abs = str(directory_path_obj)
+        logger.info(f"=== Starting streaming directory scan: {directory_path_abs} ===")
+        logger.debug(
+            f"Streaming scan parameters - Recursive: {recursive}, "
+            f"Batch size: {batch_size}, LLM: {use_llm}, Semgrep: {use_semgrep}"
+        )
+
+        if not directory_path_obj.exists():
+            logger.error(f"Directory not found: {directory_path_abs}")
+            raise FileNotFoundError(f"Directory not found: {directory_path}")
+
+        # Initialize file filter with smart exclusions
+        config = self.credential_manager.load_config()
+        file_filter = FileFilter(
+            root_path=directory_path_obj,
+            max_file_size_mb=config.max_file_size_mb,
+            respect_gitignore=True,
+        )
+
+        # Find all files to scan with intelligent filtering
+        all_files = []
+        pattern = "**/*" if recursive else "*"
+        logger.debug(f"Discovering files with pattern: {pattern}")
+
+        for file_path in directory_path_obj.glob(pattern):
+            if file_path.is_file():
+                all_files.append(file_path)
+
+        logger.info(f"Discovered {len(all_files)} total files")
+
+        # Apply smart filtering
+        files_to_scan = file_filter.filter_files(all_files)
+
+        logger.info(f"After filtering: {len(files_to_scan)} files to scan")
+        if len(all_files) > len(files_to_scan):
+            logger.info(
+                f"Filtered out {len(all_files) - len(files_to_scan)} files (.gitignore, binary, too large, etc.)"
+            )
+
+        # Handle case when no files to scan
+        if not files_to_scan:
+            logger.info("No files to scan after filtering")
+            return
+
+        # Perform directory-level Semgrep and LLM scans (same as regular scan_directory)
+        # ... (This would contain the same directory-level scanning logic)
+
+        # For simplicity in this implementation, we'll process files without
+        # directory-level pre-scanning and yield results as they complete
+
+        # Create a semaphore to limit concurrent operations
+        cpu_count = os.cpu_count() or 4  # Default to 4 if cpu_count returns None
+        max_workers = min(32, cpu_count + 4, len(files_to_scan))
+        semaphore = asyncio.Semaphore(max_workers)
+        logger.info(f"Using {max_workers} parallel workers for streaming scan")
+
+        # Process files in batches and yield results
+        successful_scans = 0
+        failed_scans = 0
+
+        for i in range(0, len(files_to_scan), batch_size):
+            batch_files = files_to_scan[i : i + batch_size]
+            logger.debug(
+                f"Processing streaming batch: files {i+1}-{min(i+batch_size, len(files_to_scan))}"
+            )
+
+            # Create tasks for this batch
+            batch_tasks = []
+            for file_path in batch_files:
+                # For streaming, we'll do individual file scans (simpler implementation)
+                task = self.scan_file(
+                    file_path=file_path,
+                    use_llm=use_llm,
+                    use_semgrep=use_semgrep,
+                    use_validation=use_validation,
+                    severity_threshold=severity_threshold,
                 )
+                batch_tasks.append(task)
 
-                results.append(result)
-                successful_scans += 1
+            # Execute batch and yield results as they complete
+            batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
 
-                if (i + 1) % 10 == 0:  # Log progress every 10 files
-                    logger.info(f"Progress: {i+1}/{len(files_to_scan)} files processed")
+            for j, result in enumerate(batch_results):
+                if isinstance(result, Exception):
+                    logger.error(f"Failed to process file {batch_files[j]}: {result}")
+                    failed_scans += 1
+                    # Create error result
+                    error_result = EnhancedScanResult(
+                        file_path=str(batch_files[j]),
+                        llm_threats=[],
+                        semgrep_threats=[],
+                        scan_metadata={
+                            "file_path": str(batch_files[j]),
+                            "error": str(result),
+                            "streaming_scan": True,
+                            "batch_processing": True,
+                        },
+                    )
+                    yield error_result
+                else:
+                    successful_scans += 1
+                    yield result
 
-            except Exception as e:
-                logger.error(f"Failed to process {file_path_abs}: {e}")
-                logger.debug(
-                    f"File processing error details for {file_path}", exc_info=True
-                )
-                # Create error result with consistent structure
-                error_result = EnhancedScanResult(
-                    file_path=str(file_path),
-                    llm_threats=[],
-                    semgrep_threats=[],
-                    scan_metadata={
-                        "file_path": str(file_path),
-                        "error": str(e),
-                        "directory_scan": True,
-                        "rules_scan_success": False,
-                        **semgrep_scan_metadata,
-                        **llm_scan_metadata,
-                    },
-                )
-                results.append(error_result)
-                failed_scans += 1
+            # Log progress after each batch
+            logger.debug(
+                f"Streamed batch {i//batch_size + 1}/{(len(files_to_scan) + batch_size - 1)//batch_size}"
+            )
 
         logger.info(
-            f"=== Directory scan complete - Processed {len(results)} files "
+            f"=== Streaming directory scan complete - Processed {successful_scans + failed_scans} files "
             f"(Success: {successful_scans}, Failed: {failed_scans}) ==="
         )
-        return results

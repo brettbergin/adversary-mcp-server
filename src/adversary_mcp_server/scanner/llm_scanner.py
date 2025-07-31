@@ -518,7 +518,6 @@ Response format:
         self,
         directory_path,
         recursive: bool = True,
-        max_files: int | None = None,
         max_findings_per_file: int = 20,
     ) -> list[LLMSecurityFinding]:
         """Analyze an entire directory for security vulnerabilities.
@@ -529,7 +528,6 @@ Response format:
         Args:
             directory_path: Path to the directory to analyze
             recursive: Whether to scan subdirectories
-            max_files: Maximum number of files to analyze
             max_findings_per_file: Maximum number of findings per file
 
         Returns:

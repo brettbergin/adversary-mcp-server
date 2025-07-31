@@ -57,6 +57,43 @@ adversary-mcp-cli status
 
 Create `.cursor/mcp.json` in your project or `~/.cursor/mcp.json` globally:
 
+#### **Recommended: Using `uv` (Modern Python Package Manager)**
+
+```json
+{
+  "mcpServers": {
+    "adversary": {
+      "command": "uv",
+      "args": ["run", "adversary-mcp-server"],
+      "env": {
+        "ADVERSARY_WORKSPACE_ROOT": "/path/to/your/project"
+      }
+    }
+  }
+}
+```
+
+#### **Alternative: Using `pip` Installation**
+
+```json
+{
+  "mcpServers": {
+    "adversary": {
+      "command": "python",
+      "args": [
+        "-m",
+        "adversary_mcp_server.server"
+      ],
+      "env": {
+        "ADVERSARY_WORKSPACE_ROOT": "/path/to/your/project"
+      }
+    }
+  }
+}
+```
+
+#### **Development: Local Repository**
+
 ```json
 {
   "mcpServers": {
@@ -66,11 +103,22 @@ Create `.cursor/mcp.json` in your project or `~/.cursor/mcp.json` globally:
         "-m",
         "adversary_mcp_server.server"
       ],
-      "cwd": "/path/to/my-code-under-test",
+      "env": {
+        "ADVERSARY_WORKSPACE_ROOT": "/path/to/your/project"
+      }
     }
   }
 }
 ```
+
+**💡 Workspace Path Resolution:**
+
+If you experience issues with @ mentioned files/folders not being found, set the `ADVERSARY_WORKSPACE_ROOT` environment variable to your actual project directory. This is especially useful when:
+
+- Using @ mentions in Cursor that reference relative paths
+- The MCP server's working directory doesn't match your project workspace
+- Scanning files/folders from different directories
+- **🆕 Large monorepos**: Ensures efficient path resolution for repositories with thousands of files
 
 ### 3. Start Using in Cursor
 
@@ -106,6 +154,42 @@ adversary-mcp-cli scan --source-branch=main --target-branch=feature/auth
 # Scan with high severity filter
 adversary-mcp-cli scan --source-branch=main --target-branch=HEAD --severity=high --use-llm --use-semgrep
 ```
+
+### 6. **🆕 Large Monorepo Support**
+
+The scanner now supports large corporate monorepos with advanced scalability features:
+
+#### **Key Monorepo Features:**
+- **🚀 Unlimited File Scanning**: Removed 50-file limit, can handle 100K+ files
+- **⚡ Parallel Processing**: Concurrent file processing with intelligent batching
+- **🧠 Smart File Filtering**: Respects `.gitignore`, excludes binaries, and filters by size
+- **💾 Streaming Architecture**: Memory-efficient handling of large files
+- **📊 Batch Processing**: Progressive results without memory overflow
+
+#### **MCP Tool Usage for Large Codebases:**
+```bash
+# Scan large monorepo with intelligent filtering
+adv_scan_folder
+  directory_path=@/path/to/large-monorepo
+  recursive=true
+  use_llm=true
+  use_semgrep=true
+  output_format=json
+  output=@/.adversary.json
+
+# Efficient diff scanning for monorepos (CI/CD optimized)
+adv_diff_scan
+  source_branch="main"
+  target_branch="HEAD"
+  working_directory="/path/to/monorepo"
+  severity_threshold="medium"
+```
+
+#### **Performance Optimizations:**
+- **Directory-level Semgrep**: Runs once per directory instead of per file
+- **Intelligent Batching**: Processes files in optimized batches of 50
+- **Memory Management**: Streaming prevents memory issues with large codebases
+- **Concurrent Workers**: Uses `min(32, cpu_count + 4, file_count)` for optimal performance
 
 ---
 
@@ -357,6 +441,12 @@ adversary-mcp-cli scan /path/to/project
 # Git diff scanning - compare branches
 adversary-mcp-cli scan --source-branch=main --target-branch=feature/auth
 
+# 🆕 Large monorepo scanning with optimization
+adversary-mcp-cli scan /path/to/large-monorepo --use-semgrep --use-llm --severity=medium
+
+# 🆕 Memory-efficient scanning for massive codebases
+adversary-mcp-cli scan /path/to/monorepo --no-llm --use-semgrep --output=scan-results.json
+
 ### Additional Commands
 
 | Command | Description |
@@ -392,7 +482,7 @@ adversary-mcp-cli scan --source-branch=main --target-branch=feature/auth
 
 ## 🏗️ System Architecture
 
-The Adversary MCP Server features a **hybrid multi-engine architecture** with integrated validation:
+The Adversary MCP Server features a **hybrid multi-engine architecture** with integrated validation and **🆕 monorepo scalability**:
 
 ```mermaid
 graph TB
@@ -480,6 +570,19 @@ The system combines three analysis approaches:
 - **Educational Enhancement**: Exploit generation with safety warnings
 - **Rich Metadata**: Comprehensive statistics and analysis insights
 
+### **🆕 Monorepo Scalability Features**
+
+- **Unlimited File Processing**: No hardcoded limits, handles 100K+ files efficiently
+- **Parallel Processing Engine**: AsyncIO-based concurrent file processing with semaphore control
+- **Intelligent File Filtering**:
+  - Respects `.gitignore` and `.semgrepignore` patterns
+  - Excludes binary files automatically (400+ known extensions)
+  - Configurable file size limits (default: 10MB)
+  - Cross-platform path resolution (handles macOS symlinks)
+- **Streaming Architecture**: Memory-efficient processing of large files with chunked I/O
+- **Batch Processing**: Progressive results with configurable batch sizes (default: 50 files)
+- **Performance Optimization**: Directory-level Semgrep scans instead of per-file execution
+
 ### **🆕 Advanced Configuration**
 
 
@@ -519,9 +622,9 @@ git commit -m "Security scan results for PR"
 
 ### CI/CD Integration
 
-#### **🆕 Git Diff-Aware CI/CD Scanning**
+#### **🆕 Git Diff-Aware CI/CD Scanning for Monorepos**
 
-For efficient CI/CD pipelines, scan only newly added lines in pull requests:
+For efficient CI/CD pipelines in large codebases, scan only newly added lines in pull requests (perfect for monorepos with 10K+ files):
 
 ```yaml
 # .github/workflows/security.yml
@@ -550,15 +653,19 @@ jobs:
             --source-branch=origin/main \
             --target-branch=HEAD \
             --severity=medium \
+            --use-semgrep \
+            --use-llm \
             --output=security-diff.json
         env:
           GITHUB_WORKSPACE: ${{ github.workspace }}
 
-      - name: Full Security Scan (Push to main)
+      - name: Monorepo Security Scan (Push to main) - Optimized for large codebases
         if: github.ref == 'refs/heads/main'
         run: |
           adversary-mcp-cli scan . \
-            --severity medium \
+            --severity=medium \
+            --use-semgrep \
+            --no-llm \
             --output=security-full.json
 
       - name: Upload Results
