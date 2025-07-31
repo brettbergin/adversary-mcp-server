@@ -1,6 +1,6 @@
 [project]
 name = "adversary-mcp-server"
-version = "1.0.0"
+version = "1.0.2"
 description = "MCP server for security vulnerability scanning and detection"
 readme = "README.md"
 authors = [
@@ -35,6 +35,7 @@ dependencies = [
     "requests>=2.28.0",
     "watchdog>=3.0.0",
     "jinja2==3.1.6",
+    "pathspec>=0.11.0",
 ]
 
 [project.optional-dependencies]

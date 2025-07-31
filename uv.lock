@@ -4,7 +4,7 @@ requires-python = ">=3.11, <3.13"
 
 [[package]]
 name = "adversary-mcp-server"
-version = "0.9.9"
+version = "1.0.2"
 source = { editable = "." }
 dependencies = [
     { name = "bandit" },
@@ -13,6 +13,7 @@ dependencies = [
     { name = "jinja2" },
     { name = "keyring" },
     { name = "mcp" },
+    { name = "pathspec" },
     { name = "pydantic" },
     { name = "pyyaml" },
     { name = "requests" },
@@ -67,6 +68,7 @@ requires-dist = [
     { name = "keyring", specifier = ">=24.0.0" },
     { name = "mcp", specifier = ">=1.0.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
+    { name = "pathspec", specifier = ">=0.11.0" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.0.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },

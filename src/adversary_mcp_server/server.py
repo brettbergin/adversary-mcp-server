@@ -3,6 +3,7 @@
 import asyncio
 import json
 import json as json_lib
+import os
 import sys
 import traceback
 from datetime import datetime
@@ -758,7 +759,6 @@ class AdversaryMCPServer:
                 use_llm=use_llm,
                 use_semgrep=use_semgrep,
                 severity_threshold=severity_enum,
-                max_files=50,  # Limit files for performance
             )
 
             logger.info(
@@ -1159,13 +1159,41 @@ class AdversaryMCPServer:
     def _get_project_root(self) -> Path:
         """Get the project root directory.
 
-        This is set by the MCP client's 'cwd' parameter and represents
-        the root of the project being analyzed. This is where .adversary.json
-        will be stored and where relative paths are resolved against.
+        This checks for ADVERSARY_WORKSPACE_ROOT environment variable first,
+        which allows users to specify their actual workspace directory in mcp.json.
+        If not set, falls back to the MCP client's 'cwd' parameter.
+
+        This is where .adversary.json will be stored and where relative paths
+        are resolved against.
 
         Returns:
             Path object representing project root directory
+
+        Raises:
+            AdversaryToolError: If ADVERSARY_WORKSPACE_ROOT is set but invalid
         """
+        workspace_root = os.environ.get("ADVERSARY_WORKSPACE_ROOT")
+        if workspace_root:
+            workspace_path = Path(workspace_root)
+            if not workspace_path.exists():
+                logger.error(
+                    f"ADVERSARY_WORKSPACE_ROOT path does not exist: {workspace_root}"
+                )
+                raise AdversaryToolError(
+                    f"Workspace root path does not exist: {workspace_root}"
+                )
+            if not workspace_path.is_dir():
+                logger.error(
+                    f"ADVERSARY_WORKSPACE_ROOT is not a directory: {workspace_root}"
+                )
+                raise AdversaryToolError(
+                    f"Workspace root is not a directory: {workspace_root}"
+                )
+
+            logger.debug(f"Using workspace root from environment: {workspace_root}")
+            return workspace_path
+
+        logger.debug("Using current working directory as project root")
         return Path.cwd()
 
     def _resolve_path_from_project_root(

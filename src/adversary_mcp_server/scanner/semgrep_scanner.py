@@ -588,9 +588,98 @@ class OptimizedSemgrepScanner:
     async def _perform_scan(
         self, source_code: str, file_path: str, language: str | None, timeout: int
     ) -> list[dict[str, Any]]:
-        """Perform the actual scan using async subprocess."""
+        """Perform the actual scan using async subprocess with streaming support."""
 
         # Find semgrep executable
+        semgrep_path = await self._find_semgrep()
+
+        # For large content, try stdin streaming first, fallback to temp file
+        use_stdin = len(source_code) > 50000  # Use stdin for content > 50KB
+
+        if use_stdin:
+            logger.debug("Using stdin streaming for large content")
+            return await self._perform_scan_stdin(
+                source_code, file_path, language, timeout
+            )
+        else:
+            logger.debug("Using temp file for small content")
+            return await self._perform_scan_tempfile(
+                source_code, file_path, language, timeout
+            )
+
+    async def _perform_scan_stdin(
+        self, source_code: str, file_path: str, language: str | None, timeout: int
+    ) -> list[dict[str, Any]]:
+        """Perform scan using stdin streaming."""
+        semgrep_path = await self._find_semgrep()
+
+        # Get file extension for language detection
+        extension = Path(file_path).suffix or self._get_extension_for_language(language)
+
+        try:
+            # Prepare command for stdin input
+            cmd = [
+                semgrep_path,
+                f"--config={self.config}",
+                "--json",
+                "--quiet",
+                "--disable-version-check",
+                f"--lang={self._extension_to_language(extension)}",
+                "-",  # Read from stdin
+            ]
+
+            # Run scan with stdin
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=self._get_clean_env(),
+            )
+
+            # Write to stdin and wait for completion
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    proc.communicate(input=source_code.encode("utf-8")), timeout=timeout
+                )
+            finally:
+                # Ensure process is terminated
+                if proc.returncode is None:
+                    try:
+                        proc.terminate()
+                        await asyncio.wait_for(proc.wait(), timeout=5.0)
+                    except (TimeoutError, ProcessLookupError):
+                        pass
+
+            if proc.returncode == 0:
+                # Parse results
+                result = json.loads(stdout.decode())
+                findings = result.get("results", [])
+
+                # Update file paths to logical path
+                for finding in findings:
+                    finding["path"] = file_path
+
+                return findings
+            else:
+                error_msg = stderr.decode() if stderr else "Unknown error"
+                logger.warning(f"Semgrep stdin scan failed: {error_msg}")
+                return []
+
+        except TimeoutError:
+            logger.warning(f"Stdin scan timed out after {timeout}s")
+            return []
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse Semgrep stdin output: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"Stdin scan failed: {e}")
+            return []
+
+    async def _perform_scan_tempfile(
+        self, source_code: str, file_path: str, language: str | None, timeout: int
+    ) -> list[dict[str, Any]]:
+        """Perform scan using temporary file (fallback method)."""
         semgrep_path = await self._find_semgrep()
 
         # Create temp file with proper extension
@@ -860,6 +949,41 @@ class OptimizedSemgrepScanner:
     def _get_file_extension(self, language: str) -> str:
         """Get file extension for language (compatibility method)."""
         return self._get_extension_for_language(language)
+
+    def _extension_to_language(self, extension: str) -> str:
+        """Convert file extension to Semgrep language identifier.
+
+        Args:
+            extension: File extension (e.g., '.py', '.js')
+
+        Returns:
+            Semgrep language identifier
+        """
+        lang_map = {
+            ".py": "python",
+            ".js": "javascript",
+            ".ts": "typescript",
+            ".java": "java",
+            ".go": "go",
+            ".php": "php",
+            ".rb": "ruby",
+            ".c": "c",
+            ".cpp": "cpp",
+            ".cs": "csharp",
+            ".rs": "rust",
+            ".kt": "kotlin",
+            ".scala": "scala",
+            ".swift": "swift",
+            ".sh": "bash",
+            ".yaml": "yaml",
+            ".yml": "yaml",
+            ".json": "json",
+            ".xml": "xml",
+            ".html": "html",
+            ".css": "css",
+            ".sql": "sql",
+        }
+        return lang_map.get(extension.lower(), "generic")
 
 
 # Compatibility alias for existing code

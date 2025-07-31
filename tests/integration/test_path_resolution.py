@@ -1,5 +1,6 @@
 """Tests for MCP server path resolution functionality."""
 
+import os
 import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -346,6 +347,9 @@ class TestPathResolutionIntegration:
                             scan_metadata={},
                             llm_prompts=[],
                             exploit_prompts=[],
+                            file_path="input.code",  # Add missing file_path attribute
+                            language="auto",  # Add missing language attribute
+                            stats={},  # Add missing stats attribute
                         )
                         await self.server._handle_scan_code(arguments)
                         # If we get here without exception, path resolution worked
@@ -368,9 +372,135 @@ class TestPathResolutionIntegration:
                             scan_metadata={},
                             llm_prompts=[],
                             exploit_prompts=[],
+                            file_path=str(test_file),  # Convert Path to string
+                            language="python",
+                            stats={},
                         )
                         await self.server._handle_scan_file(arguments)
 
                 except Exception as e:
                     if "output path cannot be empty" in str(e):
                         pytest.fail("Path resolution failed for scan_file output path")
+
+
+class TestWorkspaceRootEnvironmentVariable:
+    """Test workspace root environment variable functionality."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.server = AdversaryMCPServer()
+
+    def test_get_project_root_with_valid_workspace_root(self):
+        """Test that _get_project_root uses ADVERSARY_WORKSPACE_ROOT when set and valid."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch.dict("os.environ", {"ADVERSARY_WORKSPACE_ROOT": temp_dir}):
+                result = self.server._get_project_root()
+                # Both paths should resolve to the same real path
+                assert result.resolve() == Path(temp_dir).resolve()
+
+    def test_get_project_root_with_nonexistent_workspace_root(self):
+        """Test that _get_project_root raises error for nonexistent ADVERSARY_WORKSPACE_ROOT."""
+        nonexistent_path = "/nonexistent/workspace/path"
+        with patch.dict("os.environ", {"ADVERSARY_WORKSPACE_ROOT": nonexistent_path}):
+            with pytest.raises(
+                AdversaryToolError, match="Workspace root path does not exist"
+            ):
+                self.server._get_project_root()
+
+    def test_get_project_root_with_file_as_workspace_root(self):
+        """Test that _get_project_root raises error when ADVERSARY_WORKSPACE_ROOT is a file."""
+        with tempfile.NamedTemporaryFile() as temp_file:
+            with patch.dict("os.environ", {"ADVERSARY_WORKSPACE_ROOT": temp_file.name}):
+                with pytest.raises(
+                    AdversaryToolError, match="Workspace root is not a directory"
+                ):
+                    self.server._get_project_root()
+
+    def test_get_project_root_fallback_to_cwd(self):
+        """Test that _get_project_root falls back to cwd when ADVERSARY_WORKSPACE_ROOT not set."""
+        # Ensure ADVERSARY_WORKSPACE_ROOT is not set
+        with patch.dict("os.environ", {}, clear=False):
+            if "ADVERSARY_WORKSPACE_ROOT" in os.environ:
+                del os.environ["ADVERSARY_WORKSPACE_ROOT"]
+
+            result = self.server._get_project_root()
+            assert result == Path.cwd()
+
+    def test_resolve_path_uses_workspace_root(self):
+        """Test that path resolution uses workspace root when available."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Create a test file in the workspace
+            test_file = Path(temp_dir) / "test_file.py"
+            test_file.write_text("print('test')")
+
+            with patch.dict("os.environ", {"ADVERSARY_WORKSPACE_ROOT": temp_dir}):
+                result = self.server._resolve_path_from_project_root(
+                    "test_file.py", "test file"
+                )
+                expected = Path(temp_dir) / "test_file.py"
+                assert result == expected.resolve()
+
+    @pytest.mark.asyncio
+    async def test_scan_file_with_workspace_root(self):
+        """Test that scan_file works correctly with workspace root environment variable."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Create a test file in the workspace
+            test_file = Path(temp_dir) / "test.py"
+            test_file.write_text("print('hello world')")
+
+            with patch.dict("os.environ", {"ADVERSARY_WORKSPACE_ROOT": temp_dir}):
+                with patch.object(self.server.scan_engine, "scan_file") as mock_scan:
+                    # Properly mock the scan result with all required attributes
+                    mock_result = Mock()
+                    mock_result.all_threats = []
+                    mock_result.scan_metadata = {}
+                    mock_result.llm_prompts = []
+                    mock_result.exploit_prompts = []
+                    mock_result.language = "python"
+                    mock_result.file_path = str(
+                        test_file
+                    )  # Add missing file_path attribute as string
+                    mock_result.stats = {
+                        "severity_counts": {
+                            "low": 0,
+                            "medium": 0,
+                            "high": 0,
+                            "critical": 0,
+                        },
+                        "llm_threats": 0,
+                        "semgrep_threats": 0,
+                        "unique_threats": 0,
+                    }
+                    mock_scan.return_value = mock_result
+
+                    arguments = {"file_path": "test.py"}  # Relative path
+                    await self.server._handle_scan_file(arguments)
+
+                    # Verify that scan_engine.scan_file was called with the resolved path
+                    mock_scan.assert_called_once()
+                    called_path = mock_scan.call_args[1]["file_path"]
+                    assert called_path == test_file.resolve()
+
+    @pytest.mark.asyncio
+    async def test_scan_directory_with_workspace_root(self):
+        """Test that scan_directory works correctly with workspace root environment variable."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Create a subdirectory in the workspace
+            subdir = Path(temp_dir) / "src"
+            subdir.mkdir()
+            test_file = subdir / "app.py"
+            test_file.write_text("import os")
+
+            with patch.dict("os.environ", {"ADVERSARY_WORKSPACE_ROOT": temp_dir}):
+                with patch.object(
+                    self.server.scan_engine, "scan_directory"
+                ) as mock_scan:
+                    mock_scan.return_value = []
+
+                    arguments = {"directory_path": "src"}  # Relative path
+                    await self.server._handle_scan_directory(arguments)
+
+                    # Verify that scan_engine.scan_directory was called with the resolved path
+                    mock_scan.assert_called_once()
+                    called_path = mock_scan.call_args[1]["directory_path"]
+                    assert called_path == subdir.resolve()

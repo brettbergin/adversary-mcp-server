@@ -11,6 +11,9 @@ from .types import Severity, ThreatMatch
 
 logger = get_logger("llm_validator")
 
+## Here is the toggle for the confidence threshold
+CONFIDENCE_THRESHOLD = 0.5
+
 
 class LLMValidationError(Exception):
     """Exception raised when LLM validation fails."""
@@ -345,7 +348,7 @@ Be specific and consider the full context when making determinations."""
         self,
         findings: list[ThreatMatch],
         validation_results: dict[str, ValidationResult],
-        confidence_threshold: float = 0.7,
+        confidence_threshold: float = CONFIDENCE_THRESHOLD,
     ) -> list[ThreatMatch]:
         """Filter out false positives based on validation results.
 
