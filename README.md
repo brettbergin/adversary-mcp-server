@@ -24,12 +24,19 @@
 ### Prerequisites
 
 - **Python 3.11+** (3.11+ recommended)
+- **uv** (https://astral.sh/uv/)
+- **semgrep** (https://semgrep.dev/docs/)
 - **Cursor IDE** with MCP support
 
 ### Quick Install
-
 ```bash
-pip install adversary-mcp-server
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+```bash
+brew install semgrep
+```
+```bash
+uv pip install adversary-mcp-server
 ```
 
 ### Verify Installation
@@ -133,6 +140,78 @@ Once configured, you can use these MCP tools in Cursor:
 - `adv_get_version` - Get version information
 - `adv_mark_false_positive` - Mark false positive
 - `adv_unmark_false_positive` - Unmark false positive
+
+
+### 🏗️ System Architecture
+
+```mermaid
+graph TB
+    subgraph "Client Layer"
+        A[Cursor IDE]
+        B[CLI Interface]
+    end
+
+    subgraph "Protocol Layer"
+        C[MCP Server]
+        D[CLI Commands]
+    end
+
+    A -->|MCP Protocol| C
+    B --> D
+
+    subgraph "Core Engine"
+        E[ScanEngine]
+        F[GitDiffScanner]
+    end
+
+    C --> E
+    D --> E
+    C --> F
+    D --> F
+
+    subgraph "Security Scanners"
+        G[SemgrepScanner]
+        H[LLMScanner]
+    end
+
+    E --> G
+    E --> H
+    F --> E
+
+    subgraph "Validation & Enhancement"
+        I[LLMValidator]
+        J[ExploitGenerator]
+    end
+
+    E --> I
+    I --> J
+
+    subgraph "Support Services"
+        K[FalsePositiveManager]
+        L[CredentialManager]
+    end
+
+    E --> K
+    E --> L
+    I --> L
+
+    subgraph "Data Flow"
+        M[ThreatMatch Objects]
+        N[ValidationResults]
+        O[EnhancedScanResult]
+    end
+
+    G --> M
+    H --> M
+    M --> I
+    I --> N
+    N --> O
+
+    style E fill:#e1f5fe
+    style I fill:#f3e5f5
+    style G fill:#e8f5e8
+    style H fill:#fff3e0
+```
 
 ### 4. Run Demo (Optional)
 
