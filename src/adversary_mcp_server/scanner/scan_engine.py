@@ -5,8 +5,11 @@ import os
 from pathlib import Path
 from typing import Any
 
+from ..cache import CacheKey, CacheManager, CacheType, SerializableThreatMatch
+from ..config import get_app_cache_dir
 from ..credentials import CredentialManager
 from ..logger import get_logger
+from ..resilience import ErrorHandler, ResilienceConfig
 from .file_filter import FileFilter
 from .llm_scanner import LLMScanner
 from .llm_validator import LLMValidator
@@ -151,6 +154,58 @@ class EnhancedScanResult:
         """
         return [t for t in self.all_threats if t.severity == Severity.CRITICAL]
 
+    def get_validation_summary(self) -> dict[str, Any]:
+        """Get validation summary for this scan result.
+
+        Returns:
+            Dictionary with validation statistics and metadata
+        """
+        # Check if validation was performed
+        validation_enabled = self.scan_metadata.get("llm_validation_success", False)
+
+        if not validation_enabled or not self.validation_results:
+            return {
+                "enabled": False,
+                "total_findings_reviewed": 0,
+                "legitimate_findings": 0,
+                "false_positives_filtered": 0,
+                "false_positive_rate": 0.0,
+                "average_confidence": 0.0,
+                "validation_errors": 0,
+                "status": self.scan_metadata.get("llm_validation_reason", "disabled"),
+            }
+
+        # Calculate validation statistics from validation_results
+        total_reviewed = len(self.validation_results)
+        legitimate = sum(1 for v in self.validation_results.values() if v.is_legitimate)
+        false_positives = total_reviewed - legitimate
+
+        # Calculate average confidence
+        avg_confidence = 0.0
+        if total_reviewed > 0:
+            avg_confidence = (
+                sum(v.confidence for v in self.validation_results.values())
+                / total_reviewed
+            )
+
+        # Count validation errors
+        validation_errors = sum(
+            1 for v in self.validation_results.values() if v.validation_error
+        )
+
+        return {
+            "enabled": True,
+            "total_findings_reviewed": total_reviewed,
+            "legitimate_findings": legitimate,
+            "false_positives_filtered": false_positives,
+            "false_positive_rate": (
+                false_positives / total_reviewed if total_reviewed > 0 else 0.0
+            ),
+            "average_confidence": round(avg_confidence, 3),
+            "validation_errors": validation_errors,
+            "status": "completed",
+        }
+
 
 class ScanEngine:
     """Scan engine combining Semgrep and LLM analysis."""
@@ -158,6 +213,7 @@ class ScanEngine:
     def __init__(
         self,
         credential_manager: CredentialManager | None = None,
+        cache_manager: CacheManager | None = None,
         enable_llm_analysis: bool = True,
         enable_semgrep_analysis: bool = True,
         enable_llm_validation: bool = True,
@@ -166,13 +222,41 @@ class ScanEngine:
 
         Args:
             credential_manager: Credential manager for configuration
+            cache_manager: Optional cache manager for scan results
             enable_llm_analysis: Whether to enable LLM analysis
             enable_semgrep_analysis: Whether to enable Semgrep analysis
             enable_llm_validation: Whether to enable LLM validation of findings
         """
         logger.info("=== Initializing ScanEngine ===")
         self.credential_manager = credential_manager or CredentialManager()
+        self.cache_manager = cache_manager
         logger.debug("Initialized core components")
+
+        # Load configuration
+        config = self.credential_manager.load_config()
+
+        # Initialize cache manager if not provided
+        if cache_manager is None and config.enable_caching:
+            cache_dir = get_app_cache_dir()
+            self.cache_manager = CacheManager(
+                cache_dir=cache_dir,
+                max_size_mb=config.cache_max_size_mb,
+                max_age_hours=config.cache_max_age_hours,
+            )
+            logger.info(f"Initialized cache manager for scan engine at {cache_dir}")
+
+        # Initialize ErrorHandler for scan engine resilience
+        resilience_config = ResilienceConfig(
+            enable_circuit_breaker=True,
+            failure_threshold=5,  # Higher threshold for scan engine
+            recovery_timeout_seconds=120,  # 2 minutes for scan recovery
+            enable_retry=True,
+            max_retry_attempts=2,  # Conservative retries for scanning
+            base_delay_seconds=3.0,
+            enable_graceful_degradation=True,
+        )
+        self.error_handler = ErrorHandler(resilience_config)
+        logger.info("Initialized ErrorHandler for scan engine resilience")
 
         # Set analysis parameters
         self.enable_llm_analysis = enable_llm_analysis
@@ -189,7 +273,6 @@ class ScanEngine:
         )
 
         # Check if Semgrep scanning is available and enabled
-        config = self.credential_manager.load_config()
         self.enable_semgrep_analysis = (
             self.enable_semgrep_analysis
             and config.enable_semgrep_scanning
@@ -202,11 +285,11 @@ class ScanEngine:
                 "Semgrep not available - install semgrep for enhanced analysis"
             )
 
-        # Initialize LLM analyzer if enabled
+        # Initialize LLM analyzer if enabled - pass shared cache manager
         self.llm_analyzer = None
         if self.enable_llm_analysis:
             logger.debug("Initializing LLM analyzer...")
-            self.llm_analyzer = LLMScanner(self.credential_manager)
+            self.llm_analyzer = LLMScanner(self.credential_manager, self.cache_manager)
             if not self.llm_analyzer.is_available():
                 logger.warning(
                     "LLM analysis requested but not available - API key not configured"
@@ -217,11 +300,13 @@ class ScanEngine:
         else:
             logger.debug("LLM analysis disabled")
 
-        # Initialize LLM validator if enabled
+        # Initialize LLM validator if enabled - pass shared cache manager
         self.llm_validator = None
         if self.enable_llm_validation:
             logger.debug("Initializing LLM validator...")
-            self.llm_validator = LLMValidator(self.credential_manager)
+            self.llm_validator = LLMValidator(
+                self.credential_manager, self.cache_manager
+            )
             logger.info("LLM validator initialized successfully")
         else:
             logger.debug("LLM validation disabled")
@@ -446,6 +531,19 @@ class ScanEngine:
         """
         file_path_abs = str(Path(file_path).resolve())
 
+        # Check cache first if enabled
+        cached_result = await self._get_cached_scan_result(
+            source_code,
+            file_path_abs,
+            use_llm,
+            use_semgrep,
+            use_validation,
+            severity_threshold,
+        )
+        if cached_result:
+            logger.info(f"Cache hit for scan: {file_path_abs}")
+            return cached_result
+
         # Auto-detect language from file path
         language = self._detect_language(Path(file_path))
 
@@ -563,28 +661,21 @@ class ScanEngine:
                 }
             )
 
-        # Store LLM analysis prompt if enabled
+        # Perform LLM analysis if enabled
         llm_threats = []
-        llm_analysis_prompt = None
         if use_llm and self.enable_llm_analysis and self.llm_analyzer:
             logger.info("Starting LLM analysis...")
             try:
-                logger.debug("Creating LLM analysis prompt...")
-                # Create analysis prompt
-                llm_analysis_prompt = self.llm_analyzer.create_analysis_prompt(
-                    source_code, file_path, language
-                )
-                scan_metadata["llm_analysis_prompt"] = llm_analysis_prompt.to_dict()
-
-                # Try to analyze the code (in client-based mode, this returns empty list)
-                logger.debug("Calling LLM analyzer...")
+                logger.debug("Calling LLM analyzer for code analysis...")
                 llm_findings = self.llm_analyzer.analyze_code(
                     source_code, file_path, language
                 )
+
                 # Convert LLM findings to threats
                 for finding in llm_findings:
                     threat = finding.to_threat_match(file_path)
                     llm_threats.append(threat)
+
                 logger.info(
                     f"LLM analysis completed - found {len(llm_threats)} threats"
                 )
@@ -592,20 +683,24 @@ class ScanEngine:
                 scan_metadata["llm_scan_reason"] = "analysis_completed"
 
             except Exception as e:
-                logger.error(
-                    f"Failed to create LLM analysis prompt for {file_path}: {e}"
-                )
+                logger.error(f"LLM analysis failed for {file_path}: {e}")
                 logger.debug("LLM analysis error details", exc_info=True)
                 scan_metadata["llm_scan_success"] = False
                 scan_metadata["llm_scan_error"] = str(e)
-                scan_metadata["llm_scan_reason"] = "prompt_creation_failed"
+                scan_metadata["llm_scan_reason"] = "analysis_failed"
         else:
             if not use_llm:
                 reason = "disabled_by_user"
                 logger.debug("LLM analysis disabled by user request")
+            elif not self.enable_llm_analysis:
+                reason = "disabled_in_config"
+                logger.debug("LLM analysis disabled in configuration")
+            elif not self.llm_analyzer:
+                reason = "not_initialized"
+                logger.debug("LLM analyzer not initialized")
             else:
                 reason = "not_available"
-                logger.debug("LLM analysis not available - no API key configured")
+                logger.debug("LLM analysis not available - check configuration")
             scan_metadata["llm_scan_success"] = False
             scan_metadata["llm_scan_reason"] = reason
 
@@ -687,6 +782,17 @@ class ScanEngine:
             semgrep_threats=semgrep_threats,
             scan_metadata=scan_metadata,
             validation_results=validation_results,
+        )
+
+        # Cache the scan result if caching is enabled
+        await self._cache_scan_result(
+            result,
+            source_code,
+            file_path_abs,
+            use_llm,
+            use_semgrep,
+            use_validation,
+            severity_threshold,
         )
 
         logger.info(
@@ -854,9 +960,15 @@ class ScanEngine:
             if not use_llm:
                 reason = "disabled_by_user"
                 logger.debug("LLM analysis disabled by user request")
+            elif not self.enable_llm_analysis:
+                reason = "disabled_in_config"
+                logger.debug("LLM analysis disabled in configuration")
+            elif not self.llm_analyzer:
+                reason = "not_initialized"
+                logger.debug("LLM analyzer not initialized")
             else:
                 reason = "not_available"
-                logger.debug("LLM analysis not available - no API key configured")
+                logger.debug("LLM analysis not available - check configuration")
             scan_metadata["llm_scan_success"] = False
             scan_metadata["llm_scan_reason"] = reason
 
@@ -1091,10 +1203,11 @@ class ScanEngine:
         if use_llm and self.enable_llm_analysis and self.llm_analyzer:
             logger.info("Starting directory-level LLM analysis...")
             try:
-                logger.debug("Calling LLM analyzer for entire directory...")
-                all_llm_findings = await self.llm_analyzer.analyze_directory(
-                    directory_path=directory_path,
-                    recursive=recursive,
+                logger.debug(
+                    f"Calling LLM analyzer for {len(files_to_scan)} filtered files..."
+                )
+                all_llm_findings = await self.llm_analyzer.analyze_files(
+                    file_paths=files_to_scan,
                 )
 
                 # Convert LLM findings to threats and group by file
@@ -1543,3 +1656,157 @@ class ScanEngine:
             f"=== Streaming directory scan complete - Processed {successful_scans + failed_scans} files "
             f"(Success: {successful_scans}, Failed: {failed_scans}) ==="
         )
+
+    async def _get_cached_scan_result(
+        self,
+        source_code: str,
+        file_path: str,
+        use_llm: bool,
+        use_semgrep: bool,
+        use_validation: bool,
+        severity_threshold: Severity | None,
+    ) -> EnhancedScanResult | None:
+        """Get cached scan result if available."""
+        if not self.cache_manager:
+            return None
+
+        try:
+            config = self.credential_manager.load_config()
+            if not config.enable_caching:
+                return None
+
+            hasher = self.cache_manager.get_hasher()
+
+            # Create cache key based on content and scan parameters
+            content_hash = hasher.hash_content(source_code)
+            scan_context = {
+                "file_path": file_path,
+                "use_llm": use_llm,
+                "use_semgrep": use_semgrep,
+                "use_validation": use_validation,
+                "severity_threshold": (
+                    severity_threshold.value if severity_threshold else None
+                ),
+                "semgrep_config": config.semgrep_config,
+                "semgrep_rules": config.semgrep_rules,
+                "llm_model": config.llm_model,
+            }
+            metadata_hash = hasher.hash_metadata(scan_context)
+
+            cache_key = CacheKey(
+                cache_type=CacheType.FILE_ANALYSIS,
+                content_hash=content_hash,
+                metadata_hash=metadata_hash,
+            )
+
+            cached_data = self.cache_manager.get(cache_key)
+            if cached_data and isinstance(cached_data, dict):
+                # Reconstruct EnhancedScanResult from cached data
+                return self._deserialize_scan_result(cached_data)
+
+        except Exception as e:
+            logger.warning(f"Failed to retrieve cached scan result: {e}")
+
+        return None
+
+    async def _cache_scan_result(
+        self,
+        result: EnhancedScanResult,
+        source_code: str,
+        file_path: str,
+        use_llm: bool,
+        use_semgrep: bool,
+        use_validation: bool,
+        severity_threshold: Severity | None,
+    ) -> None:
+        """Cache scan result for future use."""
+        if not self.cache_manager:
+            return
+
+        try:
+            config = self.credential_manager.load_config()
+            if not config.enable_caching:
+                return
+
+            hasher = self.cache_manager.get_hasher()
+
+            # Create same cache key as used for retrieval
+            content_hash = hasher.hash_content(source_code)
+            scan_context = {
+                "file_path": file_path,
+                "use_llm": use_llm,
+                "use_semgrep": use_semgrep,
+                "use_validation": use_validation,
+                "severity_threshold": (
+                    severity_threshold.value if severity_threshold else None
+                ),
+                "semgrep_config": config.semgrep_config,
+                "semgrep_rules": config.semgrep_rules,
+                "llm_model": config.llm_model,
+            }
+            metadata_hash = hasher.hash_metadata(scan_context)
+
+            cache_key = CacheKey(
+                cache_type=CacheType.FILE_ANALYSIS,
+                content_hash=content_hash,
+                metadata_hash=metadata_hash,
+            )
+
+            # Serialize scan result for caching
+            serialized_result = self._serialize_scan_result(result)
+
+            # Cache for shorter duration than LLM responses (scan results can change with rule updates)
+            cache_expiry_seconds = (
+                config.cache_max_age_hours * 1800
+            )  # Half the normal duration
+            self.cache_manager.put(cache_key, serialized_result, cache_expiry_seconds)
+
+            logger.debug(f"Cached scan result for {file_path}")
+
+        except Exception as e:
+            logger.warning(f"Failed to cache scan result: {e}")
+
+    def _serialize_scan_result(self, result: EnhancedScanResult) -> dict:
+        """Serialize EnhancedScanResult for caching."""
+        return {
+            "file_path": result.file_path,
+            "language": result.language,
+            "llm_threats": [
+                SerializableThreatMatch.from_threat_match(threat).to_dict()
+                for threat in result.llm_threats
+            ],
+            "semgrep_threats": [
+                SerializableThreatMatch.from_threat_match(threat).to_dict()
+                for threat in result.semgrep_threats
+            ],
+            "scan_metadata": result.scan_metadata,
+            "validation_results": result.validation_results,
+            "stats": result.stats,
+        }
+
+    def _deserialize_scan_result(self, cached_data: dict) -> EnhancedScanResult:
+        """Deserialize cached data back to EnhancedScanResult."""
+        # Reconstruct threat matches
+        llm_threats = [
+            SerializableThreatMatch.from_dict(threat_data).to_threat_match()
+            for threat_data in cached_data.get("llm_threats", [])
+        ]
+        semgrep_threats = [
+            SerializableThreatMatch.from_dict(threat_data).to_threat_match()
+            for threat_data in cached_data.get("semgrep_threats", [])
+        ]
+
+        # Create EnhancedScanResult
+        result = EnhancedScanResult(
+            file_path=cached_data["file_path"],
+            llm_threats=llm_threats,
+            semgrep_threats=semgrep_threats,
+            scan_metadata=cached_data.get("scan_metadata", {}),
+            validation_results=cached_data.get("validation_results", {}),
+        )
+
+        # Manually set computed properties that might not recompute correctly
+        if "stats" in cached_data:
+            result.stats = cached_data["stats"]
+
+        return result

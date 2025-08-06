@@ -1,20 +1,5 @@
 {
   "mcpServers": {
-    "threatmodel": {
-      "command": "uv",
-      "args": [
-        "run",
-        "--directory",
-        "~/code/threatmodel-mcp-server",
-        "python",
-        "-m",
-        "threatmodel_mcp_server.server"
-      ],
-      "cwd": "~/code/threatmodel-mcp-server",
-      "env": {
-        "THREATMODEL_CONFIG_DIR": "~/.local/share/threatmodel-mcp-server"
-      }
-    },
     "adversary": {
       "command": "~/code/adversary-mcp-server/.venv/bin/python",
       "args": [

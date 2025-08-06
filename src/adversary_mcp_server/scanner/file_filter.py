@@ -90,6 +90,20 @@ class FileFilter:
         "venv",
         "env",
         ".env",
+        "virtualenv",
+        ".virtualenv",
+        "pyenv",
+        ".pyenv",
+        # Additional virtual environment patterns
+        "venv3",
+        "venv2",
+        ".python-version",
+        "site-packages",
+        "lib/python3.9",
+        "lib/python3.10",
+        "lib/python3.11",
+        "lib/python3.12",
+        "pyvenv.cfg",
         "vendor",
         "Pods",
         ".gradle",
@@ -128,6 +142,15 @@ class FileFilter:
         "*.gen.*",
         "*_pb2.py",
         "*_pb2_grpc.py",
+        # Virtual environment files
+        "pyvenv.cfg",
+        "*.pth",
+        "RECORD",
+        "INSTALLER",
+        "METADATA",
+        "WHEEL",
+        "*.dist-info/*",
+        "*.egg-info/*",
     }
 
     def __init__(
@@ -250,6 +273,58 @@ class FileFilter:
 
         return False
 
+    def _is_virtual_environment_file(self, file_path: Path) -> bool:
+        """Check if file is part of a Python virtual environment.
+
+        This is a more comprehensive check that looks at path patterns
+        commonly found in virtual environments.
+        """
+        path_str = str(file_path).lower()
+        path_parts = [part.lower() for part in file_path.parts]
+
+        # Check for common virtual environment indicators in path
+        venv_indicators = [
+            ".venv",
+            "venv",
+            "env",
+            ".env",
+            "virtualenv",
+            ".virtualenv",
+            "site-packages",
+            "lib/python",
+            "pyvenv.cfg",
+        ]
+
+        for indicator in venv_indicators:
+            if indicator in path_str:
+                logger.debug(
+                    f"File {file_path} excluded: virtual environment indicator '{indicator}'"
+                )
+                return True
+
+        # Check for specific virtual environment directory structures
+        for i, part in enumerate(path_parts):
+            if part in [".venv", "venv", "env", ".env", "virtualenv", ".virtualenv"]:
+                logger.debug(
+                    f"File {file_path} excluded: in virtual environment directory '{part}'"
+                )
+                return True
+
+            # Check for site-packages pattern
+            if part == "site-packages" and i > 0:
+                # Look for lib/python pattern before site-packages
+                if (
+                    i >= 2
+                    and path_parts[i - 1].startswith("python")
+                    and path_parts[i - 2] == "lib"
+                ):
+                    logger.debug(
+                        f"File {file_path} excluded: site-packages path pattern"
+                    )
+                    return True
+
+        return False
+
     def _matches_default_excludes(self, file_path: Path) -> bool:
         """Check if file matches default exclude patterns."""
         # Check directory exclusions
@@ -327,6 +402,10 @@ class FileFilter:
         exclusion_checks = [
             (lambda: self._is_binary_file(file_path), "binary file"),
             (lambda: self._is_too_large(file_path), "file too large"),
+            (
+                lambda: self._is_virtual_environment_file(file_path),
+                "virtual environment file",
+            ),
             (lambda: self._matches_gitignore(file_path), "gitignore pattern"),
             (
                 lambda: self._matches_default_excludes(file_path),

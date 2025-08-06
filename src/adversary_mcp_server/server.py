@@ -6,7 +6,6 @@ import json as json_lib
 import os
 import sys
 import traceback
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -1662,6 +1661,98 @@ class AdversaryMCPServer:
 
         return result
 
+    def _aggregate_validation_stats(
+        self, scan_results: list[EnhancedScanResult]
+    ) -> dict[str, Any]:
+        """Aggregate validation statistics across multiple scan results.
+
+        Args:
+            scan_results: List of enhanced scan results to aggregate
+
+        Returns:
+            Dictionary with aggregated validation statistics
+        """
+        if not scan_results:
+            return {
+                "enabled": False,
+                "total_findings_reviewed": 0,
+                "legitimate_findings": 0,
+                "false_positives_filtered": 0,
+                "false_positive_rate": 0.0,
+                "average_confidence": 0.0,
+                "validation_errors": 0,
+                "status": "no_results",
+            }
+
+        # Check if any validation was performed
+        any_validation_enabled = any(
+            result.scan_metadata.get("llm_validation_success", False)
+            for result in scan_results
+        )
+
+        if not any_validation_enabled:
+            # Find the most common reason for no validation
+            reasons = [
+                result.scan_metadata.get("llm_validation_reason", "disabled")
+                for result in scan_results
+            ]
+            most_common_reason = (
+                max(set(reasons), key=reasons.count) if reasons else "disabled"
+            )
+
+            return {
+                "enabled": False,
+                "total_findings_reviewed": 0,
+                "legitimate_findings": 0,
+                "false_positives_filtered": 0,
+                "false_positive_rate": 0.0,
+                "average_confidence": 0.0,
+                "validation_errors": 0,
+                "status": most_common_reason,
+            }
+
+        # Aggregate validation results across all scan results
+        total_reviewed = 0
+        total_legitimate = 0
+        total_false_positives = 0
+        total_confidence = 0.0
+        total_errors = 0
+        confidence_count = 0
+
+        for result in scan_results:
+            if result.validation_results:
+                for validation_result in result.validation_results.values():
+                    total_reviewed += 1
+                    if validation_result.is_legitimate:
+                        total_legitimate += 1
+                    else:
+                        total_false_positives += 1
+
+                    total_confidence += validation_result.confidence
+                    confidence_count += 1
+
+                    if validation_result.validation_error:
+                        total_errors += 1
+
+        # Calculate averages
+        avg_confidence = (
+            total_confidence / confidence_count if confidence_count > 0 else 0.0
+        )
+        false_positive_rate = (
+            total_false_positives / total_reviewed if total_reviewed > 0 else 0.0
+        )
+
+        return {
+            "enabled": True,
+            "total_findings_reviewed": total_reviewed,
+            "legitimate_findings": total_legitimate,
+            "false_positives_filtered": total_false_positives,
+            "false_positive_rate": round(false_positive_rate, 3),
+            "average_confidence": round(avg_confidence, 3),
+            "validation_errors": total_errors,
+            "status": "completed",
+        }
+
     def _format_json_scan_results(
         self,
         scan_result: EnhancedScanResult,
@@ -1691,6 +1782,33 @@ class AdversaryMCPServer:
                 threat.uuid
             )
 
+            # Get validation details for this specific threat
+            validation_result = scan_result.validation_results.get(threat.uuid)
+            validation_data = {
+                "was_validated": validation_result is not None,
+                "validation_confidence": (
+                    validation_result.confidence if validation_result else None
+                ),
+                "validation_reasoning": (
+                    validation_result.reasoning if validation_result else None
+                ),
+                "validation_status": (
+                    "legitimate"
+                    if validation_result and validation_result.is_legitimate
+                    else (
+                        "false_positive"
+                        if validation_result and not validation_result.is_legitimate
+                        else "not_validated"
+                    )
+                ),
+                "exploitation_vector": (
+                    validation_result.exploitation_vector if validation_result else None
+                ),
+                "remediation_advice": (
+                    validation_result.remediation_advice if validation_result else None
+                ),
+            }
+
             threat_data = {
                 "uuid": threat.uuid,
                 "rule_id": threat.rule_id,
@@ -1713,6 +1831,7 @@ class AdversaryMCPServer:
                 "exploit_examples": getattr(threat, "exploit_examples", []),
                 "is_false_positive": false_positive_data is not None,
                 "false_positive_metadata": false_positive_data,
+                **validation_data,  # Include all validation metadata
             }
             threats_data.append(threat_data)
 
@@ -1733,7 +1852,11 @@ class AdversaryMCPServer:
                 "semgrep_scan_enabled": scan_result.scan_metadata.get(
                     "semgrep_scan_success", False
                 ),
+                "llm_validation_enabled": scan_result.scan_metadata.get(
+                    "llm_validation_success", False
+                ),
             },
+            "validation_summary": scan_result.get_validation_summary(),
             "statistics": scan_result.stats,
             "threats": threats_data,
             "scanner_execution_status": {
@@ -1757,6 +1880,22 @@ class AdversaryMCPServer:
                     "error": scan_result.scan_metadata.get("semgrep_scan_error", None),
                     "threats_found": scan_result.stats.get("semgrep_threats", 0),
                 },
+                "llm_validator": {
+                    "executed": scan_result.scan_metadata.get(
+                        "llm_validation_success", False
+                    ),
+                    "reason": scan_result.scan_metadata.get(
+                        "llm_validation_reason", "unknown"
+                    ),
+                    "error": scan_result.scan_metadata.get(
+                        "llm_validation_error", None
+                    ),
+                    "findings_validated": (
+                        len(scan_result.validation_results)
+                        if scan_result.validation_results
+                        else 0
+                    ),
+                },
             },
             "scan_details": {
                 "llm_scan_success": scan_result.scan_metadata.get(
@@ -1764,6 +1903,9 @@ class AdversaryMCPServer:
                 ),
                 "semgrep_scan_success": scan_result.scan_metadata.get(
                     "semgrep_scan_success", False
+                ),
+                "llm_validation_success": scan_result.scan_metadata.get(
+                    "llm_validation_success", False
                 ),
                 "source_lines": scan_result.scan_metadata.get("source_lines", 0),
                 "source_size": scan_result.scan_metadata.get("source_size", 0),
@@ -1787,6 +1929,7 @@ class AdversaryMCPServer:
         Returns:
             JSON formatted directory scan results
         """
+        from datetime import datetime
 
         # Combine all threats
         all_threats = []
@@ -1817,6 +1960,37 @@ class AdversaryMCPServer:
                     threat.uuid
                 )
 
+                # Get validation details for this specific threat
+                validation_result = scan_result.validation_results.get(threat.uuid)
+                validation_data = {
+                    "was_validated": validation_result is not None,
+                    "validation_confidence": (
+                        validation_result.confidence if validation_result else None
+                    ),
+                    "validation_reasoning": (
+                        validation_result.reasoning if validation_result else None
+                    ),
+                    "validation_status": (
+                        "legitimate"
+                        if validation_result and validation_result.is_legitimate
+                        else (
+                            "false_positive"
+                            if validation_result and not validation_result.is_legitimate
+                            else "not_validated"
+                        )
+                    ),
+                    "exploitation_vector": (
+                        validation_result.exploitation_vector
+                        if validation_result
+                        else None
+                    ),
+                    "remediation_advice": (
+                        validation_result.remediation_advice
+                        if validation_result
+                        else None
+                    ),
+                }
+
                 threat_data = {
                     "uuid": threat.uuid,
                     "rule_id": threat.rule_id,
@@ -1839,6 +2013,7 @@ class AdversaryMCPServer:
                     "exploit_examples": getattr(threat, "exploit_examples", []),
                     "is_false_positive": false_positive_data is not None,
                     "false_positive_metadata": false_positive_data,
+                    "validation": validation_data,
                 }
                 all_threats.append(threat_data)
 
@@ -1846,6 +2021,9 @@ class AdversaryMCPServer:
         severity_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
         for threat in all_threats:
             severity_counts[threat["severity"]] += 1
+
+        # Add validation summary for directory scan
+        validation_summary = self._aggregate_validation_stats(scan_results)
 
         result_data = {
             "scan_metadata": {
@@ -1855,6 +2033,7 @@ class AdversaryMCPServer:
                 "total_threats": len(all_threats),
                 "files_scanned": len(files_scanned),
             },
+            "validation_summary": validation_summary,
             "scanner_execution_summary": {
                 "semgrep_scanner": self._get_semgrep_summary(scan_results),
                 "llm_scanner": {
@@ -2029,6 +2208,7 @@ class AdversaryMCPServer:
         Returns:
             JSON formatted diff scan results
         """
+        from datetime import datetime
 
         # Collect all threats from all files
         all_threats = []
@@ -2049,6 +2229,38 @@ class AdversaryMCPServer:
                     false_positive_data = project_fp_manager.get_false_positive_details(
                         threat.uuid
                     )
+
+                    # Get validation details for this specific threat
+                    validation_result = scan_result.validation_results.get(threat.uuid)
+                    validation_data = {
+                        "was_validated": validation_result is not None,
+                        "validation_confidence": (
+                            validation_result.confidence if validation_result else None
+                        ),
+                        "validation_reasoning": (
+                            validation_result.reasoning if validation_result else None
+                        ),
+                        "validation_status": (
+                            "legitimate"
+                            if validation_result and validation_result.is_legitimate
+                            else (
+                                "false_positive"
+                                if validation_result
+                                and not validation_result.is_legitimate
+                                else "not_validated"
+                            )
+                        ),
+                        "exploitation_vector": (
+                            validation_result.exploitation_vector
+                            if validation_result
+                            else None
+                        ),
+                        "remediation_advice": (
+                            validation_result.remediation_advice
+                            if validation_result
+                            else None
+                        ),
+                    }
 
                     threat_data = {
                         "uuid": threat.uuid,
@@ -2072,6 +2284,7 @@ class AdversaryMCPServer:
                         "exploit_examples": getattr(threat, "exploit_examples", []),
                         "is_false_positive": false_positive_data is not None,
                         "false_positive_metadata": false_positive_data,
+                        "validation": validation_data,
                     }
                     all_threats.append(threat_data)
 
@@ -2093,6 +2306,14 @@ class AdversaryMCPServer:
         for threat in all_threats:
             severity_counts[threat["severity"]] += 1
 
+        # Collect all scan results for validation aggregation
+        all_scan_results = []
+        for file_scan_results in scan_results.values():
+            all_scan_results.extend(file_scan_results)
+
+        # Add validation summary for diff scan
+        validation_summary = self._aggregate_validation_stats(all_scan_results)
+
         result_data = {
             "scan_metadata": {
                 "target": scan_target,
@@ -2101,6 +2322,7 @@ class AdversaryMCPServer:
                 "total_threats": len(all_threats),
                 "files_changed": len(files_changed),
             },
+            "validation_summary": validation_summary,
             "diff_summary": diff_summary,
             "statistics": {
                 "total_threats": len(all_threats),

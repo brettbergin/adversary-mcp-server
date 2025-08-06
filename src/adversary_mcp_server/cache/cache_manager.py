@@ -1,0 +1,505 @@
+"""Intelligent cache manager with LRU eviction and git-aware invalidation."""
+
+import json
+import sqlite3
+import time
+from pathlib import Path
+from typing import Any
+
+from ..logger import get_logger
+from .content_hasher import ContentHasher
+from .types import CacheEntry, CacheKey, CacheStats, CacheType
+
+logger = get_logger("cache_manager")
+
+
+class CacheManager:
+    """Intelligent cache manager with content-based hashing and LRU eviction."""
+
+    def __init__(
+        self,
+        cache_dir: Path,
+        max_size_mb: int = 500,
+        max_age_hours: int = 24,
+        enable_persistence: bool = True,
+    ):
+        """Initialize cache manager.
+
+        Args:
+            cache_dir: Directory to store cache files
+            max_size_mb: Maximum cache size in MB
+            max_age_hours: Maximum age for cache entries in hours
+            enable_persistence: Whether to persist cache to disk
+        """
+        self.cache_dir = Path(cache_dir)
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+
+        self.max_size_bytes = max_size_mb * 1024 * 1024
+        self.max_age_seconds = max_age_hours * 3600
+        self.enable_persistence = enable_persistence
+
+        # In-memory cache storage
+        self._cache: dict[str, CacheEntry] = {}
+        self._stats = CacheStats()
+        self._hasher = ContentHasher()
+
+        # SQLite database for metadata and persistence
+        self._db_path = self.cache_dir / "cache_metadata.db"
+        self._init_database()
+
+        # Load cache from disk if persistence enabled
+        if self.enable_persistence:
+            self._load_cache()
+
+        logger.info(
+            f"Cache manager initialized: max_size={max_size_mb}MB, max_age={max_age_hours}h"
+        )
+
+    def _init_database(self) -> None:
+        """Initialize SQLite database for cache metadata."""
+        with sqlite3.connect(self._db_path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS cache_entries (
+                    key TEXT PRIMARY KEY,
+                    cache_type TEXT NOT NULL,
+                    content_hash TEXT NOT NULL,
+                    metadata_hash TEXT,
+                    created_at REAL NOT NULL,
+                    expires_at REAL,
+                    access_count INTEGER DEFAULT 0,
+                    last_accessed REAL NOT NULL,
+                    size_bytes INTEGER NOT NULL,
+                    file_path TEXT
+                )
+            """
+            )
+
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS cache_stats (
+                    id INTEGER PRIMARY KEY,
+                    hit_count INTEGER DEFAULT 0,
+                    miss_count INTEGER DEFAULT 0,
+                    eviction_count INTEGER DEFAULT 0,
+                    error_count INTEGER DEFAULT 0,
+                    last_cleanup REAL DEFAULT 0
+                )
+            """
+            )
+
+            # Initialize stats if not exists
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO cache_stats (id) VALUES (1)
+            """
+            )
+
+            conn.commit()
+
+    def _load_cache(self) -> None:
+        """Load cache entries from disk."""
+        try:
+            with sqlite3.connect(self._db_path) as conn:
+                cursor = conn.execute(
+                    """
+                    SELECT key, cache_type, content_hash, metadata_hash,
+                           created_at, expires_at, access_count, last_accessed,
+                           size_bytes, file_path
+                    FROM cache_entries
+                """
+                )
+
+                loaded_count = 0
+                for row in cursor.fetchall():
+                    (
+                        key_str,
+                        cache_type,
+                        content_hash,
+                        metadata_hash,
+                        created_at,
+                        expires_at,
+                        access_count,
+                        last_accessed,
+                        size_bytes,
+                        file_path,
+                    ) = row
+
+                    # Reconstruct cache key
+                    cache_key = CacheKey(
+                        cache_type=CacheType(cache_type),
+                        content_hash=content_hash,
+                        metadata_hash=metadata_hash,
+                    )
+
+                    # Try to load data from disk
+                    data_file = self.cache_dir / f"{key_str}.json"
+                    if data_file.exists():
+                        try:
+                            with open(data_file, encoding="utf-8") as f:
+                                data = json.load(f)
+
+                            entry = CacheEntry(
+                                key=cache_key,
+                                data=data,
+                                created_at=created_at,
+                                expires_at=expires_at,
+                                access_count=access_count,
+                                last_accessed=last_accessed,
+                                size_bytes=size_bytes,
+                            )
+
+                            # Skip expired entries
+                            if not entry.is_expired:
+                                self._cache[key_str] = entry
+                                loaded_count += 1
+                        except Exception as e:
+                            logger.warning(f"Failed to load cache entry {key_str}: {e}")
+                            # Clean up corrupted file
+                            data_file.unlink(missing_ok=True)
+
+                logger.info(f"Loaded {loaded_count} cache entries from disk")
+
+                # Load stats
+                cursor = conn.execute(
+                    """
+                    SELECT hit_count, miss_count, eviction_count, error_count
+                    FROM cache_stats WHERE id = 1
+                """
+                )
+                row = cursor.fetchone()
+                if row:
+                    (
+                        self._stats.hit_count,
+                        self._stats.miss_count,
+                        self._stats.eviction_count,
+                        self._stats.error_count,
+                    ) = row
+
+        except Exception as e:
+            logger.error(f"Failed to load cache from disk: {e}")
+
+    def _save_entry_to_disk(self, key_str: str, entry: CacheEntry) -> None:
+        """Save cache entry to disk."""
+        if not self.enable_persistence:
+            return
+
+        try:
+            # Save data to JSON file
+            data_file = self.cache_dir / f"{key_str}.json"
+            with open(data_file, "w", encoding="utf-8") as f:
+                json.dump(entry.data, f, indent=2, default=self._json_serializer)
+
+            # Update database metadata
+            with sqlite3.connect(self._db_path) as conn:
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO cache_entries
+                    (key, cache_type, content_hash, metadata_hash,
+                     created_at, expires_at, access_count, last_accessed,
+                     size_bytes, file_path)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                    (
+                        key_str,
+                        entry.key.cache_type.value,
+                        entry.key.content_hash,
+                        entry.key.metadata_hash,
+                        entry.created_at,
+                        entry.expires_at,
+                        entry.access_count,
+                        entry.last_accessed,
+                        entry.size_bytes,
+                        str(data_file),
+                    ),
+                )
+                conn.commit()
+
+        except Exception as e:
+            logger.error(f"Failed to save cache entry {key_str}: {e}")
+            self._stats.error_count += 1
+
+    def _remove_entry_from_disk(self, key_str: str) -> None:
+        """Remove cache entry from disk."""
+        if not self.enable_persistence:
+            return
+
+        try:
+            # Remove data file
+            data_file = self.cache_dir / f"{key_str}.json"
+            data_file.unlink(missing_ok=True)
+
+            # Remove from database
+            with sqlite3.connect(self._db_path) as conn:
+                conn.execute("DELETE FROM cache_entries WHERE key = ?", (key_str,))
+                conn.commit()
+
+        except Exception as e:
+            logger.error(f"Failed to remove cache entry {key_str}: {e}")
+
+    def _json_serializer(self, obj: Any) -> Any:
+        """Custom JSON serializer for complex objects."""
+        if hasattr(obj, "to_dict"):
+            return obj.to_dict()
+        elif hasattr(obj, "__dict__"):
+            return obj.__dict__
+        else:
+            return str(obj)
+
+    def _estimate_size(self, data: Any) -> int:
+        """Estimate size of data in bytes."""
+        try:
+            return len(json.dumps(data, default=self._json_serializer).encode("utf-8"))
+        except Exception:
+            # Fallback to string representation
+            return len(str(data).encode("utf-8"))
+
+    def _evict_lru_entries(self, target_size: int) -> None:
+        """Evict least recently used entries to free up space."""
+        if not self._cache:
+            return
+
+        # Sort by last accessed time (oldest first)
+        sorted_entries = sorted(self._cache.items(), key=lambda x: x[1].last_accessed)
+
+        current_size = sum(entry.size_bytes for entry in self._cache.values())
+        freed_size = 0
+
+        for key_str, entry in sorted_entries:
+            if current_size - freed_size <= target_size:
+                break
+
+            # Remove entry
+            del self._cache[key_str]
+            self._remove_entry_from_disk(key_str)
+
+            freed_size += entry.size_bytes
+            self._stats.eviction_count += 1
+
+            logger.debug(f"Evicted cache entry: {key_str}")
+
+        if freed_size > 0:
+            logger.info(
+                f"Evicted {len(sorted_entries)} entries, freed {freed_size / 1024:.1f} KB"
+            )
+
+    def _cleanup_expired_entries(self) -> None:
+        """Remove expired cache entries."""
+        current_time = time.time()
+        expired_keys = []
+
+        for key_str, entry in self._cache.items():
+            if entry.is_expired or entry.age_seconds > self.max_age_seconds:
+                expired_keys.append(key_str)
+
+        for key_str in expired_keys:
+            del self._cache[key_str]
+            self._remove_entry_from_disk(key_str)
+            logger.debug(f"Removed expired cache entry: {key_str}")
+
+        if expired_keys:
+            logger.info(f"Cleaned up {len(expired_keys)} expired cache entries")
+
+    def get(self, key: CacheKey) -> Any | None:
+        """Get cached data by key.
+
+        Args:
+            key: Cache key to lookup
+
+        Returns:
+            Cached data if found and valid, None otherwise
+        """
+        key_str = str(key)
+
+        if key_str not in self._cache:
+            self._stats.miss_count += 1
+            logger.debug(f"Cache miss: {key_str}")
+            return None
+
+        entry = self._cache[key_str]
+
+        # Check if expired
+        if entry.is_expired or entry.age_seconds > self.max_age_seconds:
+            del self._cache[key_str]
+            self._remove_entry_from_disk(key_str)
+            self._stats.miss_count += 1
+            logger.debug(f"Cache expired: {key_str}")
+            return None
+
+        # Update access stats
+        entry.mark_accessed()
+        self._stats.hit_count += 1
+        logger.debug(f"Cache hit: {key_str}")
+
+        return entry.data
+
+    def put(
+        self, key: CacheKey, data: Any, expires_in_seconds: int | None = None
+    ) -> None:
+        """Store data in cache.
+
+        Args:
+            key: Cache key for the data
+            data: Data to cache
+            expires_in_seconds: Optional expiration time in seconds
+        """
+        key_str = str(key)
+        current_time = time.time()
+
+        # Calculate expiration time
+        expires_at = None
+        if expires_in_seconds:
+            expires_at = current_time + expires_in_seconds
+        elif self.max_age_seconds > 0:
+            expires_at = current_time + self.max_age_seconds
+
+        # Estimate data size
+        size_bytes = self._estimate_size(data)
+
+        # Check if we need to evict entries
+        current_size = sum(entry.size_bytes for entry in self._cache.values())
+        if current_size + size_bytes > self.max_size_bytes:
+            target_size = self.max_size_bytes - size_bytes
+            self._evict_lru_entries(max(0, target_size))
+
+        # Create cache entry
+        entry = CacheEntry(
+            key=key,
+            data=data,
+            created_at=current_time,
+            expires_at=expires_at,
+            size_bytes=size_bytes,
+        )
+
+        # Store in memory cache
+        self._cache[key_str] = entry
+
+        # Save to disk
+        self._save_entry_to_disk(key_str, entry)
+
+        logger.debug(f"Cached data: {key_str} ({size_bytes} bytes)")
+
+    def invalidate_by_content_hash(self, content_hash: str) -> int:
+        """Invalidate all cache entries matching content hash.
+
+        Args:
+            content_hash: Content hash to invalidate
+
+        Returns:
+            Number of entries invalidated
+        """
+        invalidated_keys = []
+
+        for key_str, entry in self._cache.items():
+            if entry.key.content_hash == content_hash:
+                invalidated_keys.append(key_str)
+
+        for key_str in invalidated_keys:
+            del self._cache[key_str]
+            self._remove_entry_from_disk(key_str)
+
+        if invalidated_keys:
+            logger.info(
+                f"Invalidated {len(invalidated_keys)} cache entries for content hash {content_hash[:8]}..."
+            )
+
+        return len(invalidated_keys)
+
+    def invalidate_by_type(self, cache_type: CacheType) -> int:
+        """Invalidate all cache entries of specified type.
+
+        Args:
+            cache_type: Cache type to invalidate
+
+        Returns:
+            Number of entries invalidated
+        """
+        invalidated_keys = []
+
+        for key_str, entry in self._cache.items():
+            if entry.key.cache_type == cache_type:
+                invalidated_keys.append(key_str)
+
+        for key_str in invalidated_keys:
+            del self._cache[key_str]
+            self._remove_entry_from_disk(key_str)
+
+        if invalidated_keys:
+            logger.info(
+                f"Invalidated {len(invalidated_keys)} cache entries of type {cache_type.value}"
+            )
+
+        return len(invalidated_keys)
+
+    def clear(self) -> None:
+        """Clear all cache entries."""
+        count = len(self._cache)
+
+        # Remove all entries from disk
+        for key_str in list(self._cache.keys()):
+            self._remove_entry_from_disk(key_str)
+
+        # Clear memory cache
+        self._cache.clear()
+
+        logger.info(f"Cleared {count} cache entries")
+
+    def cleanup(self) -> None:
+        """Perform cache maintenance (remove expired entries, update stats)."""
+        logger.info("Starting cache cleanup...")
+
+        # Remove expired entries
+        self._cleanup_expired_entries()
+
+        # Update total statistics
+        self._stats.total_entries = len(self._cache)
+        self._stats.total_size_bytes = sum(
+            entry.size_bytes for entry in self._cache.values()
+        )
+
+        # Save updated stats
+        if self.enable_persistence:
+            try:
+                with sqlite3.connect(self._db_path) as conn:
+                    conn.execute(
+                        """
+                        UPDATE cache_stats
+                        SET hit_count = ?, miss_count = ?, eviction_count = ?,
+                            error_count = ?, last_cleanup = ?
+                        WHERE id = 1
+                    """,
+                        (
+                            self._stats.hit_count,
+                            self._stats.miss_count,
+                            self._stats.eviction_count,
+                            self._stats.error_count,
+                            time.time(),
+                        ),
+                    )
+                    conn.commit()
+            except Exception as e:
+                logger.error(f"Failed to save cache stats: {e}")
+
+        logger.info("Cache cleanup completed")
+
+    def get_stats(self) -> CacheStats:
+        """Get current cache statistics.
+
+        Returns:
+            Current cache statistics
+        """
+        # Update current stats
+        self._stats.total_entries = len(self._cache)
+        self._stats.total_size_bytes = sum(
+            entry.size_bytes for entry in self._cache.values()
+        )
+
+        return self._stats
+
+    def get_hasher(self) -> ContentHasher:
+        """Get content hasher instance.
+
+        Returns:
+            Content hasher for generating cache keys
+        """
+        return self._hasher

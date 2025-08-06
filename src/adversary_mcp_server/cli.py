@@ -11,6 +11,7 @@ from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
 from . import get_version
+from .benchmarks import BenchmarkRunner
 from .credentials import CredentialManager
 from .logger import get_logger
 from .scanner.diff_scanner import GitDiffScanner
@@ -101,8 +102,23 @@ def cli():
     default=True,
     help="Enable/disable exploit safety mode",
 )
-def configure(severity_threshold: str | None, enable_safety_mode: bool):
-    """Configure the Adversary MCP server settings including Semgrep API key."""
+@click.option(
+    "--llm-provider",
+    type=click.Choice(["openai", "anthropic"]),
+    help="LLM provider to use for AI-powered analysis",
+)
+@click.option(
+    "--clear-llm",
+    is_flag=True,
+    help="Clear all LLM configuration",
+)
+def configure(
+    severity_threshold: str | None,
+    enable_safety_mode: bool,
+    llm_provider: str | None,
+    clear_llm: bool,
+):
+    """Configure the Adversary MCP server settings including API keys."""
     logger.info("=== Starting configuration command ===")
     console.print("🔧 [bold]Adversary MCP Server Configuration[/bold]")
 
@@ -161,9 +177,113 @@ def configure(severity_threshold: str | None, enable_safety_mode: bool):
             # Key exists - just show a brief confirmation without prompting
             console.print("\n🔑 Semgrep API key: ✅ Configured", style="green")
 
+        # Handle LLM configuration
+        if clear_llm:
+            console.print("\n🧹 [bold]Clearing LLM Configuration[/bold]")
+            credential_manager.clear_llm_configuration()
+            console.print("✅ LLM configuration cleared!", style="green")
+            config_updated = True
+            logger.info("LLM configuration cleared")
+        elif llm_provider:
+            console.print(f"\n🤖 [bold]Configuring {llm_provider.title()} LLM[/bold]")
+
+            # Clear any existing LLM configuration first
+            if config.llm_provider and config.llm_provider != llm_provider:
+                console.print(
+                    f"ℹ️  Switching from {config.llm_provider} to {llm_provider}",
+                    style="yellow",
+                )
+                credential_manager.clear_llm_configuration()
+
+            # Get API key
+            console.print(f"\n📝 Enter your {llm_provider.title()} API key:")
+            if llm_provider == "openai":
+                console.print(
+                    "   • Get your API key from: https://platform.openai.com/api-keys"
+                )
+            else:  # anthropic
+                console.print(
+                    "   • Get your API key from: https://console.anthropic.com/settings/keys"
+                )
+
+            api_key = Prompt.ask(f"{llm_provider.upper()}_API_KEY", password=True)
+
+            if api_key.strip():
+                try:
+                    # Store API key in keyring
+                    credential_manager.store_llm_api_key(llm_provider, api_key.strip())
+
+                    # Update configuration
+                    config.llm_provider = llm_provider
+                    # Don't store the actual API key in config - it's already in keyring
+
+                    # Ask for model selection
+                    if llm_provider == "openai":
+                        default_model = "gpt-4-turbo-preview"
+                        model_choices = [
+                            "gpt-4-turbo-preview",
+                            "gpt-4",
+                            "gpt-3.5-turbo",
+                        ]
+                        console.print(
+                            f"\n🎯 Select OpenAI model (default: {default_model}):"
+                        )
+                    else:  # anthropic
+                        default_model = "claude-3-5-sonnet-20241022"
+                        model_choices = [
+                            "claude-3-5-sonnet-20241022",
+                            "claude-3-5-haiku-20241022",
+                            "claude-3-opus-latest",
+                            "claude-3-sonnet-20240229",
+                            "claude-3-haiku-20240307",
+                        ]
+                        console.print(
+                            f"\n🎯 Select Anthropic model (default: {default_model}):"
+                        )
+
+                    for i, model in enumerate(model_choices, 1):
+                        console.print(f"   {i}. {model}")
+
+                    model_input = Prompt.ask("Model", default=default_model)
+                    config.llm_model = (
+                        model_input if model_input in model_choices else default_model
+                    )
+
+                    config_updated = True
+                    console.print(
+                        f"✅ {llm_provider.title()} configuration complete!",
+                        style="green",
+                    )
+                    logger.info(
+                        f"{llm_provider} LLM configured successfully with model: {config.llm_model}"
+                    )
+
+                except Exception as e:
+                    console.print(
+                        f"❌ Failed to configure {llm_provider}: {e}", style="red"
+                    )
+                    logger.error(f"Failed to configure {llm_provider}: {e}")
+            else:
+                console.print(
+                    f"⏭️  Skipped {llm_provider} configuration", style="yellow"
+                )
+        else:
+            # Show current LLM status if not configuring
+            if config.llm_provider:
+                console.print(
+                    f"\n🤖 LLM Provider: ✅ {config.llm_provider.title()} (Model: {config.llm_model})",
+                    style="green",
+                )
+            else:
+                console.print("\n🤖 LLM Provider: ❌ Not configured", style="yellow")
+                console.print(
+                    "   • Use --llm-provider openai or --llm-provider anthropic to configure",
+                    style="dim",
+                )
+
         if config_updated:
             credential_manager.store_config(config)
-            console.print("✅ Configuration updated successfully!", style="green")
+            console.print("\n✅ Configuration updated successfully!", style="green")
 
         logger.info("=== Configuration command completed successfully ===")
 
@@ -205,17 +325,23 @@ def status():
             "Semgrep Available",
             "Yes" if scan_engine.semgrep_scanner.is_available() else "No",
         )
+        # LLM Configuration details
+        is_llm_valid, llm_error = config.validate_llm_configuration()
+        if config.llm_provider:
+            llm_status = (
+                f"{config.llm_provider.title()} ({config.llm_model or 'default'})"
+            )
+            if not is_llm_valid:
+                llm_status += f" - Error: {llm_error}"
+        else:
+            llm_status = "Not configured"
+
+        config_table.add_row("LLM Provider", llm_status)
         config_table.add_row(
-            "LLM Available",
-            (
-                "Yes"
-                if scan_engine.llm_analyzer and scan_engine.llm_analyzer.is_available()
-                else "No"
-            ),
+            "LLM Analysis", "Enabled" if config.enable_llm_analysis else "Disabled"
         )
         config_table.add_row(
-            "LLM Validation Available",
-            "Yes" if scan_engine.llm_validator else "No",
+            "LLM Validation", "Enabled" if config.enable_llm_validation else "Disabled"
         )
 
         console.print(config_table)
@@ -259,6 +385,131 @@ def status():
         logger.error(f"Status command failed: {e}")
         logger.debug("Status error details", exc_info=True)
         console.print(f"❌ Failed to get status: {e}", style="red")
+        sys.exit(1)
+
+
+@cli.command()
+def debug_config():
+    """Debug configuration persistence by showing keyring state."""
+    logger.info("=== Starting debug-config command ===")
+    try:
+        credential_manager = CredentialManager()
+
+        console.print("🔧 [bold]Configuration Debug Information[/bold]")
+
+        # Get keyring state
+        keyring_state = credential_manager.debug_keyring_state()
+
+        # Display keyring information
+        keyring_table = Table(title="Keyring State")
+        keyring_table.add_column("Item", style="cyan")
+        keyring_table.add_column("Status", style="magenta")
+        keyring_table.add_column("Details", style="yellow")
+
+        keyring_table.add_row("Service Name", keyring_state["keyring_service"], "")
+
+        # Main config
+        main_config = keyring_state["main_config"]
+        if main_config.get("found"):
+            keyring_table.add_row(
+                "Main Config",
+                "✅ Found",
+                f"Provider: {main_config.get('llm_provider', 'None')}",
+            )
+            keyring_table.add_row(
+                "Config LLM Key", main_config.get("llm_api_key_status", "UNKNOWN"), ""
+            )
+            keyring_table.add_row(
+                "Config Semgrep Key",
+                main_config.get("semgrep_api_key_status", "UNKNOWN"),
+                "",
+            )
+        else:
+            error_msg = main_config.get("error", "Not found")
+            keyring_table.add_row("Main Config", "❌ Missing", error_msg)
+
+        # Individual API keys
+        for provider in ["openai", "anthropic"]:
+            key_info = keyring_state[f"llm_{provider}_key"]
+            if key_info.get("found"):
+                keyring_table.add_row(
+                    f"{provider.title()} API Key",
+                    "✅ Found",
+                    f"{key_info.get('length', 0)} chars",
+                )
+            else:
+                error_msg = key_info.get("error", "Not found")
+                keyring_table.add_row(
+                    f"{provider.title()} API Key", "❌ Missing", error_msg
+                )
+
+        # Semgrep key
+        semgrep_info = keyring_state["semgrep_key"]
+        if semgrep_info.get("found"):
+            keyring_table.add_row(
+                "Semgrep API Key", "✅ Found", f"{semgrep_info.get('length', 0)} chars"
+            )
+        else:
+            error_msg = semgrep_info.get("error", "Not found")
+            keyring_table.add_row("Semgrep API Key", "❌ Missing", error_msg)
+
+        # Cache state
+        keyring_table.add_row(
+            "Cache Loaded", "✅ Yes" if keyring_state["cache_loaded"] else "❌ No", ""
+        )
+
+        cached_config = keyring_state["cached_config"]
+        if cached_config.get("found"):
+            keyring_table.add_row(
+                "Cached Config",
+                "✅ Found",
+                f"Provider: {cached_config.get('llm_provider', 'None')}",
+            )
+            keyring_table.add_row(
+                "Cached LLM Key", cached_config.get("llm_api_key_status", "UNKNOWN"), ""
+            )
+            keyring_table.add_row(
+                "Cached Semgrep Key",
+                cached_config.get("semgrep_api_key_status", "UNKNOWN"),
+                "",
+            )
+        else:
+            keyring_table.add_row("Cached Config", "❌ Missing", "")
+
+        console.print(keyring_table)
+
+        # Also try loading config to see what happens
+        console.print("\n🔄 [bold]Testing Configuration Load[/bold]")
+        try:
+            config = credential_manager.load_config()
+            load_table = Table(title="Loaded Configuration")
+            load_table.add_column("Setting", style="cyan")
+            load_table.add_column("Value", style="magenta")
+
+            load_table.add_row("LLM Provider", str(config.llm_provider))
+            load_table.add_row("LLM Model", str(config.llm_model))
+            load_table.add_row("LLM API Key", "SET" if config.llm_api_key else "NULL")
+            load_table.add_row("Semgrep Scanning", str(config.enable_semgrep_scanning))
+            load_table.add_row(
+                "Semgrep API Key", "SET" if config.semgrep_api_key else "NULL"
+            )
+            load_table.add_row("LLM Validation", str(config.enable_llm_validation))
+
+            console.print(load_table)
+
+        except Exception as load_error:
+            console.print(f"❌ Failed to load config: {load_error}", style="red")
+
+        # Show raw JSON output for advanced debugging
+        console.print("\n📋 [bold]Raw Debug Data (JSON)[/bold]")
+        console.print(json.dumps(keyring_state, indent=2))
+
+        logger.info("=== Debug-config command completed successfully ===")
+
+    except Exception as e:
+        logger.error(f"Debug-config command failed: {e}")
+        logger.debug("Debug-config error details", exc_info=True)
+        console.print(f"❌ Debug command failed: {e}", style="red")
         sys.exit(1)
 
 
@@ -967,6 +1218,103 @@ def reset_semgrep_key():
         sys.exit(1)
 
     logger.info("=== Reset-semgrep-key command completed successfully ===")
+
+
+@cli.command()
+@click.option(
+    "--scenario",
+    type=str,
+    help="Run specific benchmark scenario (single_file, small_batch, medium_batch, cache_test, large_files)",
+)
+@click.option(
+    "--output",
+    type=click.Path(),
+    help="Save benchmark results to JSON file",
+)
+def benchmark(scenario: str | None, output: str | None):
+    """Run performance benchmarks to test scanner performance."""
+    logger.info("=== Starting benchmark command ===")
+    console.print("⚡ [bold]Adversary MCP Performance Benchmark[/bold]")
+
+    try:
+        # Initialize benchmark runner
+        credential_manager = CredentialManager()
+        benchmark_runner = BenchmarkRunner(credential_manager)
+
+        if scenario:
+            # Run single scenario
+            logger.info(f"Running single benchmark scenario: {scenario}")
+            console.print(f"\n🏃 Running scenario: [bold]{scenario}[/bold]")
+
+            import asyncio
+
+            result = asyncio.run(benchmark_runner.run_single_benchmark(scenario))
+
+            # Display single result
+            console.print(f"\n📊 [bold]Benchmark Result: {result.name}[/bold]")
+            status = "✅" if result.success else "❌"
+            console.print(
+                f"{status} Status: {'Success' if result.success else 'Failed'}"
+            )
+
+            if result.success:
+                console.print(f"⏱️  Duration: {result.duration_seconds:.2f}s")
+                if result.files_processed > 0:
+                    console.print(f"📁 Files: {result.files_processed}")
+                    console.print(f"🚀 Speed: {result.files_per_second:.2f} files/sec")
+                    console.print(f"🔍 Findings: {result.findings_count}")
+                if result.memory_peak_mb > 0:
+                    console.print(f"💾 Memory Peak: {result.memory_peak_mb:.1f} MB")
+                if result.cache_hits + result.cache_misses > 0:
+                    console.print(f"📄 Cache Hit Rate: {result.cache_hit_rate:.1f}%")
+            else:
+                console.print(f"❌ Error: {result.error_message}")
+
+            # Save single result if requested
+            if output:
+                from .benchmarks.results import BenchmarkSummary
+
+                summary = BenchmarkSummary()
+                summary.add_result(result)
+                summary.save_to_file(Path(output))
+                console.print(f"💾 Results saved to {output}", style="green")
+
+        else:
+            # Run all benchmarks
+            logger.info("Running all benchmark scenarios")
+            console.print("\n🏃 Running all benchmark scenarios...")
+
+            import asyncio
+
+            summary = asyncio.run(benchmark_runner.run_all_benchmarks())
+
+            # Display summary
+            summary.print_summary()
+
+            # Save results if requested
+            if output:
+                summary.save_to_file(Path(output))
+                console.print(f"💾 Results saved to {output}", style="green")
+
+        logger.info("=== Benchmark command completed successfully ===")
+
+    except ValueError as e:
+        if "Unknown scenario" in str(e):
+            console.print(f"❌ Unknown scenario: {scenario}", style="red")
+            console.print(
+                "Available scenarios: single_file, small_batch, medium_batch, cache_test, large_files",
+                style="yellow",
+            )
+        else:
+            console.print(f"❌ Benchmark failed: {e}", style="red")
+        logger.error(f"Benchmark command failed: {e}")
+        sys.exit(1)
+
+    except Exception as e:
+        logger.error(f"Benchmark command failed: {e}")
+        logger.debug("Benchmark error details", exc_info=True)
+        console.print(f"❌ Benchmark failed: {e}", style="red")
+        sys.exit(1)
 
 
 def main():
