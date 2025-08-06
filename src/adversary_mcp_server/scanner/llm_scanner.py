@@ -1,12 +1,25 @@
 """LLM-based security analyzer for detecting code vulnerabilities using AI."""
 
+import asyncio
 import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .. import get_version
+from ..batch import (
+    BatchConfig,
+    BatchProcessor,
+    BatchStrategy,
+    FileAnalysisContext,
+    Language,
+)
+from ..cache import CacheKey, CacheManager, CacheType
+from ..config import get_app_cache_dir
 from ..credentials import CredentialManager
+from ..llm import LLMClient, LLMProvider, create_llm_client
 from ..logger import get_logger
+from ..resilience import ErrorHandler, ResilienceConfig
 from .types import Category, Severity, ThreatMatch
 
 logger = get_logger("llm_scanner")
@@ -168,35 +181,170 @@ class LLMAnalysisPrompt:
 
 
 class LLMScanner:
-    """LLM-based security scanner that generates prompts for client LLMs."""
+    """LLM-based security scanner that uses AI for vulnerability detection."""
 
-    def __init__(self, credential_manager: CredentialManager):
+    def __init__(
+        self,
+        credential_manager: CredentialManager,
+        cache_manager: CacheManager | None = None,
+    ):
         """Initialize the LLM security analyzer.
 
         Args:
             credential_manager: Credential manager for configuration
+            cache_manager: Optional cache manager for intelligent caching
         """
         logger.info("Initializing LLMScanner")
         self.credential_manager = credential_manager
+        self.llm_client: LLMClient | None = None
+        self.cache_manager = cache_manager
+
+        # Batch failure tracking for circuit breaking
+        self.batch_failure_counts: dict[str, int] = {}
+        self.max_batch_failures = 3  # Circuit break after 3 consecutive failures
+        self.circuit_broken_batches: set[str] = set()
+
         try:
             self.config = credential_manager.load_config()
             logger.debug(
                 f"LLMScanner configuration loaded successfully: {type(self.config)}"
             )
+
+            # Initialize cache manager if not provided
+            if cache_manager is None and self.config.enable_caching:
+                cache_dir = get_app_cache_dir()
+                self.cache_manager = CacheManager(
+                    cache_dir=cache_dir,
+                    max_size_mb=self.config.cache_max_size_mb,
+                    max_age_hours=self.config.cache_max_age_hours,
+                )
+                logger.info(f"Initialized cache manager at {cache_dir}")
+
+            # Initialize intelligent batch processor with provider-specific settings
+            # Use smaller batches for Anthropic to avoid rate limiting
+            if self.config.llm_provider == "anthropic":
+                max_batch_size = 3  # Smaller batches for Anthropic
+                target_tokens = 40000  # Lower token target
+                max_tokens = 60000  # Lower max tokens
+            elif self.config.llm_provider == "openai":
+                max_batch_size = 8  # Moderate batches for OpenAI
+                target_tokens = 80000
+                max_tokens = 100000
+            else:
+                max_batch_size = getattr(self.config, "llm_batch_size", 20)
+                target_tokens = 80000
+                max_tokens = 100000
+
+            batch_config = BatchConfig(
+                strategy=BatchStrategy.DYNAMIC_SIZE,
+                min_batch_size=1,
+                max_batch_size=max_batch_size,
+                target_tokens_per_batch=target_tokens,
+                max_tokens_per_batch=max_tokens,
+                batch_timeout_seconds=300,
+                max_concurrent_batches=4,
+                group_by_language=True,
+                group_by_complexity=True,
+            )
+            self.batch_processor = BatchProcessor(batch_config)
+            logger.info(
+                f"Initialized BatchProcessor for {self.config.llm_provider or 'unknown'} provider - "
+                f"max_batch_size: {max_batch_size}, target_tokens: {target_tokens}"
+            )
+
+            # Initialize ErrorHandler for comprehensive resilience
+            # Disable retry for Anthropic provider as it has built-in retry logic
+            enable_retry = self.config.llm_provider != "anthropic"
+            resilience_config = ResilienceConfig(
+                enable_circuit_breaker=True,
+                failure_threshold=3,  # Open circuit after 3 failures
+                recovery_timeout_seconds=60,  # Try recovery after 1 minute
+                enable_retry=enable_retry,
+                max_retry_attempts=3 if enable_retry else 0,
+                base_delay_seconds=1.0,
+                max_delay_seconds=30.0,
+                enable_graceful_degradation=True,
+                llm_timeout_seconds=120.0,  # 2 minute timeout for LLM calls
+            )
+            self.error_handler = ErrorHandler(resilience_config)
+            logger.info("Initialized ErrorHandler with circuit breaker and retry logic")
+
+            # Initialize LLM client if configured
+            if self.config.llm_provider and self.config.llm_api_key:
+                logger.info(
+                    f"Initializing LLM client for provider: {self.config.llm_provider}"
+                )
+                self.llm_client = create_llm_client(
+                    provider=LLMProvider(self.config.llm_provider),
+                    api_key=self.config.llm_api_key,
+                    model=self.config.llm_model,
+                )
+                logger.info("LLM client initialized successfully")
+            else:
+                logger.warning(
+                    "LLM provider not configured, scanner will not be functional"
+                )
+
         except Exception as e:
-            logger.error(f"Failed to load configuration in LLMScanner: {e}")
+            logger.error(f"Failed to initialize LLMScanner: {e}")
             raise
+
+    def _get_batch_hash(self, batch_content: list[dict]) -> str:
+        """Get a hash for batch content to track failures."""
+        import hashlib
+
+        # Create a simple hash based on file paths
+        file_paths = sorted([fc["file_path"] for fc in batch_content])
+        content = "|".join(file_paths)
+        return hashlib.sha256(content.encode()).hexdigest()[:16]
+
+    def _should_skip_batch(self, batch_hash: str) -> bool:
+        """Check if batch should be skipped due to circuit breaking."""
+        if batch_hash in self.circuit_broken_batches:
+            logger.warning(f"Skipping circuit-broken batch {batch_hash}")
+            return True
+        return False
+
+    def _record_batch_failure(self, batch_hash: str) -> None:
+        """Record a batch failure and potentially circuit break."""
+        self.batch_failure_counts[batch_hash] = (
+            self.batch_failure_counts.get(batch_hash, 0) + 1
+        )
+
+        if self.batch_failure_counts[batch_hash] >= self.max_batch_failures:
+            self.circuit_broken_batches.add(batch_hash)
+            logger.error(
+                f"Circuit breaking batch {batch_hash} after {self.max_batch_failures} failures"
+            )
+
+    def _record_batch_success(self, batch_hash: str) -> None:
+        """Record a batch success and reset failure count."""
+        if batch_hash in self.batch_failure_counts:
+            del self.batch_failure_counts[batch_hash]
+        if batch_hash in self.circuit_broken_batches:
+            self.circuit_broken_batches.remove(batch_hash)
+            logger.info(f"Circuit breaker reset for batch {batch_hash[:8]}")
+
+    def get_circuit_breaker_stats(self) -> dict:
+        """Get circuit breaker statistics for debugging."""
+        return {
+            "total_failed_batches": len(self.batch_failure_counts),
+            "circuit_broken_batches": len(self.circuit_broken_batches),
+            "failure_counts": {k[:8]: v for k, v in self.batch_failure_counts.items()},
+            "circuit_broken_hashes": [h[:8] for h in self.circuit_broken_batches],
+        }
 
     def is_available(self) -> bool:
         """Check if LLM analysis is available.
 
         Returns:
-            True if LLM analysis is available (always true now since we use client LLM)
+            True if LLM analysis is available
         """
-        logger.debug(
-            "LLMScanner.is_available() called - returning True (client-based LLM)"
+        available = (
+            self.llm_client is not None and self.config.is_llm_analysis_available()
         )
-        return True
+        logger.debug(f"LLMScanner.is_available() called - returning {available}")
+        return available
 
     def get_status(self) -> dict[str, Any]:
         """Get LLM status information (for consistency with semgrep scanner).
@@ -205,11 +353,12 @@ class LLMScanner:
             Dict containing LLM status information
         """
         return {
-            "available": True,
-            "version": "client-based",
-            "installation_status": "available",
-            "mode": "client-based",
-            "description": "Uses client-side LLM for analysis",
+            "available": self.is_available(),
+            "version": get_version(),
+            "installation_status": self.is_available(),
+            "mode": f"{self.config.llm_provider or 'none'}",
+            "description": f"Uses {self.config.llm_provider or 'no'} LLM for analysis",
+            "model": self.config.llm_model if self.config.llm_provider else None,
         }
 
     def create_analysis_prompt(
@@ -427,13 +576,14 @@ Please provide up to {max_findings} security findings in JSON format.
 
 Requirements:
 - Focus on genuine security vulnerabilities
-- Provide specific line numbers (1-indexed)
+- Provide specific line numbers (1-indexed, exactly as they appear in the source code)
 - Include the vulnerable code snippet
 - Explain why each finding is a security risk
 - Suggest specific remediation steps
 - Assign confidence scores (0.0-1.0)
 - Map to CWE IDs where applicable
 - Classify by OWASP categories where relevant
+- IMPORTANT: Line numbers must match the exact line numbers in the provided source code (1-indexed)
 
 Response format:
 {{
@@ -465,8 +615,42 @@ Response format:
     ) -> list[LLMSecurityFinding]:
         """Analyze code for security vulnerabilities.
 
-        For client-based LLM integration, this method returns empty list
-        since actual analysis is done by the client's LLM.
+        Args:
+            source_code: Source code to analyze
+            file_path: Path to the source file
+            language: Programming language
+            max_findings: Maximum number of findings to return
+
+        Returns:
+            List of security findings
+        """
+        file_path_abs = str(Path(file_path).resolve())
+        logger.info(f"analyze_code called for {file_path_abs} ({language})")
+
+        if not self.llm_client:
+            logger.warning("LLM client not initialized, returning empty list")
+            return []
+
+        # Run async analysis in sync context
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            # Create new event loop if none exists
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        return loop.run_until_complete(
+            self._analyze_code_async(source_code, file_path, language, max_findings)
+        )
+
+    async def _analyze_code_async(
+        self,
+        source_code: str,
+        file_path: str,
+        language: str,
+        max_findings: int = 20,
+    ) -> list[LLMSecurityFinding]:
+        """Async implementation of code analysis with intelligent caching.
 
         Args:
             source_code: Source code to analyze
@@ -475,16 +659,174 @@ Response format:
             max_findings: Maximum number of findings to return
 
         Returns:
-            Empty list (client-based LLM doesn't do analysis here)
+            List of security findings
         """
-        file_path_abs = str(Path(file_path).resolve())
-        logger.info(f"analyze_code called for {file_path_abs} ({language})")
-        logger.debug(
-            "Client-based LLM approach - returning empty list (analysis done by client)"
-        )
-        # In client-based approach, we don't perform actual analysis
-        # The client gets prompts via create_analysis_prompt() and processes them
-        return []
+        if not self.llm_client:
+            return []
+
+        # Check cache first if enabled
+        cached_result = None
+        cache_key = None
+
+        if self.cache_manager and self.config.cache_llm_responses:
+            try:
+                # Generate cache key based on content and analysis context
+                hasher = self.cache_manager.get_hasher()
+                content_hash = hasher.hash_content(source_code)
+                context_hash = hasher.hash_llm_context(
+                    content=source_code,
+                    model=self.config.llm_model or "default",
+                    system_prompt=self._get_system_prompt(),
+                    user_prompt=self._create_user_prompt(
+                        source_code, language, max_findings
+                    ),
+                    temperature=self.config.llm_temperature,
+                    max_tokens=self.config.llm_max_tokens,
+                )
+
+                cache_key = CacheKey(
+                    cache_type=CacheType.LLM_RESPONSE,
+                    content_hash=content_hash,
+                    metadata_hash=context_hash,
+                )
+
+                cached_result = self.cache_manager.get(cache_key)
+                if cached_result:
+                    logger.info(f"Cache hit for LLM analysis: {file_path}")
+                    # Convert cached serializable findings back to LLMSecurityFinding objects
+                    findings = []
+                    for cached_finding in cached_result.get("findings", []):
+                        if isinstance(cached_finding, dict):
+                            finding = LLMSecurityFinding(**cached_finding)
+                            findings.append(finding)
+                    return findings
+                else:
+                    logger.debug(f"Cache miss for LLM analysis: {file_path}")
+
+            except Exception as e:
+                logger.warning(f"Cache lookup failed for {file_path}: {e}")
+
+        try:
+            # Create prompts
+            system_prompt = self._get_system_prompt()
+            user_prompt = self._create_user_prompt(source_code, language, max_findings)
+
+            logger.debug(f"Sending analysis request to LLM for {file_path}")
+
+            # Make LLM request with comprehensive error handling and circuit breaker
+            async def llm_call():
+                return await self.llm_client.complete_with_retry(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    temperature=self.config.llm_temperature,
+                    max_tokens=self.config.llm_max_tokens,
+                    response_format="json",
+                )
+
+            # Create a fallback function that returns cached results if available
+            async def llm_fallback(*args, **kwargs):
+                logger.warning(
+                    f"LLM service degraded, attempting fallback for {file_path}"
+                )
+                # Try to find any cached result for similar content
+                if self.cache_manager:
+                    # Could implement more sophisticated fallback logic here
+                    pass
+                # Return empty findings as graceful degradation
+                return type(
+                    "Response",
+                    (),
+                    {
+                        "content": '{"findings": []}',
+                        "model": self.config.llm_model or "fallback",
+                        "usage": {},
+                    },
+                )()
+
+            # For Anthropic, bypass our retry logic since their SDK handles retries
+            if self.config.llm_provider == "anthropic":
+                try:
+                    response = await llm_call()
+                    logger.debug(f"Direct Anthropic API call succeeded for {file_path}")
+                except Exception as e:
+                    logger.warning(f"Anthropic API call failed for {file_path}: {e}")
+                    # Try fallback for graceful degradation
+                    try:
+                        response = await llm_fallback()
+                        logger.info(f"Fallback response used for {file_path}")
+                    except Exception as fallback_error:
+                        logger.error(
+                            f"Fallback also failed for {file_path}: {fallback_error}"
+                        )
+                        raise LLMAnalysisError(f"Analysis failed: {e}")
+            else:
+                # Execute with comprehensive error recovery for other providers
+                recovery_result = await self.error_handler.execute_with_recovery(
+                    llm_call,
+                    operation_name=f"llm_analysis_{Path(file_path).name}",
+                    circuit_breaker_name="llm_service",
+                    fallback_func=llm_fallback,
+                )
+
+                if recovery_result.success:
+                    response = recovery_result.result
+                else:
+                    # If recovery failed completely, raise an exception
+                    error_msg = (
+                        recovery_result.error_message or "LLM service unavailable"
+                    )
+                    raise LLMAnalysisError(
+                        f"Analysis failed with recovery: {error_msg}"
+                    )
+
+            logger.info(f"LLM analysis completed for {file_path}, parsing response")
+
+            # Parse response
+            findings = self.parse_analysis_response(response.content, file_path)
+
+            # Cache the result if caching is enabled
+            if (
+                self.cache_manager
+                and self.config.cache_llm_responses
+                and cache_key
+                and findings
+            ):
+                try:
+                    # Convert findings to serializable format
+                    serializable_findings: list[dict[str, Any]] = []
+                    for finding in findings:
+                        if hasattr(finding, "__dict__"):
+                            serializable_findings.append(finding.__dict__)
+                        else:
+                            # Convert string findings to dict format
+                            serializable_findings.append({"finding": str(finding)})
+
+                    cache_data = {
+                        "findings": serializable_findings,
+                        "response_metadata": {
+                            "model": response.model,
+                            "usage": response.usage,
+                            "file_path": file_path,
+                            "language": language,
+                        },
+                    }
+
+                    # Cache for 24 hours by default
+                    cache_expiry_seconds = self.config.cache_max_age_hours * 3600
+                    self.cache_manager.put(cache_key, cache_data, cache_expiry_seconds)
+                    logger.debug(f"Cached LLM analysis result for {file_path}")
+
+                except Exception as e:
+                    logger.warning(f"Failed to cache LLM result for {file_path}: {e}")
+
+            logger.info(f"Parsed {len(findings)} findings from LLM response")
+            return findings
+
+        except Exception as e:
+            logger.error(f"LLM analysis failed for {file_path}: {e}")
+            raise LLMAnalysisError(f"Analysis failed: {e}")
+
+    # Removed analyze_code_resilient method - using LLM client's built-in retry instead
 
     async def analyze_file(
         self,
@@ -494,25 +836,34 @@ Response format:
     ) -> list[LLMSecurityFinding]:
         """Analyze a single file for security vulnerabilities.
 
-        For client-based LLM integration, this method returns empty list
-        since actual analysis is done by the client's LLM.
-
         Args:
             file_path: Path to the file to analyze
             language: Programming language
             max_findings: Maximum number of findings to return
 
         Returns:
-            Empty list (client-based LLM doesn't do analysis here)
+            List of security findings
         """
         file_path_abs = str(Path(file_path).resolve())
         logger.info(f"analyze_file called for {file_path_abs} ({language})")
-        logger.debug(
-            "Client-based LLM approach - returning empty list (analysis done by client)"
-        )
-        # In client-based approach, we don't perform actual analysis
-        # The client gets prompts via create_analysis_prompt() and processes them
-        return []
+
+        if not self.llm_client:
+            logger.warning("LLM client not initialized, returning empty list")
+            return []
+
+        try:
+            # Read file content
+            with open(file_path, encoding="utf-8") as f:
+                source_code = f.read()
+
+            # Analyze the code
+            return await self._analyze_code_async(
+                source_code, str(file_path), language, max_findings
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to analyze file {file_path}: {e}")
+            raise LLMAnalysisError(f"File analysis failed: {e}")
 
     async def analyze_directory(
         self,
@@ -522,26 +873,953 @@ Response format:
     ) -> list[LLMSecurityFinding]:
         """Analyze an entire directory for security vulnerabilities.
 
-        For client-based LLM integration, this method returns empty list
-        since actual analysis is done by the client's LLM.
-
         Args:
             directory_path: Path to the directory to analyze
             recursive: Whether to scan subdirectories
             max_findings_per_file: Maximum number of findings per file
 
         Returns:
-            Empty list (client-based LLM doesn't do analysis here)
+            List of security findings across all files
         """
         logger.info(
             f"analyze_directory called for {directory_path} (recursive={recursive})"
         )
-        logger.debug(
-            "Client-based LLM approach - returning empty list (analysis done by client)"
+
+        if not self.llm_client:
+            logger.warning("LLM client not initialized, returning empty list")
+            return []
+
+        try:
+            # Use FileFilter for consistent filtering logic
+            from ..scanner.file_filter import FileFilter
+
+            directory_path = Path(directory_path)
+
+            # Initialize file filter with smart exclusions
+            config = self.credential_manager.load_config()
+            file_filter = FileFilter(
+                root_path=directory_path,
+                max_file_size_mb=config.max_file_size_mb,
+                respect_gitignore=True,
+            )
+
+            # Discover all files first
+            all_files = []
+            pattern = "**/*" if recursive else "*"
+            for file_path in directory_path.glob(pattern):
+                if file_path.is_file():
+                    all_files.append(file_path)
+
+            logger.info(f"Discovered {len(all_files)} total files")
+
+            # Apply smart filtering (same logic as scan_engine)
+            filtered_files = file_filter.filter_files(all_files)
+
+            # Then apply analyzable file filtering
+            files_to_analyze = []
+            for file_path in filtered_files:
+                if self._is_analyzable_file(file_path):
+                    files_to_analyze.append(file_path)
+
+            logger.info(
+                f"After filtering: {len(files_to_analyze)} files to analyze "
+                f"(filtered out {len(all_files) - len(files_to_analyze)} files - "
+                f"gitignore, binary, too large, non-source, etc.)"
+            )
+
+            # Safety check for large file counts
+            if len(files_to_analyze) > 100:
+                logger.warning(
+                    f"Large number of files to analyze: {len(files_to_analyze)}. "
+                    f"This may take considerable time and API usage."
+                )
+
+            if len(files_to_analyze) > 1000:
+                logger.warning(
+                    f"Very large directory scan: {len(files_to_analyze)} files. "
+                    f"Consider using more specific filtering or scanning subdirectories individually."
+                )
+
+            if not files_to_analyze:
+                logger.info("No analyzable files found after filtering")
+                return []
+
+            # Batch process files
+            all_findings = []
+            batch_size = self.config.llm_batch_size
+            total_batches = (len(files_to_analyze) + batch_size - 1) // batch_size
+
+            logger.info(
+                f"Will process {len(files_to_analyze)} files in {total_batches} batches"
+            )
+
+            for i in range(0, len(files_to_analyze), batch_size):
+                batch = files_to_analyze[i : i + batch_size]
+                batch_num = i // batch_size + 1
+                logger.info(
+                    f"Processing batch {batch_num}/{total_batches}: {len(batch)} files"
+                )
+
+                # Analyze files in batch
+                batch_findings = await self._analyze_batch_async(
+                    batch, max_findings_per_file
+                )
+                all_findings.extend(batch_findings)
+
+                # Progress logging for large scans
+                if total_batches > 5:
+                    logger.info(
+                        f"Batch {batch_num}/{total_batches} complete. "
+                        f"Found {len(batch_findings)} findings in this batch. "
+                        f"Total findings so far: {len(all_findings)}"
+                    )
+
+            logger.info(
+                f"Directory analysis complete: {len(all_findings)} total findings "
+                f"from {len(files_to_analyze)} files in {total_batches} batches"
+            )
+            return all_findings
+
+        except Exception as e:
+            logger.error(f"Failed to analyze directory {directory_path}: {e}")
+            raise LLMAnalysisError(f"Directory analysis failed: {e}")
+
+    async def analyze_files(
+        self,
+        file_paths: list[Path],
+        max_findings_per_file: int = 20,
+    ) -> list[LLMSecurityFinding]:
+        """Analyze a pre-filtered list of files for security vulnerabilities.
+
+        This method accepts a list of files that have already been filtered by the caller,
+        avoiding the need to re-discover and re-filter files. This is more efficient
+        and ensures consistent filtering logic across the application.
+
+        Args:
+            file_paths: List of Path objects to analyze (already filtered)
+            max_findings_per_file: Maximum number of findings per file
+
+        Returns:
+            List of security findings across all files
+        """
+        logger.info(f"analyze_files called for {len(file_paths)} pre-filtered files")
+
+        if not self.llm_client:
+            logger.warning("LLM client not initialized, returning empty list")
+            return []
+
+        if not file_paths:
+            logger.info("No files provided for analysis")
+            return []
+
+        try:
+            # Filter to only analyzable files (apply file extension check)
+            files_to_analyze = []
+            for file_path in file_paths:
+                if self._is_analyzable_file(file_path):
+                    files_to_analyze.append(file_path)
+
+            logger.info(
+                f"After analyzable file filtering: {len(files_to_analyze)} files to analyze "
+                f"(filtered out {len(file_paths) - len(files_to_analyze)} non-source files)"
+            )
+
+            if not files_to_analyze:
+                logger.info("No analyzable files found after filtering")
+                return []
+
+            # Safety check for large file counts
+            if len(files_to_analyze) > 100:
+                logger.warning(
+                    f"Large number of files to analyze: {len(files_to_analyze)}. "
+                    f"This may take considerable time and API usage."
+                )
+
+            # Batch process files
+            all_findings = []
+            batch_size = self.config.llm_batch_size
+            total_batches = (len(files_to_analyze) + batch_size - 1) // batch_size
+
+            logger.info(
+                f"Will process {len(files_to_analyze)} files in {total_batches} batches"
+            )
+
+            for i in range(0, len(files_to_analyze), batch_size):
+                batch = files_to_analyze[i : i + batch_size]
+                batch_num = i // batch_size + 1
+                logger.info(
+                    f"Processing batch {batch_num}/{total_batches}: {len(batch)} files"
+                )
+
+                # Analyze files in batch
+                batch_findings = await self._analyze_batch_async(
+                    batch, max_findings_per_file
+                )
+                all_findings.extend(batch_findings)
+
+                # Progress logging for large scans
+                if total_batches > 5:
+                    logger.info(
+                        f"Batch {batch_num}/{total_batches} complete. "
+                        f"Found {len(batch_findings)} findings in this batch. "
+                        f"Total findings so far: {len(all_findings)}"
+                    )
+
+            logger.info(
+                f"File list analysis complete: {len(all_findings)} total findings "
+                f"from {len(files_to_analyze)} files in {total_batches} batches"
+            )
+            return all_findings
+
+        except Exception as e:
+            logger.error(f"Failed to analyze file list: {e}")
+            raise LLMAnalysisError(f"File list analysis failed: {e}")
+
+    async def _analyze_batch_async(
+        self,
+        file_paths: list[Path],
+        max_findings_per_file: int = 20,
+    ) -> list[LLMSecurityFinding]:
+        """Analyze a batch of files efficiently with advanced optimization.
+
+        Args:
+            file_paths: List of file paths to analyze
+            max_findings_per_file: Maximum findings per file
+
+        Returns:
+            List of security findings across all files in batch
+        """
+        if not self.llm_client:
+            return []
+
+        logger.info(f"Starting optimized batch analysis for {len(file_paths)} files")
+
+        # Step 1: Collect and preprocess all file content
+        file_content_data = await self._collect_file_content(file_paths)
+        if not file_content_data:
+            return []
+
+        # Step 2: Create file analysis contexts for intelligent batch processing
+        file_contexts = []
+        for file_data in file_content_data:
+            # Map language string to Language enum
+            language_map = {
+                "python": Language.PYTHON,
+                "javascript": Language.JAVASCRIPT,
+                "typescript": Language.TYPESCRIPT,
+                "java": Language.JAVA,
+                "go": Language.GO,
+                "rust": Language.RUST,
+                "php": Language.PHP,
+                "ruby": Language.RUBY,
+                "c": Language.C,
+                "cpp": Language.CPP,
+                "csharp": Language.CSHARP,
+                "kotlin": Language.KOTLIN,
+                "swift": Language.SWIFT,
+            }
+
+            language = language_map.get(file_data["language"], Language.GENERIC)
+
+            # Create file analysis context
+            context = self.batch_processor.create_file_context(
+                file_path=Path(file_data["file_path"]),
+                content=file_data["content"],
+                language=language,
+                priority=file_data.get("priority", 0),
+            )
+            file_contexts.append(context)
+
+        # Step 3: Create intelligent batches using the batch processor
+        batches = self.batch_processor.create_batches(
+            file_contexts, model=getattr(self.config, "llm_model", None)
         )
-        # In client-based approach, we don't perform actual analysis
-        # The client gets prompts via create_analysis_prompt() and processes them
-        return []
+        logger.info(f"Created {len(batches)} intelligent batches using BatchProcessor")
+
+        # Step 4: Process batches using the batch processor
+        async def process_batch_func(
+            batch_contexts: list[FileAnalysisContext],
+        ) -> list[LLMSecurityFinding]:
+            """Process a batch of file contexts."""
+            # Convert contexts back to the format expected by existing code
+            batch_content = []
+            for context in batch_contexts:
+                batch_content.append(
+                    {
+                        "file_path": str(context.file_path),
+                        "language": context.language.value,
+                        "content": context.content,
+                        "size": context.file_size_bytes,
+                        "complexity": context.complexity_score,
+                    }
+                )
+
+            return await self._process_single_batch(
+                batch_content, max_findings_per_file, 0
+            )
+
+        def progress_callback(completed: int, total: int):
+            """Progress callback for batch processing."""
+            logger.info(
+                f"Batch processing progress: {completed}/{total} batches completed"
+            )
+
+        # Process all batches with intelligent concurrency control
+        batch_results = await self.batch_processor.process_batches(
+            batches, process_batch_func, progress_callback
+        )
+
+        # Flatten results
+        all_findings = []
+        for batch_findings in batch_results:
+            if batch_findings:  # Filter out None results from failed batches
+                all_findings.extend(batch_findings)
+
+        # Log batch processing metrics and circuit breaker stats
+        metrics = self.batch_processor.get_metrics()
+        cb_stats = self.get_circuit_breaker_stats()
+
+        logger.info(f"Batch processing completed: {metrics.to_dict()}")
+        logger.info(f"Circuit breaker stats: {cb_stats}")
+        logger.info(
+            f"Batch analysis complete: {len(all_findings)} total findings from {len(file_paths)} files"
+        )
+        return all_findings
+
+    async def _collect_file_content(self, file_paths: list[Path]) -> list[dict]:
+        """Collect and preprocess file content with metadata for optimization.
+
+        Args:
+            file_paths: List of file paths to read
+
+        Returns:
+            List of file content dictionaries with metadata
+        """
+        file_content_data = []
+
+        for file_path in file_paths:
+            try:
+                with open(file_path, encoding="utf-8") as f:
+                    content = f.read()
+
+                # Skip empty files
+                if not content.strip():
+                    logger.debug(f"Skipping empty file: {file_path}")
+                    continue
+
+                language = self._detect_language(file_path)
+                file_size = len(content)
+
+                # Truncate very large files but preserve structure
+                if file_size > 12000:  # Increased limit for batch processing
+                    content = self._smart_truncate_content(content, 12000)
+                    logger.debug(
+                        f"Truncated large file {file_path} from {file_size} to {len(content)} chars"
+                    )
+
+                file_content_data.append(
+                    {
+                        "file_path": str(file_path),
+                        "language": language,
+                        "content": content,
+                        "size": len(content),
+                        "priority": 0.5,  # Default priority
+                        "original_size": file_size,
+                    }
+                )
+
+            except Exception as e:
+                logger.warning(f"Failed to read {file_path}: {e}")
+
+        logger.debug(
+            f"Successfully collected content from {len(file_content_data)} files"
+        )
+        return file_content_data
+
+    def _smart_truncate_content(self, content: str, max_length: int) -> str:
+        """Intelligently truncate content while preserving structure.
+
+        Args:
+            content: Original content
+            max_length: Maximum length to truncate to
+
+        Returns:
+            Truncated content with preserved structure
+        """
+        if len(content) <= max_length:
+            return content
+
+        # Try to find a good breaking point (end of function, class, etc.)
+        lines = content.split("\n")
+        accumulated_length = 0
+        truncate_point = 0
+
+        for i, line in enumerate(lines):
+            line_length = len(line) + 1  # +1 for newline
+            if accumulated_length + line_length > max_length * 0.8:  # Leave some buffer
+                # Look for natural breaking points
+                if any(
+                    marker in line
+                    for marker in ["def ", "class ", "function ", "}", "end"]
+                ):
+                    truncate_point = i + 1
+                    break
+                elif not line.strip():  # Empty line is also a good break
+                    truncate_point = i
+                    break
+            accumulated_length += line_length
+            truncate_point = i
+
+        truncated_content = "\n".join(lines[:truncate_point])
+        return truncated_content + "\n... [truncated for analysis]"
+
+    async def _process_single_batch(
+        self, batch_content: list[dict], max_findings_per_file: int, batch_number: int
+    ) -> list[LLMSecurityFinding]:
+        """Process a single optimized batch with enhanced error handling.
+
+        Args:
+            batch_content: List of file content dictionaries
+            max_findings_per_file: Maximum findings per file
+            batch_number: Batch number for logging
+
+        Returns:
+            List of security findings
+        """
+        # Check for circuit breaking before processing
+        batch_hash = self._get_batch_hash(batch_content)
+        if self._should_skip_batch(batch_hash):
+            logger.warning(
+                f"CIRCUIT BREAKER: Skipping batch {batch_number} (hash: {batch_hash[:8]}) - previously failed {self.batch_failure_counts.get(batch_hash, 0)} times"
+            )
+            return []
+
+        # Create optimized batch analysis prompt
+        system_prompt = self._get_enhanced_batch_system_prompt(batch_content)
+        user_prompt = self._create_enhanced_batch_user_prompt(
+            batch_content, max_findings_per_file
+        )
+
+        # Estimate token usage for this batch
+        total_chars = sum(len(fc["content"]) for fc in batch_content)
+        estimated_tokens = (
+            total_chars // 4 + len(system_prompt) // 4 + len(user_prompt) // 4
+        )
+
+        logger.info(
+            f"Batch {batch_number} (hash: {batch_hash[:8]}): {len(batch_content)} files, "
+            f"~{estimated_tokens} tokens, languages: {list({fc['language'] for fc in batch_content})}"
+        )
+
+        try:
+            # For Anthropic, make direct API call to avoid double retries
+            if self.config.llm_provider == "anthropic":
+                try:
+                    response = await self.llm_client.complete_with_retry(
+                        system_prompt=system_prompt,
+                        user_prompt=user_prompt,
+                        temperature=self.config.llm_temperature,
+                        max_tokens=min(
+                            self.config.llm_max_tokens, 8000
+                        ),  # Conservative for batch
+                        response_format="json",
+                    )
+                    logger.info(
+                        f"Batch {batch_number} (hash: {batch_hash[:8]}): Direct Anthropic API call succeeded"
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Anthropic batch API call failed for batch {batch_number}: {e}"
+                    )
+                    self._record_batch_failure(batch_hash)
+                    raise LLMAnalysisError(f"Batch {batch_number} analysis failed: {e}")
+            else:
+                # For other providers, use the client's retry mechanism
+                response = await self.llm_client.complete_with_retry(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    temperature=self.config.llm_temperature,
+                    max_tokens=min(
+                        self.config.llm_max_tokens, 8000
+                    ),  # Conservative for batch
+                    response_format="json",
+                )
+
+            # Parse batch response with enhanced error handling
+            findings = self._parse_enhanced_batch_response(
+                response.content, batch_content
+            )
+
+            # Record success
+            self._record_batch_success(batch_hash)
+
+            logger.info(
+                f"Batch {batch_number} (hash: {batch_hash[:8]}) completed: {len(findings)} findings from "
+                f"{len(batch_content)} files - SUCCESS"
+            )
+
+            return findings
+
+        except Exception as e:
+            # Record failure for circuit breaking
+            self._record_batch_failure(batch_hash)
+            logger.error(
+                f"Batch {batch_number} failed and recorded for circuit breaking: {e}"
+            )
+            raise
+
+    async def _fallback_individual_analysis(
+        self, batch_content: list[dict], max_findings_per_file: int
+    ) -> list[LLMSecurityFinding]:
+        """Fallback to individual file analysis when batch processing fails.
+
+        Args:
+            batch_content: List of file content dictionaries
+            max_findings_per_file: Maximum findings per file
+
+        Returns:
+            List of security findings from individual analysis
+        """
+        findings = []
+
+        for file_info in batch_content:
+            try:
+                file_findings = await self._analyze_code_async(
+                    file_info["content"],
+                    file_info["file_path"],
+                    file_info["language"],
+                    max_findings_per_file,
+                )
+                findings.extend(file_findings)
+
+            except Exception as e:
+                logger.warning(
+                    f"Individual analysis failed for {file_info['file_path']}: {e}"
+                )
+
+        logger.info(f"Fallback analysis completed: {len(findings)} findings")
+        return findings
+
+    def _is_analyzable_file(self, file_path: Path) -> bool:
+        """Check if a file should be analyzed.
+
+        Args:
+            file_path: Path to check
+
+        Returns:
+            True if file should be analyzed
+        """
+        # Common source code extensions
+        analyzable_extensions = {
+            ".py",
+            ".js",
+            ".ts",
+            ".jsx",
+            ".tsx",
+            ".java",
+            ".c",
+            ".cpp",
+            ".cc",
+            ".h",
+            ".hpp",
+            ".cs",
+            ".go",
+            ".rs",
+            ".php",
+            ".rb",
+            ".swift",
+            ".kt",
+            ".scala",
+            ".r",
+            ".m",
+            ".mm",
+            ".sh",
+            ".bash",
+            ".zsh",
+            ".ps1",
+            ".pl",
+            ".lua",
+            ".dart",
+            ".vue",
+            ".svelte",
+        }
+
+        return file_path.suffix.lower() in analyzable_extensions
+
+    def _detect_language(self, file_path: Path) -> str:
+        """Detect programming language from file extension.
+
+        Args:
+            file_path: File path
+
+        Returns:
+            Language name
+        """
+        extension_map = {
+            ".py": "python",
+            ".js": "javascript",
+            ".ts": "typescript",
+            ".jsx": "javascript",
+            ".tsx": "typescript",
+            ".java": "java",
+            ".c": "c",
+            ".cpp": "cpp",
+            ".cc": "cpp",
+            ".h": "c",
+            ".hpp": "cpp",
+            ".cs": "csharp",
+            ".go": "go",
+            ".rs": "rust",
+            ".php": "php",
+            ".rb": "ruby",
+            ".swift": "swift",
+            ".kt": "kotlin",
+            ".scala": "scala",
+            ".r": "r",
+            ".m": "objc",
+            ".mm": "objc",
+            ".sh": "shell",
+            ".bash": "shell",
+            ".zsh": "shell",
+            ".ps1": "powershell",
+            ".pl": "perl",
+            ".lua": "lua",
+            ".dart": "dart",
+            ".vue": "vue",
+            ".svelte": "svelte",
+        }
+
+        return extension_map.get(file_path.suffix.lower(), "generic")
+
+    def _create_batch_user_prompt(
+        self, batch_content: list[dict[str, str]], max_findings_per_file: int
+    ) -> str:
+        """Create user prompt for batch analysis.
+
+        Args:
+            batch_content: List of file content dictionaries
+            max_findings_per_file: Maximum findings per file
+
+        Returns:
+            Formatted prompt string
+        """
+        prompt_parts = ["Analyze the following files for security vulnerabilities:\n"]
+
+        for i, file_info in enumerate(batch_content, 1):
+            prompt_parts.append(
+                f"\n=== File {i}: {file_info['file_path']} ({file_info['language']}) ===\n"
+            )
+            prompt_parts.append(
+                f"```{file_info['language']}\n{file_info['content']}\n```"
+            )
+
+        prompt_parts.append(
+            f"\n\nProvide up to {max_findings_per_file} security findings per file."
+        )
+        prompt_parts.append(
+            """
+Requirements:
+- Focus on genuine security vulnerabilities
+- Provide specific line numbers (1-indexed, exactly as they appear in the source code)
+- Include the vulnerable code snippet
+- IMPORTANT: Line numbers must match the exact line numbers in the provided source code (1-indexed)
+
+Response format:
+{
+  "findings": [
+    {
+      "file_path": "/path/to/file",
+      "type": "vulnerability_type",
+      "severity": "low|medium|high|critical",
+      "description": "brief description",
+      "line_number": 42,
+      "code_snippet": "vulnerable code",
+      "explanation": "detailed explanation",
+      "recommendation": "how to fix",
+      "confidence": 0.9,
+      "cwe_id": "CWE-89",
+      "owasp_category": "A03:2021"
+    }
+  ]
+}"""
+        )
+
+        return "\n".join(prompt_parts)
+
+    def _parse_batch_response(
+        self, response_text: str, batch_content: list[dict[str, str]]
+    ) -> list[LLMSecurityFinding]:
+        """Parse batch analysis response.
+
+        Args:
+            response_text: Raw response from LLM
+            batch_content: Original batch content for reference
+
+        Returns:
+            List of security findings
+        """
+        try:
+            data = json.loads(response_text)
+            findings = []
+
+            for finding_data in data.get("findings", []):
+                try:
+                    # Ensure file_path is included in finding
+                    file_path = finding_data.get("file_path", "")
+                    if not file_path and batch_content:
+                        # Default to first file if not specified
+                        file_path = batch_content[0]["file_path"]
+
+                    finding = LLMSecurityFinding(
+                        finding_type=finding_data.get("type", "unknown"),
+                        severity=finding_data.get("severity", "medium"),
+                        description=finding_data.get("description", ""),
+                        line_number=max(1, int(finding_data.get("line_number", 1))),
+                        code_snippet=finding_data.get("code_snippet", ""),
+                        explanation=finding_data.get("explanation", ""),
+                        recommendation=finding_data.get("recommendation", ""),
+                        confidence=float(finding_data.get("confidence", 0.5)),
+                        file_path=file_path,
+                        cwe_id=finding_data.get("cwe_id"),
+                        owasp_category=finding_data.get("owasp_category"),
+                    )
+                    findings.append(finding)
+                except Exception as e:
+                    logger.warning(f"Failed to parse batch finding: {e}")
+
+            return findings
+
+        except Exception as e:
+            logger.error(f"Failed to parse batch response: {e}")
+            return []
+
+    def _get_enhanced_batch_system_prompt(self, batch_content: list[dict]) -> str:
+        """Get enhanced system prompt for optimized batch analysis.
+
+        Args:
+            batch_content: List of file content dictionaries with metadata
+
+        Returns:
+            Enhanced system prompt string
+        """
+        languages = {fc["language"] for fc in batch_content}
+        file_count = len(batch_content)
+
+        return f"""You are a senior security engineer performing static code analysis on {file_count} files.
+Your task is to analyze code for security vulnerabilities across multiple files and provide detailed, actionable findings.
+
+Target languages: {', '.join(languages)}
+Analysis scope: Cross-file vulnerabilities, individual file issues, and architectural security concerns
+
+Guidelines:
+1. Focus on real security issues, not code style or minor concerns
+2. Consider cross-file relationships and data flow between files
+3. Provide specific line numbers and code snippets for each file
+4. Include detailed explanations of why something is vulnerable
+5. Offer concrete remediation advice
+6. Assign appropriate severity levels (low, medium, high, critical)
+7. Be precise about vulnerability types and CWE mappings
+8. Avoid false positives - only report genuine security concerns
+9. Consider the full context of the codebase when making assessments
+10. Look for patterns across files that might indicate systemic issues
+
+Response format: JSON object with "findings" array containing security issues.
+Each finding should have: file_path, type, severity, description, line_number, code_snippet, explanation, recommendation, confidence, cwe_id (optional), owasp_category (optional).
+
+Priority vulnerability types to look for:
+- Authentication/authorization bypasses across modules
+- SQL injection, Command injection, Code injection
+- Cross-site scripting (XSS) and CSRF vulnerabilities
+- Path traversal and directory traversal
+- Deserialization vulnerabilities
+- Hardcoded credentials, API keys, secrets
+- Weak cryptography and insecure random numbers
+- Input validation issues and injection flaws
+- Session management and state handling flaws
+- Information disclosure and data leakage
+- Logic errors with security implications
+- Race conditions and concurrency issues
+- Denial of service vulnerabilities
+- Configuration and deployment security issues"""
+
+    def _create_enhanced_batch_user_prompt(
+        self, batch_content: list[dict], max_findings_per_file: int
+    ) -> str:
+        """Create enhanced user prompt for optimized batch analysis.
+
+        Args:
+            batch_content: List of file content dictionaries with metadata
+            max_findings_per_file: Maximum findings per file
+
+        Returns:
+            Enhanced formatted prompt string
+        """
+        # Group files by language for better organization
+        files_by_language = {}
+        for file_info in batch_content:
+            lang = file_info["language"]
+            if lang not in files_by_language:
+                files_by_language[lang] = []
+            files_by_language[lang].append(file_info)
+
+        prompt_parts = [
+            "Analyze the following codebase files for security vulnerabilities:\n"
+        ]
+
+        # Add language-grouped sections
+        for language, files in files_by_language.items():
+            prompt_parts.append(f"\n## {language.upper()} Files ({len(files)} files)\n")
+
+            for i, file_info in enumerate(files, 1):
+                complexity_indicator = (
+                    "complex"
+                    if file_info["complexity"] > 0.7
+                    else "moderate" if file_info["complexity"] > 0.3 else "simple"
+                )
+                size_indicator = f"{file_info['size']} chars"
+
+                prompt_parts.append(f"\n### File {i}: {file_info['file_path']}")
+                prompt_parts.append(
+                    f"Language: {file_info['language']}, Size: {size_indicator}, Complexity: {complexity_indicator}\n"
+                )
+                prompt_parts.append(
+                    f"```{file_info['language']}\n{file_info['content']}\n```\n"
+                )
+
+        total_files = len(batch_content)
+        total_findings_limit = max_findings_per_file * total_files
+
+        prompt_parts.append(
+            f"""\n\n## Analysis Requirements
+
+Provide up to {total_findings_limit} security findings total (max {max_findings_per_file} per file).
+
+**Critical Requirements:**
+- Focus on genuine security vulnerabilities, not code quality issues
+- Provide specific line numbers (1-indexed, exactly as they appear in the source code)
+- Include the vulnerable code snippet for each finding
+- Consider relationships between files (shared functions, data flow, etc.)
+- Prioritize high-impact vulnerabilities that could lead to compromise
+- IMPORTANT: Line numbers must match the exact line numbers in the provided source code (1-indexed)
+
+**Analysis Priority:**
+1. Critical vulnerabilities (RCE, authentication bypass, etc.)
+2. High-impact data exposure or injection flaws
+3. Cross-file security architectural issues
+4. Medium-impact vulnerabilities with clear attack vectors
+5. Low-impact issues with security implications
+
+**Response format:**
+```json
+{{
+  "findings": [
+    {{
+      "file_path": "/exact/path/from/above",
+      "type": "vulnerability_type",
+      "severity": "low|medium|high|critical",
+      "description": "brief description",
+      "line_number": 42,
+      "code_snippet": "vulnerable code line",
+      "explanation": "detailed explanation of the vulnerability",
+      "recommendation": "specific steps to fix",
+      "confidence": 0.9,
+      "cwe_id": "CWE-89",
+      "owasp_category": "A03:2021"
+    }}
+  ],
+  "analysis_summary": {{
+    "total_files_analyzed": {total_files},
+    "files_with_findings": 0,
+    "critical_findings": 0,
+    "high_findings": 0,
+    "cross_file_issues_detected": false
+  }}
+}}
+```"""
+        )
+
+        return "\n".join(prompt_parts)
+
+    def _parse_enhanced_batch_response(
+        self, response_text: str, batch_content: list[dict]
+    ) -> list[LLMSecurityFinding]:
+        """Parse enhanced batch analysis response with better error handling.
+
+        Args:
+            response_text: Raw response from LLM
+            batch_content: Original batch content for reference
+
+        Returns:
+            List of security findings
+        """
+        try:
+            data = json.loads(response_text)
+            findings = []
+
+            # Extract summary information if available
+            summary = data.get("analysis_summary", {})
+            if summary:
+                logger.info(f"Batch analysis summary: {summary}")
+
+            for finding_data in data.get("findings", []):
+                try:
+                    # Validate file_path is in the batch
+                    file_path = finding_data.get("file_path", "")
+                    if not any(fc["file_path"] == file_path for fc in batch_content):
+                        # Try to match by filename if full path doesn't match
+                        file_name = (
+                            file_path.split("/")[-1] if "/" in file_path else file_path
+                        )
+                        matched_file = None
+                        for fc in batch_content:
+                            if fc["file_path"].endswith(file_name):
+                                matched_file = fc["file_path"]
+                                break
+
+                        if matched_file:
+                            file_path = matched_file
+                            logger.debug(
+                                f"Matched file by name: {file_name} -> {file_path}"
+                            )
+                        else:
+                            logger.warning(
+                                f"Finding references unknown file: {file_path}"
+                            )
+                            continue
+
+                    # Enhanced validation
+                    line_number = max(1, int(finding_data.get("line_number", 1)))
+                    confidence = max(
+                        0.0, min(1.0, float(finding_data.get("confidence", 0.5)))
+                    )
+
+                    finding = LLMSecurityFinding(
+                        finding_type=finding_data.get("type", "unknown"),
+                        severity=finding_data.get("severity", "medium"),
+                        description=finding_data.get("description", ""),
+                        line_number=line_number,
+                        code_snippet=finding_data.get("code_snippet", ""),
+                        explanation=finding_data.get("explanation", ""),
+                        recommendation=finding_data.get("recommendation", ""),
+                        confidence=confidence,
+                        file_path=file_path,
+                        cwe_id=finding_data.get("cwe_id"),
+                        owasp_category=finding_data.get("owasp_category"),
+                    )
+                    findings.append(finding)
+
+                except Exception as e:
+                    logger.warning(f"Failed to parse enhanced batch finding: {e}")
+
+            logger.info(
+                f"Enhanced batch parsing: {len(findings)} valid findings extracted"
+            )
+            return findings
+
+        except Exception as e:
+            logger.error(f"Failed to parse enhanced batch response: {e}")
+            # Fall back to original batch parsing method
+            return self._parse_batch_response(response_text, batch_content)
 
     def batch_analyze_code(
         self,
@@ -558,19 +1836,71 @@ Response format:
             List of findings lists (one per sample)
         """
         logger.info(f"batch_analyze_code called with {len(code_samples)} samples")
-        logger.debug(
-            "Client-based LLM approach - returning empty results for all samples"
+
+        if not self.llm_client:
+            logger.warning("LLM client not initialized, returning empty results")
+            return [[] for _ in code_samples]
+
+        # Run async batch analysis in sync context
+        try:
+            # Try to get current event loop
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # If there's already a running loop, we need to use asyncio.run in a thread
+                import concurrent.futures
+
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(
+                        asyncio.run,
+                        self._batch_analyze_code_async(
+                            code_samples, max_findings_per_sample
+                        ),
+                    )
+                    return future.result()
+            else:
+                return loop.run_until_complete(
+                    self._batch_analyze_code_async(
+                        code_samples, max_findings_per_sample
+                    )
+                )
+        except RuntimeError:
+            # No event loop exists, create one
+            return asyncio.run(
+                self._batch_analyze_code_async(code_samples, max_findings_per_sample)
+            )
+
+    async def _batch_analyze_code_async(
+        self,
+        code_samples: list[tuple[str, str, str]],
+        max_findings_per_sample: int = 20,
+    ) -> list[list[LLMSecurityFinding]]:
+        """Async implementation of batch code analysis.
+
+        Args:
+            code_samples: List of (code, file_path, language) tuples
+            max_findings_per_sample: Maximum findings per sample
+
+        Returns:
+            List of findings lists (one per sample)
+        """
+        # Create batch content
+        batch_content = []
+        for code, file_path, language in code_samples:
+            batch_content.append(
+                {"file_path": file_path, "language": language, "content": code}
+            )
+
+        # Analyze as batch
+        all_findings = await self._analyze_batch_async(
+            [Path(bc["file_path"]) for bc in batch_content], max_findings_per_sample
         )
 
+        # Group findings by file
         results = []
-        for i, (code, file_path, language) in enumerate(code_samples):
-            logger.debug(
-                f"Processing sample {i+1}/{len(code_samples)}: {file_path} ({language})"
-            )
-            # For client-based approach, return empty results
-            results.append([])
+        for code, file_path, language in code_samples:
+            file_findings = [f for f in all_findings if f.file_path == file_path]
+            results.append(file_findings)
 
-        logger.info(f"Completed batch analysis for {len(code_samples)} samples")
         return results
 
     def get_analysis_stats(self) -> dict[str, Any]:

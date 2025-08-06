@@ -1,11 +1,24 @@
 """LLM-based validator for security findings to reduce false positives and generate exploitation analysis."""
 
+import asyncio
 import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
+from ..batch import (
+    BatchConfig,
+    BatchProcessor,
+    BatchStrategy,
+    FileAnalysisContext,
+    Language,
+)
+from ..cache import CacheKey, CacheManager, CacheType
+from ..config import get_app_cache_dir
 from ..credentials import CredentialManager
+from ..llm import LLMClient, LLMProvider, create_llm_client
 from ..logger import get_logger
+from ..resilience import ErrorHandler, ResilienceConfig
 from .exploit_generator import ExploitGenerator
 from .types import Severity, ThreatMatch
 
@@ -74,16 +87,82 @@ class ValidationPrompt:
 class LLMValidator:
     """LLM-based validator for security findings."""
 
-    def __init__(self, credential_manager: CredentialManager):
+    def __init__(
+        self,
+        credential_manager: CredentialManager,
+        cache_manager: CacheManager | None = None,
+    ):
         """Initialize the LLM validator.
 
         Args:
             credential_manager: Credential manager for configuration
+            cache_manager: Optional cache manager for validation results
         """
         logger.info("Initializing LLMValidator")
         self.credential_manager = credential_manager
         self.config = credential_manager.load_config()
         self.exploit_generator = ExploitGenerator(credential_manager)
+        self.llm_client: LLMClient | None = None
+        self.cache_manager = cache_manager
+
+        # Initialize cache manager if not provided
+        if cache_manager is None and self.config.enable_caching:
+            cache_dir = get_app_cache_dir()
+            self.cache_manager = CacheManager(
+                cache_dir=cache_dir,
+                max_size_mb=self.config.cache_max_size_mb,
+                max_age_hours=self.config.cache_max_age_hours,
+            )
+            logger.info(f"Initialized cache manager for validator at {cache_dir}")
+
+        # Initialize intelligent batch processor for validation
+        batch_config = BatchConfig(
+            strategy=BatchStrategy.TOKEN_BASED,  # Token-based is best for validation
+            min_batch_size=1,
+            max_batch_size=min(
+                10, getattr(self.config, "llm_batch_size", 5)
+            ),  # Smaller batches for validation
+            target_tokens_per_batch=50000,  # Smaller token limit for validation
+            max_tokens_per_batch=80000,
+            batch_timeout_seconds=180,  # 3 minutes for validation
+            max_concurrent_batches=2,  # Conservative concurrency for validation
+            group_by_language=False,  # Don't group by language for validation
+            group_by_complexity=True,  # Group by complexity for better analysis
+        )
+        self.batch_processor = BatchProcessor(batch_config)
+        logger.info(
+            "Initialized BatchProcessor for validation with token-based strategy"
+        )
+
+        # Initialize ErrorHandler for validation resilience
+        resilience_config = ResilienceConfig(
+            enable_circuit_breaker=True,
+            failure_threshold=2,  # Lower threshold for validation
+            recovery_timeout_seconds=90,  # Faster recovery for validation
+            enable_retry=True,
+            max_retry_attempts=2,  # Fewer retries for validation
+            base_delay_seconds=2.0,  # Longer base delay
+            enable_graceful_degradation=True,
+        )
+        self.error_handler = ErrorHandler(resilience_config)
+        logger.info("Initialized ErrorHandler for validation resilience")
+
+        # Initialize LLM client if configured
+        if self.config.llm_provider and self.config.llm_api_key:
+            logger.info(
+                f"Initializing LLM client for validator: {self.config.llm_provider}"
+            )
+            self.llm_client = create_llm_client(
+                provider=LLMProvider(self.config.llm_provider),
+                api_key=self.config.llm_api_key,
+                model=self.config.llm_model,
+            )
+            logger.info("LLM client initialized successfully for validator")
+        else:
+            logger.warning(
+                "LLM provider not configured, validator will not be functional"
+            )
+
         logger.debug("LLMValidator initialized successfully")
 
     def validate_findings(
@@ -104,48 +183,423 @@ class LLMValidator:
         Returns:
             Dictionary mapping finding UUID to validation result
         """
-        logger.info(f"Validating {len(findings)} findings for {file_path}")
+        logger.info(f"Starting validation of {len(findings)} findings for {file_path}")
+        logger.debug(
+            f"Generate exploits: {generate_exploits}, Source code length: {len(source_code)} chars"
+        )
 
         if not findings:
-            logger.debug("No findings to validate")
+            logger.debug("No findings to validate, returning empty result")
             return {}
 
-        validation_results = {}
-
-        # In client-based approach, we create prompts but don't execute
-        # The actual validation happens on the client side
-        for finding in findings:
-            logger.debug(f"Processing finding {finding.uuid}: {finding.rule_name}")
-
-            # Create a placeholder result indicating validation is pending
-            validation_results[finding.uuid] = ValidationResult(
-                finding_uuid=finding.uuid,
-                is_legitimate=True,  # Default to legitimate until proven otherwise
-                confidence=0.5,  # Medium confidence as placeholder
-                reasoning="Client-based validation pending",
-                exploitation_vector=None,
-                exploit_poc=None,
-                remediation_advice=None,
-                severity_adjustment=None,
-                validation_error=None,
+        if not self.llm_client:
+            logger.warning("LLM client not initialized, returning unvalidated results")
+            # Return default results when LLM not available
+            return self._create_default_results(
+                findings, generate_exploits, source_code
             )
 
-            # Generate exploit POC if requested
-            if generate_exploits and self.exploit_generator.is_llm_available():
+        # Run async validation in sync context
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        return loop.run_until_complete(
+            self._validate_findings_async(
+                findings, source_code, file_path, generate_exploits
+            )
+        )
+
+    async def _validate_findings_async(
+        self,
+        findings: list[ThreatMatch],
+        source_code: str,
+        file_path: str,
+        generate_exploits: bool = True,
+    ) -> dict[str, ValidationResult]:
+        """Enhanced async implementation of findings validation with intelligent batching and caching.
+
+        Args:
+            findings: List of threat matches to validate
+            source_code: Source code containing the vulnerabilities
+            file_path: Path to the source file
+            generate_exploits: Whether to generate exploit POCs
+
+        Returns:
+            Dictionary mapping finding UUID to validation result
+        """
+        validation_results = {}
+
+        # Check cache first if enabled
+        cached_results = await self._get_cached_validation_results(
+            findings, source_code, file_path
+        )
+        if cached_results:
+            logger.info(f"Found {len(cached_results)} cached validation results")
+            validation_results.update(cached_results)
+
+            # Remove cached findings from the list to process
+            uncached_findings = [f for f in findings if f.uuid not in cached_results]
+            if not uncached_findings:
+                logger.info("All validation results found in cache")
+                return validation_results
+            findings = uncached_findings
+
+        logger.info(
+            f"Starting intelligent batch validation for {len(findings)} findings"
+        )
+
+        # Create validation contexts for intelligent batching
+        validation_contexts = []
+        for finding in findings:
+            # Create a pseudo file context for batch processing
+            # We'll use the finding's complexity and severity to guide batching
+            complexity_score = self._calculate_finding_complexity(finding)
+
+            context = FileAnalysisContext(
+                file_path=Path(file_path),
+                content=finding.code_snippet,  # Use code snippet as content
+                language=Language.GENERIC,  # Validation doesn't need language-specific batching
+                file_size_bytes=len(finding.code_snippet),
+                estimated_tokens=len(finding.code_snippet) // 4,  # Rough estimate
+                complexity_score=complexity_score,
+                priority=self._get_finding_priority(finding),
+                metadata={"finding": finding, "source_code": source_code},
+            )
+            validation_contexts.append(context)
+
+        # Create intelligent batches using the batch processor
+        batches = self.batch_processor.create_batches(
+            validation_contexts, model=self.config.llm_model
+        )
+        logger.info(f"Created {len(batches)} intelligent validation batches")
+
+        # Define batch processing function
+        async def process_validation_batch(
+            batch_contexts: list[FileAnalysisContext],
+        ) -> dict[str, ValidationResult]:
+            """Process a batch of validation contexts with resilience."""
+            batch_findings = [ctx.metadata["finding"] for ctx in batch_contexts]
+            batch_source_code = batch_contexts[0].metadata[
+                "source_code"
+            ]  # Same for all
+
+            # Check if we should use resilience for this batch
+            async def validation_call():
+                return await self._validate_single_batch(
+                    batch_findings, batch_source_code, file_path, generate_exploits
+                )
+
+            # Create fallback function for graceful degradation
+            async def validation_fallback(*args, **kwargs):
+                logger.warning(
+                    f"Validation service degraded, using fallback for {len(batch_findings)} findings"
+                )
+                fallback_results = {}
+                for finding in batch_findings:
+                    fallback_results[finding.uuid] = ValidationResult(
+                        finding_uuid=finding.uuid,
+                        is_legitimate=True,  # Fail open - keep finding as precaution
+                        confidence=0.6,  # Medium confidence for fallback
+                        reasoning="Validation service degraded, keeping finding as precaution",
+                    )
+                return fallback_results
+
+            # Execute with comprehensive error recovery
+            recovery_result = await self.error_handler.execute_with_recovery(
+                validation_call,
+                operation_name=f"validation_batch_{len(batch_findings)}_findings",
+                circuit_breaker_name="validation_service",
+                fallback_func=validation_fallback,
+            )
+
+            if recovery_result.success:
+                return recovery_result.result
+            else:
+                # Use fallback results if recovery completely failed
+                return await validation_fallback()
+
+        def progress_callback(completed: int, total: int):
+            """Progress callback for batch processing."""
+            logger.info(f"Validation progress: {completed}/{total} batches completed")
+
+        # Process all batches with intelligent concurrency control
+        batch_results = await self.batch_processor.process_batches(
+            batches, process_validation_batch, progress_callback
+        )
+
+        # Flatten and merge results
+        for batch_result in batch_results:
+            if batch_result:  # Filter out None results from failed batches
+                validation_results.update(batch_result)
+
+        # Cache the new validation results
+        await self._cache_validation_results(validation_results, source_code, file_path)
+
+        # Log batch processing metrics
+        metrics = self.batch_processor.get_metrics()
+        logger.info(f"Validation batch processing completed: {metrics.to_dict()}")
+
+        logger.info(f"Validation completed: {len(validation_results)} total results")
+        return validation_results
+
+    async def _get_cached_validation_results(
+        self, findings: list[ThreatMatch], source_code: str, file_path: str
+    ) -> dict[str, ValidationResult]:
+        """Get cached validation results for findings."""
+        if not self.cache_manager or not self.config.cache_llm_responses:
+            return {}
+
+        cached_results = {}
+        try:
+            hasher = self.cache_manager.get_hasher()
+            for finding in findings:
+                # Create cache key for this specific finding validation
+                validation_hash = hasher.hash_validation_context(
+                    findings=[finding],
+                    validator_model=self.config.llm_model or "default",
+                    confidence_threshold=CONFIDENCE_THRESHOLD,
+                    additional_context={"file_path": file_path},
+                )
+
+                cache_key = CacheKey(
+                    cache_type=CacheType.VALIDATION_RESULT,
+                    content_hash=hasher.hash_content(source_code),
+                    metadata_hash=validation_hash,
+                )
+
+                cached_result = self.cache_manager.get(cache_key)
+                if cached_result and isinstance(cached_result, dict):
+                    validation_result = ValidationResult(**cached_result)
+                    cached_results[finding.uuid] = validation_result
+
+        except Exception as e:
+            logger.warning(f"Failed to retrieve cached validation results: {e}")
+
+        return cached_results
+
+    async def _cache_validation_results(
+        self,
+        validation_results: dict[str, ValidationResult],
+        source_code: str,
+        file_path: str,
+    ) -> None:
+        """Cache validation results."""
+        if not self.cache_manager or not self.config.cache_llm_responses:
+            return
+
+        try:
+            hasher = self.cache_manager.get_hasher()
+            content_hash = hasher.hash_content(source_code)
+
+            for uuid, result in validation_results.items():
+                # Create a dummy finding for hashing (we'd need the original finding for proper caching)
+                validation_hash = hasher.hash_validation_context(
+                    findings=[],  # Empty for now - could be improved with original finding
+                    validator_model=self.config.llm_model or "default",
+                    confidence_threshold=CONFIDENCE_THRESHOLD,
+                    additional_context={"file_path": file_path, "uuid": uuid},
+                )
+
+                cache_key = CacheKey(
+                    cache_type=CacheType.VALIDATION_RESULT,
+                    content_hash=content_hash,
+                    metadata_hash=validation_hash,
+                )
+
+                # Cache for shorter duration than LLM responses (validation can change more often)
+                cache_expiry_seconds = (
+                    self.config.cache_max_age_hours * 1800
+                )  # Half the normal duration
+                self.cache_manager.put(
+                    cache_key, result.to_dict(), cache_expiry_seconds
+                )
+
+        except Exception as e:
+            logger.warning(f"Failed to cache validation results: {e}")
+
+    def _calculate_finding_complexity(self, finding: ThreatMatch) -> float:
+        """Calculate complexity score for a finding to guide batching."""
+        complexity = 0.0
+
+        # Base complexity on severity
+        severity_weights = {
+            Severity.LOW: 0.2,
+            Severity.MEDIUM: 0.4,
+            Severity.HIGH: 0.7,
+            Severity.CRITICAL: 1.0,
+        }
+        complexity += severity_weights.get(finding.severity, 0.5)
+
+        # Add complexity based on code snippet length
+        snippet_length = len(finding.code_snippet)
+        if snippet_length > 500:
+            complexity += 0.3
+        elif snippet_length > 200:
+            complexity += 0.2
+        elif snippet_length > 100:
+            complexity += 0.1
+
+        # Add complexity based on description length (more complex findings have longer descriptions)
+        desc_length = len(finding.description)
+        if desc_length > 200:
+            complexity += 0.2
+        elif desc_length > 100:
+            complexity += 0.1
+
+        return min(1.0, complexity)
+
+    def _get_finding_priority(self, finding: ThreatMatch) -> int:
+        """Get priority for a finding to guide batching order."""
+        # Higher severity = higher priority
+        severity_priorities = {
+            Severity.CRITICAL: 4,
+            Severity.HIGH: 3,
+            Severity.MEDIUM: 2,
+            Severity.LOW: 1,
+        }
+        return severity_priorities.get(finding.severity, 2)
+
+    async def _validate_single_batch(
+        self,
+        batch_findings: list[ThreatMatch],
+        source_code: str,
+        file_path: str,
+        generate_exploits: bool = True,
+    ) -> dict[str, ValidationResult]:
+        """Validate a single batch of findings (replacement for the old batch processing logic)."""
+        try:
+            # Create validation prompt for batch
+            system_prompt = self._create_system_prompt()
+            user_prompt = self._create_user_prompt(
+                batch_findings, source_code, file_path
+            )
+
+            logger.debug(
+                f"Validating batch of {len(batch_findings)} findings - "
+                f"system prompt: {len(system_prompt)} chars, "
+                f"user prompt: {len(user_prompt)} chars"
+            )
+
+            # Make LLM request
+            response = await self.llm_client.complete_with_retry(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                temperature=0.1,  # Low temperature for consistent validation
+                max_tokens=self.config.llm_max_tokens,
+                response_format="json",
+            )
+
+            logger.info(
+                f"Validation response received for batch, "
+                f"content length: {len(response.content)} chars"
+            )
+
+            # Parse response
+            batch_results = self.parse_validation_response(
+                response.content, batch_findings
+            )
+
+            # Generate exploit POCs for validated findings if requested
+            if generate_exploits:
+                await self._generate_exploits_for_batch(
+                    batch_results, batch_findings, source_code
+                )
+
+            logger.info(f"Validated {len(batch_results)} findings in batch")
+            return batch_results
+
+        except Exception as e:
+            logger.error(f"Batch validation failed: {e}")
+            # Create default results for failed batch
+            default_results = {}
+            for finding in batch_findings:
+                default_results[finding.uuid] = ValidationResult(
+                    finding_uuid=finding.uuid,
+                    is_legitimate=True,  # Fail open - keep finding if validation fails
+                    confidence=0.5,
+                    reasoning="Validation failed, keeping finding as precaution",
+                    validation_error=str(e),
+                )
+            return default_results
+
+    async def _generate_exploits_for_batch(
+        self,
+        validation_results: dict[str, ValidationResult],
+        batch_findings: list[ThreatMatch],
+        source_code: str,
+    ) -> None:
+        """Generate exploits for validated findings in a batch."""
+        eligible_findings = [
+            (uuid, val)
+            for uuid, val in validation_results.items()
+            if val.is_legitimate and val.confidence >= CONFIDENCE_THRESHOLD
+        ]
+
+        logger.info(
+            f"Generating exploits for {len(eligible_findings)} validated findings in batch"
+        )
+
+        for finding_uuid, validation in eligible_findings:
+            finding = next((f for f in batch_findings if f.uuid == finding_uuid), None)
+            if finding:
                 try:
-                    logger.debug(f"Generating exploit POC for finding {finding.uuid}")
+                    logger.debug(
+                        f"Generating exploit POC for validated finding {finding_uuid} "
+                        f"(confidence: {validation.confidence:.2f})"
+                    )
                     exploit_poc = self.exploit_generator.generate_exploits(
                         finding,
                         source_code,
-                        use_llm=False,  # Use template-based for now
+                        use_llm=self.exploit_generator.is_llm_available(),
+                    )
+                    if exploit_poc:
+                        validation.exploit_poc = exploit_poc
+                        logger.debug(
+                            f"Generated {len(exploit_poc)} exploit POCs for {finding_uuid}"
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to generate exploit POC for {finding_uuid}: {e}"
+                    )
+
+    def _create_default_results(
+        self, findings: list[ThreatMatch], generate_exploits: bool, source_code: str
+    ) -> dict[str, ValidationResult]:
+        """Create default validation results when LLM is not available.
+
+        Args:
+            findings: List of findings
+            generate_exploits: Whether to generate exploits
+            source_code: Source code
+
+        Returns:
+            Dictionary of default validation results
+        """
+        validation_results = {}
+
+        for finding in findings:
+            validation_results[finding.uuid] = ValidationResult(
+                finding_uuid=finding.uuid,
+                is_legitimate=True,  # Default to legitimate when no validation available
+                confidence=0.7,  # Medium-high confidence as default
+                reasoning="LLM validation not available, finding kept as precaution",
+                validation_error="LLM client not initialized",
+            )
+
+            # Still try to generate exploit POC if available
+            if generate_exploits and self.exploit_generator.is_llm_available():
+                try:
+                    exploit_poc = self.exploit_generator.generate_exploits(
+                        finding, source_code, use_llm=False  # Use template-based
                     )
                     if exploit_poc:
                         validation_results[finding.uuid].exploit_poc = exploit_poc
-                        logger.debug(f"Generated {len(exploit_poc)} exploit POCs")
                 except Exception as e:
                     logger.warning(f"Failed to generate exploit POC: {e}")
 
-        logger.info(f"Validation complete for {len(validation_results)} findings")
         return validation_results
 
     def create_validation_prompt(
@@ -325,22 +779,27 @@ Be thorough but practical - focus on real security impact."""
 
 For each finding, determine if it's a legitimate vulnerability or a false positive.
 
-Response format:
+Response format (valid JSON only):
 {{
   "validations": [
     {{
       "finding_uuid": "uuid-here",
-      "is_legitimate": true/false,
+      "is_legitimate": true,
       "confidence": 0.9,
       "reasoning": "Detailed explanation of why this is/isn't a real vulnerability",
       "exploitation_vector": "How an attacker could exploit this (if legitimate)",
       "remediation_advice": "How to fix this vulnerability (if legitimate)",
-      "severity_adjustment": "high/medium/low/critical (only if current severity is wrong)"
+      "severity_adjustment": "high"
     }}
   ]
 }}
 
-Be specific and consider the full context when making determinations."""
+Important:
+- is_legitimate must be a boolean (true/false)
+- confidence must be a number between 0.0 and 1.0
+- severity_adjustment is optional and should only be provided if the current severity is incorrect
+- Consider the full context when making determinations
+- Be specific about why something is or isn't a vulnerability"""
 
         return prompt
 

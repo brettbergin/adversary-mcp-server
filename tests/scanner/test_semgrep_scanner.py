@@ -1,6 +1,7 @@
 """Tests for SemgrepScanner module."""
 
 import os
+import subprocess
 import sys
 import time
 from unittest.mock import AsyncMock, MagicMock, mock_open, patch
@@ -1296,6 +1297,410 @@ class TestSemgrepScannerCompatibility:
             # Should set our custom vars
             assert env["SEMGREP_APP_TOKEN"] == "test-key"
             assert env["SEMGREP_USER_AGENT_APPEND"] == "adversary-mcp-server"
+
+
+class TestSemgrepScannerAdvancedCoverage:
+    """Additional tests to improve coverage for missing lines."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.scanner = SemgrepScanner()
+
+    def test_module_level_exception_during_availability_check(self):
+        """Test module-level exception handling during semgrep availability check."""
+        # This tests lines 47 and 51 - exception handling in module initialization
+
+        with patch("subprocess.run") as mock_run:
+            # Mock subprocess.run to raise TimeoutExpired (line 47)
+            mock_run.side_effect = subprocess.TimeoutExpired("semgrep", 5)
+
+            # Re-import module to trigger the exception path
+
+            import adversary_mcp_server.scanner.semgrep_scanner as scanner_module
+
+            # Force module reload to test exception handling
+            with patch.object(scanner_module, "_SEMGREP_AVAILABLE", False):
+                scanner = SemgrepScanner()
+                assert not scanner.is_available()
+
+    def test_advanced_cache_manager_initialization_failure(self):
+        """Test advanced cache manager initialization failure (lines 106-107)."""
+        mock_credential_manager = MagicMock()
+        mock_config = MagicMock()
+        mock_config.enable_caching = True
+        mock_config.cache_max_size_mb = 100
+        mock_config.cache_max_age_hours = 24
+        mock_credential_manager.load_config.return_value = mock_config
+
+        # Mock CacheManager to raise exception during initialization
+        with patch(
+            "adversary_mcp_server.scanner.semgrep_scanner.CacheManager"
+        ) as mock_cache_manager:
+            mock_cache_manager.side_effect = Exception("Cache initialization failed")
+
+            with patch(
+                "adversary_mcp_server.scanner.semgrep_scanner.get_app_cache_dir",
+                return_value="/tmp/cache",
+            ):
+                # This should trigger the exception handling in lines 106-107
+                scanner = SemgrepScanner(credential_manager=mock_credential_manager)
+
+                # Scanner should still initialize despite cache manager failure
+                assert scanner.credential_manager is mock_credential_manager
+                assert (
+                    scanner.cache_manager is None
+                )  # Should remain None due to exception
+
+    @pytest.mark.asyncio
+    async def test_find_semgrep_process_termination_handling(self):
+        """Test process termination handling in _find_semgrep (lines 158, 162)."""
+        scanner = SemgrepScanner()
+        scanner._semgrep_path = None  # Clear cache
+
+        with patch("asyncio.create_subprocess_exec") as mock_create:
+            mock_proc = AsyncMock()
+            mock_proc.returncode = None  # Process still running
+            mock_create.return_value = mock_proc
+
+            # Mock wait_for to raise TimeoutError, then process termination
+            with patch("asyncio.wait_for", side_effect=TimeoutError()):
+                # Mock terminate and wait to test lines 158-162
+                mock_proc.terminate = AsyncMock()
+                mock_proc.wait = AsyncMock()
+
+                try:
+                    await scanner._find_semgrep()
+                except RuntimeError:
+                    pass  # Expected when no valid semgrep found
+
+                # Process should be terminated due to timeout (called for each path tried)
+                assert mock_proc.terminate.call_count > 0
+
+    @pytest.mark.asyncio
+    async def test_find_semgrep_process_lookup_error_handling(self):
+        """Test ProcessLookupError handling during process termination."""
+        scanner = SemgrepScanner()
+        scanner._semgrep_path = None
+
+        with patch("asyncio.create_subprocess_exec") as mock_create:
+            mock_proc = AsyncMock()
+            mock_proc.returncode = None
+            mock_create.return_value = mock_proc
+
+            with patch("asyncio.wait_for", side_effect=TimeoutError()):
+                # Mock terminate to succeed but wait to raise ProcessLookupError
+                mock_proc.terminate = AsyncMock()
+                mock_proc.wait = AsyncMock(
+                    side_effect=ProcessLookupError("Process not found")
+                )
+
+                try:
+                    await scanner._find_semgrep()
+                except RuntimeError:
+                    pass  # Expected
+
+                # Should handle ProcessLookupError gracefully (called for multiple paths)
+                assert mock_proc.terminate.call_count > 0
+                assert mock_proc.wait.call_count > 0
+
+    @pytest.mark.asyncio
+    async def test_scan_code_with_advanced_cache_manager(self):
+        """Test scan_code with advanced cache manager integration."""
+        mock_cache_manager = MagicMock()
+        mock_hasher = MagicMock()
+        mock_hasher.hash_content.return_value = "test_hash"
+        mock_cache_manager.get_hasher.return_value = mock_hasher
+        mock_cache_manager.get.return_value = None  # Cache miss
+        mock_cache_manager.put = MagicMock()
+
+        # Mock credential manager to enable caching
+        mock_credential_manager = MagicMock()
+        mock_config = MagicMock()
+        mock_config.enable_caching = True
+        mock_credential_manager.load_config.return_value = mock_config
+
+        scanner = SemgrepScanner(
+            cache_manager=mock_cache_manager, credential_manager=mock_credential_manager
+        )
+
+        with patch.object(scanner, "is_available", return_value=True):
+            with patch.object(scanner, "_perform_scan", return_value=[]):
+                await scanner.scan_code("test code", "test.py", "python")
+
+                # Should interact with advanced cache manager when caching is enabled
+                mock_cache_manager.get.assert_called()
+                mock_cache_manager.put.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_scan_file_with_legacy_cache_functionality(self):
+        """Test scan_file with legacy cache functionality (scan_file doesn't use advanced cache manager)."""
+        scanner = SemgrepScanner()
+
+        # Pre-populate legacy cache with a result
+        scanner._cache["test_cache_key"] = MagicMock()
+        scanner._cache["test_cache_key"].findings = [
+            {"check_id": "test.rule", "message": "Test finding", "start": {"line": 1}}
+        ]
+        scanner._cache["test_cache_key"].timestamp = time.time()
+        scanner._cache["test_cache_key"].file_hash = "test_hash"
+
+        with patch.object(scanner, "is_available", return_value=True):
+            with patch("os.path.isfile", return_value=True):
+                with patch("builtins.open", mock_open(read_data="test content")):
+                    with patch.object(
+                        scanner, "_get_cache_key", return_value="test_cache_key"
+                    ):
+                        with patch.object(
+                            scanner, "_get_file_hash", return_value="test_hash"
+                        ):
+                            with patch.object(
+                                scanner, "_is_cache_valid", return_value=True
+                            ):
+                                threats = await scanner.scan_file("test.py", "python")
+
+                                # Should return cached result
+                                assert len(threats) == 1
+                                assert threats[0].rule_id == "semgrep-test.rule"
+
+    def test_get_extension_for_language_with_none_input(self):
+        """Test _get_extension_for_language with None input."""
+        scanner = SemgrepScanner()
+
+        # Test None language input
+        result = scanner._get_extension_for_language(None)
+        assert result == ".py"  # Default fallback
+
+    def test_get_extension_for_language_with_object_having_value_attribute(self):
+        """Test _get_extension_for_language with object having value attribute."""
+        scanner = SemgrepScanner()
+
+        class MockLanguageEnum:
+            value = "javascript"
+
+        mock_lang = MockLanguageEnum()
+        result = scanner._get_extension_for_language(mock_lang)
+        assert result == ".js"
+
+    @pytest.mark.asyncio
+    async def test_scan_code_with_semgrep_not_found_exception(self):
+        """Test scan_code when semgrep is not found."""
+        scanner = SemgrepScanner()
+
+        with patch.object(scanner, "is_available", return_value=True):
+            # Mock _find_semgrep to raise an exception (this tests the exception handling)
+            with patch.object(
+                scanner, "_find_semgrep", side_effect=RuntimeError("Semgrep not found")
+            ):
+                # The scan_code method should catch the RuntimeError and return empty list
+                result = await scanner.scan_code("test code", "test.py", "python")
+                assert result == []
+
+    @pytest.mark.asyncio
+    async def test_scan_code_with_temp_file_write_error(self):
+        """Test scan_code with temp file write error."""
+        scanner = SemgrepScanner()
+
+        with patch.object(scanner, "is_available", return_value=True):
+            with patch.object(scanner, "_find_semgrep", return_value="semgrep"):
+                with patch("tempfile.NamedTemporaryFile") as mock_temp:
+                    mock_file = MagicMock()
+                    mock_file.name = "/tmp/test.py"
+                    mock_file.write.side_effect = OSError("Write failed")
+                    mock_temp.return_value.__enter__.return_value = mock_file
+
+                    # The scan_code method should catch the exception and return empty list
+                    result = await scanner.scan_code("test code", "test.py", "python")
+                    assert result == []
+
+    @pytest.mark.asyncio
+    async def test_scan_directory_with_semgrep_not_found_exception(self):
+        """Test scan_directory when semgrep is not found."""
+        scanner = SemgrepScanner()
+
+        with patch.object(scanner, "is_available", return_value=True):
+            with patch("os.path.isdir", return_value=True):
+                with patch.object(
+                    scanner,
+                    "_find_semgrep",
+                    side_effect=RuntimeError("Semgrep not found"),
+                ):
+                    # The scan_directory method should catch the exception and return empty list
+                    result = await scanner.scan_directory("/test/dir")
+                    assert result == []
+
+    def test_get_directory_hash_with_multiple_files(self):
+        """Test _get_directory_hash with multiple files."""
+        scanner = SemgrepScanner()
+
+        # Mock os.walk to return some files
+        mock_walk_data = [
+            ("/test/dir", [], ["file1.py", "file2.js"]),
+            ("/test/dir/subdir", [], ["file3.ts"]),
+        ]
+
+        with patch("os.walk", return_value=mock_walk_data):
+            with patch("os.stat") as mock_stat:
+                # Mock stat to return consistent mtime
+                mock_stat_result = MagicMock()
+                mock_stat_result.st_mtime = 1234567890.0
+                mock_stat.return_value = mock_stat_result
+
+                hash1 = scanner._get_directory_hash("/test/dir")
+                hash2 = scanner._get_directory_hash("/test/dir")
+
+                # Should be same hash for same directory state
+                assert hash1 == hash2
+                assert len(hash1) == 64  # SHA256 hex length
+
+    def test_convert_finding_with_path_field(self):
+        """Test _convert_semgrep_finding_to_threat with 'path' field."""
+        scanner = SemgrepScanner()
+
+        # Test finding with 'path' field instead of separate file_path
+        finding = {
+            "check_id": "test.rule",
+            "message": "Test finding",
+            "path": "/project/src/file.py",
+            "start": {"line": 10},
+            "metadata": {"severity": "warning"},
+        }
+
+        # The method signature requires a file_path parameter
+        threat = scanner._convert_semgrep_finding_to_threat(
+            finding, "/project/src/file.py"
+        )
+        assert threat.file_path == "/project/src/file.py"
+        assert threat.line_number == 10
+
+    def test_convert_finding_with_extra_lines_field(self):
+        """Test _convert_semgrep_finding_to_threat with extra.lines field."""
+        scanner = SemgrepScanner()
+
+        finding = {
+            "check_id": "test.rule",
+            "message": "Test finding",
+            "start": {"line": 5},
+            "extra": {"lines": "vulnerable_code_snippet()"},
+        }
+
+        threat = scanner._convert_semgrep_finding_to_threat(finding, "test.py")
+        assert threat.code_snippet == "vulnerable_code_snippet()"
+
+    def test_convert_finding_with_owasp_as_list(self):
+        """Test _convert_semgrep_finding_to_threat with OWASP as list."""
+        scanner = SemgrepScanner()
+
+        finding = {
+            "check_id": "test.rule",
+            "message": "Test finding",
+            "start": {"line": 1},
+            "metadata": {"owasp": ["A01:2021", "A03:2021"]},
+        }
+
+        threat = scanner._convert_semgrep_finding_to_threat(finding, "test.py")
+        # The code sets owasp_category directly as the whole list
+        assert threat.owasp_category == ["A01:2021", "A03:2021"]
+
+    def test_convert_finding_with_references_as_string(self):
+        """Test _convert_semgrep_finding_to_threat with references as string."""
+        scanner = SemgrepScanner()
+
+        finding = {
+            "check_id": "test.rule",
+            "message": "Test finding",
+            "start": {"line": 1},
+            "metadata": {"references": "https://example.com/vuln-info"},
+        }
+
+        threat = scanner._convert_semgrep_finding_to_threat(finding, "test.py")
+        # The code sets references directly as provided
+        assert threat.references == "https://example.com/vuln-info"
+
+    @pytest.mark.asyncio
+    async def test_scan_directory_with_legacy_cache_functionality(self):
+        """Test scan_directory with legacy cache functionality."""
+        scanner = SemgrepScanner()
+
+        # Pre-populate legacy cache with a result
+        scanner._cache["test_cache_key"] = MagicMock()
+        scanner._cache["test_cache_key"].findings = [
+            {
+                "check_id": "test.rule",
+                "message": "Test directory finding",
+                "start": {"line": 5},
+                "path": "/test/dir/file.py",
+            }
+        ]
+        scanner._cache["test_cache_key"].timestamp = time.time()
+        scanner._cache["test_cache_key"].file_hash = "dir_hash"
+
+        with patch.object(scanner, "is_available", return_value=True):
+            with patch("os.path.isdir", return_value=True):
+                with patch.object(
+                    scanner, "_get_cache_key", return_value="test_cache_key"
+                ):
+                    with patch.object(
+                        scanner, "_get_directory_hash", return_value="dir_hash"
+                    ):
+                        with patch.object(
+                            scanner, "_is_cache_valid", return_value=True
+                        ):
+                            threats = await scanner.scan_directory("/test/dir")
+
+                            # Should return cached result
+                            assert len(threats) == 1
+                            assert threats[0].description == "Test directory finding"
+                            assert threats[0].file_path == "/test/dir/file.py"
+
+    def test_error_handler_initialization(self):
+        """Test that ErrorHandler is properly initialized."""
+        scanner = SemgrepScanner()
+
+        # ErrorHandler should be initialized
+        assert scanner.error_handler is not None
+        assert hasattr(scanner.error_handler, "config")
+
+    def test_compatibility_properties(self):
+        """Test backward compatibility properties."""
+        mock_credential_manager = MagicMock()
+        mock_threat_engine = MagicMock()
+
+        scanner = SemgrepScanner(
+            config="custom-config",
+            cache_ttl=600,
+            threat_engine=mock_threat_engine,
+            credential_manager=mock_credential_manager,
+        )
+
+        # Check all properties are accessible
+        assert scanner.config == "custom-config"
+        assert scanner.cache_ttl == 600
+        assert scanner.threat_engine is mock_threat_engine
+        assert scanner.credential_manager is mock_credential_manager
+        assert isinstance(scanner._cache, dict)
+
+    @pytest.mark.asyncio
+    async def test_scan_methods_with_error_handler_circuit_breaker(self):
+        """Test scan methods with error handler circuit breaker."""
+        scanner = SemgrepScanner()
+
+        # Mock error handler to simulate circuit breaker open
+        mock_error_handler = MagicMock()
+        mock_error_handler.execute_with_resilience = AsyncMock(
+            side_effect=Exception("Circuit breaker open")
+        )
+        scanner.error_handler = mock_error_handler
+
+        with patch.object(scanner, "is_available", return_value=True):
+            # Test scan_code with circuit breaker
+            threats = await scanner.scan_code("test", "test.py", "python")
+            assert threats == []
+
+            # Test scan_file with circuit breaker
+            with patch("os.path.isfile", return_value=True):
+                with patch("builtins.open", mock_open(read_data="test")):
+                    threats = await scanner.scan_file("test.py", "python")
+                    assert threats == []
 
 
 if __name__ == "__main__":

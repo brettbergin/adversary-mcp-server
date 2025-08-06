@@ -9,7 +9,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ..cache import CacheKey, CacheManager, CacheType
+from ..config import get_app_cache_dir
+from ..credentials import CredentialManager
 from ..logger import get_logger
+from ..resilience import ErrorHandler, ResilienceConfig
 from .types import Category, Severity, ThreatMatch
 
 logger = get_logger("semgrep_scanner")
@@ -64,7 +68,8 @@ class OptimizedSemgrepScanner:
         config: str = "auto",
         cache_ttl: int = 300,
         threat_engine=None,
-        credential_manager=None,
+        credential_manager: CredentialManager | None = None,
+        cache_manager: CacheManager | None = None,
     ):
         """Initialize scanner.
 
@@ -72,15 +77,48 @@ class OptimizedSemgrepScanner:
             config: Semgrep config to use
             cache_ttl: Cache time-to-live in seconds (default 5 minutes)
             threat_engine: Threat engine (for compatibility, unused)
-            credential_manager: Credential manager (for compatibility, unused)
+            credential_manager: Credential manager for configuration
+            cache_manager: Optional advanced cache manager
         """
         self.config = config
         self.cache_ttl = cache_ttl
-        self._cache: dict[str, ScanResult] = {}
+        self._cache: dict[str, ScanResult] = {}  # Keep for backwards compatibility
         self._semgrep_path = None
 
         self.threat_engine = threat_engine
         self.credential_manager = credential_manager
+        self.cache_manager = cache_manager
+
+        # Initialize advanced cache manager if not provided
+        if cache_manager is None and self.credential_manager is not None:
+            try:
+                config_obj = self.credential_manager.load_config()
+                if config_obj.enable_caching:
+                    cache_dir = get_app_cache_dir()
+                    self.cache_manager = CacheManager(
+                        cache_dir=cache_dir,
+                        max_size_mb=config_obj.cache_max_size_mb,
+                        max_age_hours=config_obj.cache_max_age_hours,
+                    )
+                    logger.info(
+                        f"Initialized advanced cache manager for Semgrep at {cache_dir}"
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to initialize advanced cache manager: {e}")
+
+        # Initialize ErrorHandler for Semgrep resilience
+        resilience_config = ResilienceConfig(
+            enable_circuit_breaker=True,
+            failure_threshold=3,  # Lower threshold for Semgrep (faster failure detection)
+            recovery_timeout_seconds=60,  # Quick recovery for Semgrep
+            enable_retry=True,
+            max_retry_attempts=2,  # Conservative retries for subprocess calls
+            base_delay_seconds=1.0,
+            enable_graceful_degradation=True,
+            semgrep_timeout_seconds=300.0,  # 5 minute timeout for Semgrep
+        )
+        self.error_handler = ErrorHandler(resilience_config)
+        logger.info("Initialized ErrorHandler for Semgrep resilience")
 
     async def _find_semgrep(self) -> str:
         """Find semgrep executable path (cached)."""
@@ -326,14 +364,22 @@ class OptimizedSemgrepScanner:
         Returns:
             List of ThreatMatch objects
         """
-        # Check cache first
+        # Check advanced cache first, fallback to legacy cache
+        cached_threats = await self._get_cached_scan_result(
+            source_code, file_path, language, config, rules, severity_threshold
+        )
+        if cached_threats is not None:
+            logger.debug(f"Advanced cache hit for {file_path}")
+            return cached_threats
+
+        # Fallback to legacy cache check
         cache_key = self._get_cache_key(source_code, file_path, language)
         file_hash = self._get_file_hash(source_code)
 
         if cache_key in self._cache:
             cached_result = self._cache[cache_key]
             if self._is_cache_valid(cached_result, file_hash):
-                logger.debug(f"Cache hit for {file_path}")
+                logger.debug(f"Legacy cache hit for {file_path}")
                 # Convert cached findings to ThreatMatch objects
                 threats = []
                 for finding in cached_result.findings:
@@ -346,17 +392,43 @@ class OptimizedSemgrepScanner:
 
                 return threats
 
-        # Perform scan directly
+        # Perform scan with resilience protection
         start_time = time.time()
-        try:
+
+        # Define the scan operation for resilience handling
+        async def scan_operation():
             language_str = language
             raw_findings = await self._perform_scan(
                 source_code, file_path, language_str, timeout
             )
+            return raw_findings
+
+        # Define fallback function for graceful degradation
+        async def scan_fallback(*args, **kwargs):
+            logger.warning(
+                f"Semgrep service degraded, returning empty results for {file_path}"
+            )
+            return []
+
+        try:
+            # Execute scan with comprehensive error recovery
+            recovery_result = await self.error_handler.execute_with_recovery(
+                scan_operation,
+                operation_name=f"semgrep_scan_{Path(file_path).name}",
+                circuit_breaker_name="semgrep_service",
+                fallback_func=scan_fallback,
+            )
+
+            if recovery_result.success:
+                raw_findings = recovery_result.result
+            else:
+                # Fallback was used or complete failure
+                raw_findings = recovery_result.result or []
+
             scan_time = time.time() - start_time
             logger.info(f"Code scan completed in {scan_time:.2f}s for {file_path}")
 
-            # Cache the raw findings
+            # Cache the raw findings (legacy cache for backwards compatibility)
             self._cache[cache_key] = ScanResult(
                 findings=raw_findings, timestamp=time.time(), file_hash=file_hash
             )
@@ -373,6 +445,17 @@ class OptimizedSemgrepScanner:
             # Apply severity filtering if specified
             if severity_threshold:
                 threats = self._filter_by_severity(threats, severity_threshold)
+
+            # Cache the final processed results in advanced cache
+            await self._cache_scan_result(
+                threats,
+                source_code,
+                file_path,
+                language,
+                config,
+                rules,
+                severity_threshold,
+            )
 
             return threats
 
@@ -858,14 +941,20 @@ class OptimizedSemgrepScanner:
         # Set optimizations
         env["SEMGREP_USER_AGENT_APPEND"] = "adversary-mcp-server"
 
-        # Set API token from credential manager (remove env var fallback)
+        # Set API token from credential manager or preserve environment token
         if self.credential_manager:
-            api_key = self.credential_manager.get_semgrep_api_key()
-            if api_key:
-                env["SEMGREP_APP_TOKEN"] = api_key
-            else:
-                # Remove any existing env var token to force credential manager usage
-                env.pop("SEMGREP_APP_TOKEN", None)
+            try:
+                api_key = self.credential_manager.get_semgrep_api_key()
+                if api_key:
+                    env["SEMGREP_APP_TOKEN"] = api_key
+                else:
+                    # If credential manager exists but returns None, remove env token
+                    # This indicates the credential manager wants no token to be used
+                    env.pop("SEMGREP_APP_TOKEN", None)
+            except Exception:
+                # If credential manager fails, preserve existing environment token
+                pass
+        # If no credential manager, preserve existing environment token (if any)
 
         return env
 
@@ -984,6 +1073,154 @@ class OptimizedSemgrepScanner:
             ".sql": "sql",
         }
         return lang_map.get(extension.lower(), "generic")
+
+    async def _get_cached_scan_result(
+        self,
+        source_code: str,
+        file_path: str,
+        language: str,
+        config: str | None,
+        rules: str | None,
+        severity_threshold: Severity | None,
+    ) -> list[ThreatMatch] | None:
+        """Get cached scan result using advanced cache manager."""
+        if not self.cache_manager:
+            return None
+
+        try:
+            config_obj = self.credential_manager.load_config()
+            if not config_obj.enable_caching:
+                return None
+
+            hasher = self.cache_manager.get_hasher()
+
+            # Create cache key based on content and scan parameters
+            content_hash = hasher.hash_content(source_code)
+            scan_context = {
+                "file_path": file_path,
+                "language": language,
+                "semgrep_config": config or self.config,
+                "custom_rules": rules,
+                "severity_threshold": (
+                    severity_threshold.value if severity_threshold else None
+                ),
+            }
+            metadata_hash = hasher.hash_semgrep_context(
+                content=source_code,
+                language=language,
+                rules=[rules] if rules else None,
+                config_path=config or self.config,
+            )
+
+            cache_key = CacheKey(
+                cache_type=CacheType.SEMGREP_RESULT,
+                content_hash=content_hash,
+                metadata_hash=metadata_hash,
+            )
+
+            cached_data = self.cache_manager.get(cache_key)
+            if cached_data and isinstance(cached_data, list):
+                # Deserialize cached threat matches
+                threats = []
+                for threat_data in cached_data:
+                    if isinstance(threat_data, dict):
+                        # Reconstruct ThreatMatch from cached data
+                        threat = ThreatMatch(
+                            rule_id=threat_data.get("rule_id", ""),
+                            rule_name=threat_data.get("rule_name", ""),
+                            description=threat_data.get("description", ""),
+                            category=Category(threat_data.get("category", "MISC")),
+                            severity=Severity(threat_data.get("severity", "MEDIUM")),
+                            file_path=threat_data.get("file_path", file_path),
+                            line_number=threat_data.get("line_number", 0),
+                            code_snippet=threat_data.get("code_snippet", ""),
+                            confidence=threat_data.get("confidence", 1.0),
+                            cwe_id=threat_data.get("cwe_id"),
+                            owasp_category=threat_data.get("owasp_category"),
+                            source=threat_data.get("source", "semgrep"),
+                        )
+                        threats.append(threat)
+                return threats
+
+        except Exception as e:
+            logger.warning(f"Failed to retrieve cached Semgrep result: {e}")
+
+        return None
+
+    async def _cache_scan_result(
+        self,
+        threats: list[ThreatMatch],
+        source_code: str,
+        file_path: str,
+        language: str,
+        config: str | None,
+        rules: str | None,
+        severity_threshold: Severity | None,
+    ) -> None:
+        """Cache scan result using advanced cache manager."""
+        if not self.cache_manager:
+            return
+
+        try:
+            config_obj = self.credential_manager.load_config()
+            if not config_obj.enable_caching:
+                return
+
+            hasher = self.cache_manager.get_hasher()
+
+            # Create same cache key as used for retrieval
+            content_hash = hasher.hash_content(source_code)
+            scan_context = {
+                "file_path": file_path,
+                "language": language,
+                "semgrep_config": config or self.config,
+                "custom_rules": rules,
+                "severity_threshold": (
+                    severity_threshold.value if severity_threshold else None
+                ),
+            }
+            metadata_hash = hasher.hash_semgrep_context(
+                content=source_code,
+                language=language,
+                rules=[rules] if rules else None,
+                config_path=config or self.config,
+            )
+
+            cache_key = CacheKey(
+                cache_type=CacheType.SEMGREP_RESULT,
+                content_hash=content_hash,
+                metadata_hash=metadata_hash,
+            )
+
+            # Serialize threats for caching
+            serialized_threats = []
+            for threat in threats:
+                threat_data = {
+                    "rule_id": threat.rule_id,
+                    "rule_name": threat.rule_name,
+                    "description": threat.description,
+                    "category": threat.category.value,
+                    "severity": threat.severity.value,
+                    "file_path": threat.file_path,
+                    "line_number": threat.line_number,
+                    "code_snippet": threat.code_snippet,
+                    "confidence": threat.confidence,
+                    "cwe_id": threat.cwe_id,
+                    "owasp_category": threat.owasp_category,
+                    "source": threat.source,
+                }
+                serialized_threats.append(threat_data)
+
+            # Cache for longer duration than LLM responses (Semgrep results are more stable)
+            cache_expiry_seconds = (
+                config_obj.cache_max_age_hours * 3600
+            )  # Full duration
+            self.cache_manager.put(cache_key, serialized_threats, cache_expiry_seconds)
+
+            logger.debug(f"Cached Semgrep scan result for {file_path}")
+
+        except Exception as e:
+            logger.warning(f"Failed to cache Semgrep scan result: {e}")
 
 
 # Compatibility alias for existing code

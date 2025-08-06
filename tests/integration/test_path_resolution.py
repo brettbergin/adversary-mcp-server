@@ -342,7 +342,7 @@ class TestPathResolutionIntegration:
                     with patch.object(
                         self.server.scan_engine, "scan_code"
                     ) as mock_scan:
-                        mock_scan.return_value = Mock(
+                        mock_result = Mock(
                             all_threats=[],
                             scan_metadata={},
                             llm_prompts=[],
@@ -350,7 +350,19 @@ class TestPathResolutionIntegration:
                             file_path="input.code",  # Add missing file_path attribute
                             language="auto",  # Add missing language attribute
                             stats={},  # Add missing stats attribute
+                            validation_results={},  # Add missing validation_results attribute
                         )
+                        mock_result.get_validation_summary.return_value = {
+                            "enabled": False,
+                            "total_findings_reviewed": 0,
+                            "legitimate_findings": 0,
+                            "false_positives_filtered": 0,
+                            "false_positive_rate": 0.0,
+                            "average_confidence": 0.0,
+                            "validation_errors": 0,
+                            "status": "disabled",
+                        }
+                        mock_scan.return_value = mock_result
                         await self.server._handle_scan_code(arguments)
                         # If we get here without exception, path resolution worked
 
@@ -367,7 +379,7 @@ class TestPathResolutionIntegration:
                     with patch.object(
                         self.server.scan_engine, "scan_file"
                     ) as mock_scan:
-                        mock_scan.return_value = Mock(
+                        mock_result = Mock(
                             all_threats=[],
                             scan_metadata={},
                             llm_prompts=[],
@@ -375,7 +387,19 @@ class TestPathResolutionIntegration:
                             file_path=str(test_file),  # Convert Path to string
                             language="python",
                             stats={},
+                            validation_results={},  # Add missing validation_results attribute
                         )
+                        mock_result.get_validation_summary.return_value = {
+                            "enabled": False,
+                            "total_findings_reviewed": 0,
+                            "legitimate_findings": 0,
+                            "false_positives_filtered": 0,
+                            "false_positive_rate": 0.0,
+                            "average_confidence": 0.0,
+                            "validation_errors": 0,
+                            "status": "disabled",
+                        }
+                        mock_scan.return_value = mock_result
                         await self.server._handle_scan_file(arguments)
 
                 except Exception as e:
@@ -470,6 +494,17 @@ class TestWorkspaceRootEnvironmentVariable:
                         "llm_threats": 0,
                         "semgrep_threats": 0,
                         "unique_threats": 0,
+                    }
+                    mock_result.validation_results = {}
+                    mock_result.get_validation_summary.return_value = {
+                        "enabled": False,
+                        "total_findings_reviewed": 0,
+                        "legitimate_findings": 0,
+                        "false_positives_filtered": 0,
+                        "false_positive_rate": 0.0,
+                        "average_confidence": 0.0,
+                        "validation_errors": 0,
+                        "status": "disabled",
                     }
                     mock_scan.return_value = mock_result
 

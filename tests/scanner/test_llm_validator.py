@@ -5,6 +5,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from adversary_mcp_server.config import SecurityConfig
 from adversary_mcp_server.scanner.llm_validator import (
     LLMValidationError,
     LLMValidator,
@@ -125,8 +126,16 @@ class TestLLMValidator:
     def mock_credential_manager(self):
         """Create mock credential manager."""
         mock_cm = Mock()
-        mock_config = Mock()
+        # Create a proper SecurityConfig instead of Mock
+        mock_config = SecurityConfig()
         mock_config.exploit_safety_mode = True
+        mock_config.llm_provider = (
+            None  # Set to None to avoid LLM client initialization
+        )
+        mock_config.llm_api_key = None
+        mock_config.llm_model = None
+        mock_config.llm_batch_size = 5
+        mock_config.llm_max_tokens = 4000
         mock_cm.load_config.return_value = mock_config
         return mock_cm
 
@@ -178,7 +187,9 @@ class TestLLMValidator:
         assert len(results) == 1
         assert "test-uuid-1" in results
         assert results["test-uuid-1"].is_legitimate is True
-        assert results["test-uuid-1"].confidence == 0.5
+        assert (
+            results["test-uuid-1"].confidence == 0.7
+        )  # Default confidence when LLM unavailable
         assert results["test-uuid-1"].exploit_poc == ["test exploit"]
 
     def test_validate_findings_exploit_generation_failure(self, validator):
@@ -491,3 +502,79 @@ class TestLLMValidator:
 
         assert "... [truncated for analysis]" in prompt
         assert len(prompt) < 20000  # Should be reasonably sized
+
+    @pytest.mark.asyncio
+    async def test_validate_findings_llm_unavailable(self, mock_credential_manager):
+        """Test validate_findings when LLM client is not available."""
+        # Create validator without LLM client
+        mock_config = SecurityConfig(
+            enable_llm_validation=False, llm_provider=None, llm_api_key=None
+        )
+        mock_credential_manager.load_config.return_value = mock_config
+
+        with patch("adversary_mcp_server.scanner.llm_validator.ExploitGenerator"):
+            validator = LLMValidator(mock_credential_manager)
+
+            findings = [
+                ThreatMatch(
+                    rule_id="test-rule",
+                    rule_name="Test Rule",
+                    description="Test description",
+                    category=Category.INJECTION,
+                    severity=Severity.HIGH,
+                    file_path="test.py",
+                    line_number=10,
+                    uuid="test-uuid-1",
+                )
+            ]
+
+            results = await validator._validate_findings_async(
+                findings, "source code", "test.py"
+            )
+
+            # Should return default validation results when LLM is not available (fail-open behavior)
+            assert len(results) == 1
+            assert "test-uuid-1" in results
+            assert results["test-uuid-1"].is_legitimate is True
+            assert results["test-uuid-1"].confidence == 0.5  # Exception path confidence
+            assert (
+                "Validation failed, keeping finding as precaution"
+                in results["test-uuid-1"].reasoning
+            )
+
+    @pytest.mark.asyncio
+    async def test_validate_findings_api_error(self, validator):
+        """Test validate_findings when LLM API call fails."""
+        findings = [
+            ThreatMatch(
+                rule_id="test-rule",
+                rule_name="Test Rule",
+                description="Test description",
+                category=Category.INJECTION,
+                severity=Severity.HIGH,
+                file_path="test.py",
+                line_number=10,
+                uuid="test-uuid-1",
+            )
+        ]
+
+        # Create and set a mock LLM client to raise exception
+        from unittest.mock import AsyncMock
+
+        mock_client = AsyncMock()
+        mock_client.complete_with_retry.side_effect = Exception("API Error")
+        validator.llm_client = mock_client
+
+        # Should return default results when API fails (fail-open behavior)
+        results = await validator._validate_findings_async(
+            findings, "source code", "test.py"
+        )
+
+        assert len(results) == 1
+        assert "test-uuid-1" in results
+        assert results["test-uuid-1"].is_legitimate is True
+        assert results["test-uuid-1"].confidence == 0.5
+        assert (
+            "Validation failed, keeping finding as precaution"
+            in results["test-uuid-1"].reasoning
+        )
