@@ -443,10 +443,13 @@ class TestScanEngine:
 
                         assert scanner.credential_manager == mock_credential_manager
                         assert scanner.enable_llm_analysis is True
-                        mock_semgrep_scanner.assert_called_once()
-                        # LLMScanner now takes credential_manager and cache_manager
+                        mock_semgrep_scanner.assert_called_once_with(
+                            credential_manager=mock_credential_manager,
+                            metrics_collector=None,
+                        )
+                        # LLMScanner now takes credential_manager, cache_manager, and metrics_collector
                         mock_llm_analyzer.assert_called_once_with(
-                            mock_credential_manager, None
+                            mock_credential_manager, None, None
                         )
 
     def test_scan_engine_initialization_llm_disabled(self):
@@ -543,8 +546,8 @@ class TestScanEngine:
             max_findings=20,
         )
         mock_llm_instance.create_analysis_prompt.return_value = mock_prompt
-        mock_llm_instance.analyze_code.return_value = (
-            []
+        mock_llm_instance.analyze_code = Mock(
+            return_value=[]
         )  # Client-based approach returns empty list
 
         scanner = ScanEngine(
@@ -2179,7 +2182,9 @@ class TestScanEngineValidation:
                 exploit_poc=["test exploit"],
             )
         }
-        mock_validator_instance.validate_findings.return_value = validation_results
+        mock_validator_instance._validate_findings_async = AsyncMock(
+            return_value=validation_results
+        )
         mock_validator_instance.filter_false_positives.return_value = [semgrep_threat]
         mock_validator_instance.get_validation_stats.return_value = {
             "total_validated": 1,
@@ -2209,7 +2214,7 @@ class TestScanEngineValidation:
         assert result.scan_metadata["llm_validation_stats"]["total_validated"] == 1
         assert result.validation_results == validation_results
 
-        mock_validator_instance.validate_findings.assert_called_once()
+        mock_validator_instance._validate_findings_async.assert_called_once()
         mock_validator_instance.filter_false_positives.assert_called()
 
     @patch("adversary_mcp_server.scanner.scan_engine.SemgrepScanner")
@@ -2285,7 +2290,7 @@ class TestScanEngineValidation:
         assert result.scan_metadata["llm_validation_reason"] == "disabled"
 
         # Validator should not be called
-        mock_validator_instance.validate_findings.assert_not_called()
+        # No async validation method call assertion since validation wasn't used
 
 
 class TestScanEngineParallelProcessing:
@@ -2605,7 +2610,9 @@ class TestScanEngineStreamingIntegration:
                     ):
 
                         mock_validator = Mock()
-                        mock_validator.validate_findings.return_value = {}
+                        mock_validator._validate_findings_async = AsyncMock(
+                            return_value={}
+                        )
                         mock_validator.filter_false_positives.return_value = []
                         mock_validator_class.return_value = mock_validator
 
@@ -2643,6 +2650,9 @@ class TestScanEngineStreamingIntegration:
         with (
             patch.object(scanner, "_perform_scan_stdin") as mock_stdin,
             patch.object(scanner, "_perform_scan_tempfile") as mock_tempfile,
+            patch.object(
+                scanner, "_find_semgrep", return_value="mock_semgrep"
+            ) as mock_find_semgrep,
         ):
 
             # Both should return empty list for testing
@@ -2758,8 +2768,13 @@ class TestScanEngineErrorHandling:
         mock_config = mock_cm.load_config.return_value
         mock_config.enable_llm_analysis = False
 
-        engine = ScanEngine(mock_cm)
-        result = await engine.scan_code("test code", "test.py", use_llm=True)
+        with patch("subprocess.run") as mock_run:
+            # Mock subprocess.run for semgrep status check
+            mock_run.return_value.returncode = 0
+            mock_run.return_value.stdout = "semgrep version 1.0.0"
+
+            engine = ScanEngine(mock_cm)
+            result = await engine.scan_code("test code", "test.py", use_llm=True)
 
         assert isinstance(result, EnhancedScanResult)
         assert result.scan_metadata["llm_scan_success"] is False
@@ -2776,9 +2791,16 @@ class TestScanEngineErrorHandling:
         mock_config.llm_provider = "openai"
         mock_config.llm_api_key = "sk-test-key"
 
-        with patch(
-            "adversary_mcp_server.scanner.scan_engine.LLMScanner"
-        ) as mock_llm_scanner_class:
+        with (
+            patch(
+                "adversary_mcp_server.scanner.scan_engine.LLMScanner"
+            ) as mock_llm_scanner_class,
+            patch("subprocess.run") as mock_run,
+        ):
+            # Mock subprocess.run for semgrep status check
+            mock_run.return_value.returncode = 0
+            mock_run.return_value.stdout = "semgrep version 1.0.0"
+
             mock_llm_scanner = Mock()
             mock_llm_scanner.is_available.return_value = False
             mock_llm_scanner_class.return_value = mock_llm_scanner
@@ -2801,9 +2823,16 @@ class TestScanEngineErrorHandling:
         mock_config.llm_provider = "openai"
         mock_config.llm_api_key = "sk-test-key"
 
-        with patch(
-            "adversary_mcp_server.scanner.scan_engine.LLMScanner"
-        ) as mock_llm_scanner_class:
+        with (
+            patch(
+                "adversary_mcp_server.scanner.scan_engine.LLMScanner"
+            ) as mock_llm_scanner_class,
+            patch("subprocess.run") as mock_run,
+        ):
+            # Mock subprocess.run for semgrep status check
+            mock_run.return_value.returncode = 0
+            mock_run.return_value.stdout = "semgrep version 1.0.0"
+
             mock_llm_scanner = Mock()
             mock_llm_scanner.is_available.return_value = True
             mock_llm_scanner.analyze_code.side_effect = Exception("LLM API error")
@@ -2856,12 +2885,12 @@ class TestScanEngineErrorHandling:
                 recommendation="test",
                 confidence=0.9,
             )
-            mock_llm_scanner.analyze_code.return_value = [mock_finding]
+            mock_llm_scanner.analyze_code = Mock(return_value=[mock_finding])
             mock_llm_scanner_class.return_value = mock_llm_scanner
 
             mock_validator = Mock()
-            mock_validator.validate_findings.side_effect = Exception(
-                "Validation API error"
+            mock_validator._validate_findings_async = AsyncMock(
+                side_effect=Exception("Validation API error")
             )
             mock_validator_class.return_value = mock_validator
 

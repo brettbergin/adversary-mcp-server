@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -187,22 +188,20 @@ class LLMScanner:
         self,
         credential_manager: CredentialManager,
         cache_manager: CacheManager | None = None,
+        metrics_collector=None,
     ):
         """Initialize the LLM security analyzer.
 
         Args:
             credential_manager: Credential manager for configuration
             cache_manager: Optional cache manager for intelligent caching
+            metrics_collector: Optional metrics collector for performance tracking
         """
         logger.info("Initializing LLMScanner")
         self.credential_manager = credential_manager
         self.llm_client: LLMClient | None = None
         self.cache_manager = cache_manager
-
-        # Batch failure tracking for circuit breaking
-        self.batch_failure_counts: dict[str, int] = {}
-        self.max_batch_failures = 3  # Circuit break after 3 consecutive failures
-        self.circuit_broken_batches: set[str] = set()
+        self.metrics_collector = metrics_collector
 
         try:
             self.config = credential_manager.load_config()
@@ -246,7 +245,7 @@ class LLMScanner:
                 group_by_language=True,
                 group_by_complexity=True,
             )
-            self.batch_processor = BatchProcessor(batch_config)
+            self.batch_processor = BatchProcessor(batch_config, self.metrics_collector)
             logger.info(
                 f"Initialized BatchProcessor for {self.config.llm_provider or 'unknown'} provider - "
                 f"max_batch_size: {max_batch_size}, target_tokens: {target_tokens}"
@@ -289,50 +288,9 @@ class LLMScanner:
             logger.error(f"Failed to initialize LLMScanner: {e}")
             raise
 
-    def _get_batch_hash(self, batch_content: list[dict]) -> str:
-        """Get a hash for batch content to track failures."""
-        import hashlib
-
-        # Create a simple hash based on file paths
-        file_paths = sorted([fc["file_path"] for fc in batch_content])
-        content = "|".join(file_paths)
-        return hashlib.sha256(content.encode()).hexdigest()[:16]
-
-    def _should_skip_batch(self, batch_hash: str) -> bool:
-        """Check if batch should be skipped due to circuit breaking."""
-        if batch_hash in self.circuit_broken_batches:
-            logger.warning(f"Skipping circuit-broken batch {batch_hash}")
-            return True
-        return False
-
-    def _record_batch_failure(self, batch_hash: str) -> None:
-        """Record a batch failure and potentially circuit break."""
-        self.batch_failure_counts[batch_hash] = (
-            self.batch_failure_counts.get(batch_hash, 0) + 1
-        )
-
-        if self.batch_failure_counts[batch_hash] >= self.max_batch_failures:
-            self.circuit_broken_batches.add(batch_hash)
-            logger.error(
-                f"Circuit breaking batch {batch_hash} after {self.max_batch_failures} failures"
-            )
-
-    def _record_batch_success(self, batch_hash: str) -> None:
-        """Record a batch success and reset failure count."""
-        if batch_hash in self.batch_failure_counts:
-            del self.batch_failure_counts[batch_hash]
-        if batch_hash in self.circuit_broken_batches:
-            self.circuit_broken_batches.remove(batch_hash)
-            logger.info(f"Circuit breaker reset for batch {batch_hash[:8]}")
-
     def get_circuit_breaker_stats(self) -> dict:
         """Get circuit breaker statistics for debugging."""
-        return {
-            "total_failed_batches": len(self.batch_failure_counts),
-            "circuit_broken_batches": len(self.circuit_broken_batches),
-            "failure_counts": {k[:8]: v for k, v in self.batch_failure_counts.items()},
-            "circuit_broken_hashes": [h[:8] for h in self.circuit_broken_batches],
-        }
+        return self.error_handler.get_circuit_breaker_stats()
 
     def is_available(self) -> bool:
         """Check if LLM analysis is available.
@@ -661,7 +619,16 @@ Response format:
         Returns:
             List of security findings
         """
+        analysis_start_time = time.time()
+
         if not self.llm_client:
+            # Record LLM not available
+            if self.metrics_collector:
+                self.metrics_collector.record_metric(
+                    "llm_analysis_total",
+                    1,
+                    labels={"status": "client_unavailable", "language": language},
+                )
             return []
 
         # Check cache first if enabled
@@ -743,35 +710,21 @@ Response format:
                     },
                 )()
 
-            # For Anthropic, bypass our retry logic since their SDK handles retries
-            if self.config.llm_provider == "anthropic":
-                try:
-                    response = await llm_call()
-                    logger.debug(f"Direct Anthropic API call succeeded for {file_path}")
-                except Exception as e:
-                    logger.warning(f"Anthropic API call failed for {file_path}: {e}")
-                    # Try fallback for graceful degradation
-                    try:
-                        response = await llm_fallback()
-                        logger.info(f"Fallback response used for {file_path}")
-                    except Exception as fallback_error:
-                        logger.error(
-                            f"Fallback also failed for {file_path}: {fallback_error}"
-                        )
-                        raise LLMAnalysisError(f"Analysis failed: {e}")
-            else:
-                # Execute with comprehensive error recovery for other providers
-                recovery_result = await self.error_handler.execute_with_recovery(
-                    llm_call,
-                    operation_name=f"llm_analysis_{Path(file_path).name}",
-                    circuit_breaker_name="llm_service",
-                    fallback_func=llm_fallback,
-                )
+            # Execute with comprehensive error recovery for all providers
+            recovery_result = await self.error_handler.execute_with_recovery(
+                llm_call,
+                operation_name=f"llm_analysis_{Path(file_path).name}",
+                circuit_breaker_name="llm_service",
+                fallback_func=llm_fallback,
+            )
 
-                if recovery_result.success:
+            if recovery_result.success:
+                response = recovery_result.result
+            else:
+                # If recovery failed completely, use fallback result or raise exception
+                if recovery_result.result:
                     response = recovery_result.result
                 else:
-                    # If recovery failed completely, raise an exception
                     error_msg = (
                         recovery_result.error_message or "LLM service unavailable"
                     )
@@ -820,10 +773,64 @@ Response format:
                     logger.warning(f"Failed to cache LLM result for {file_path}: {e}")
 
             logger.info(f"Parsed {len(findings)} findings from LLM response")
+
+            # Record successful analysis metrics
+            if self.metrics_collector:
+                analysis_duration = time.time() - analysis_start_time
+                self.metrics_collector.record_histogram(
+                    "llm_analysis_duration_seconds",
+                    analysis_duration,
+                    labels={"language": language, "status": "success"},
+                )
+                self.metrics_collector.record_metric(
+                    "llm_analysis_total",
+                    1,
+                    labels={"status": "success", "language": language},
+                )
+                self.metrics_collector.record_metric(
+                    "llm_findings_total", len(findings), labels={"language": language}
+                )
+                # Record token usage if available
+                if hasattr(response, "usage") and response.usage:
+                    usage = response.usage
+                    if hasattr(usage, "total_tokens"):
+                        self.metrics_collector.record_metric(
+                            "llm_tokens_consumed_total",
+                            usage.total_tokens,
+                            labels={
+                                "provider": response.model,
+                                "operation": "analysis",
+                            },
+                        )
+                    if hasattr(usage, "prompt_tokens"):
+                        self.metrics_collector.record_metric(
+                            "llm_prompt_tokens_total",
+                            usage.prompt_tokens,
+                            labels={
+                                "provider": response.model,
+                                "operation": "analysis",
+                            },
+                        )
+
             return findings
 
         except Exception as e:
             logger.error(f"LLM analysis failed for {file_path}: {e}")
+
+            # Record failure metrics
+            if self.metrics_collector:
+                analysis_duration = time.time() - analysis_start_time
+                self.metrics_collector.record_histogram(
+                    "llm_analysis_duration_seconds",
+                    analysis_duration,
+                    labels={"language": language, "status": "failed"},
+                )
+                self.metrics_collector.record_metric(
+                    "llm_analysis_total",
+                    1,
+                    labels={"status": "failed", "language": language},
+                )
+
             raise LLMAnalysisError(f"Analysis failed: {e}")
 
     # Removed analyze_code_resilient method - using LLM client's built-in retry instead
@@ -1286,14 +1293,6 @@ Response format:
         Returns:
             List of security findings
         """
-        # Check for circuit breaking before processing
-        batch_hash = self._get_batch_hash(batch_content)
-        if self._should_skip_batch(batch_hash):
-            logger.warning(
-                f"CIRCUIT BREAKER: Skipping batch {batch_number} (hash: {batch_hash[:8]}) - previously failed {self.batch_failure_counts.get(batch_hash, 0)} times"
-            )
-            return []
-
         # Create optimized batch analysis prompt
         system_prompt = self._get_enhanced_batch_system_prompt(batch_content)
         user_prompt = self._create_enhanced_batch_user_prompt(
@@ -1306,67 +1305,62 @@ Response format:
             total_chars // 4 + len(system_prompt) // 4 + len(user_prompt) // 4
         )
 
+        file_paths = [fc["file_path"] for fc in batch_content]
+        languages = list({fc["language"] for fc in batch_content})
+
         logger.info(
-            f"Batch {batch_number} (hash: {batch_hash[:8]}): {len(batch_content)} files, "
-            f"~{estimated_tokens} tokens, languages: {list({fc['language'] for fc in batch_content})}"
+            f"Batch {batch_number}: {len(batch_content)} files, "
+            f"~{estimated_tokens} tokens, languages: {languages}"
         )
 
-        try:
-            # For Anthropic, make direct API call to avoid double retries
-            if self.config.llm_provider == "anthropic":
-                try:
-                    response = await self.llm_client.complete_with_retry(
-                        system_prompt=system_prompt,
-                        user_prompt=user_prompt,
-                        temperature=self.config.llm_temperature,
-                        max_tokens=min(
-                            self.config.llm_max_tokens, 8000
-                        ),  # Conservative for batch
-                        response_format="json",
-                    )
-                    logger.info(
-                        f"Batch {batch_number} (hash: {batch_hash[:8]}): Direct Anthropic API call succeeded"
-                    )
-                except Exception as e:
-                    logger.error(
-                        f"Anthropic batch API call failed for batch {batch_number}: {e}"
-                    )
-                    self._record_batch_failure(batch_hash)
-                    raise LLMAnalysisError(f"Batch {batch_number} analysis failed: {e}")
-            else:
-                # For other providers, use the client's retry mechanism
-                response = await self.llm_client.complete_with_retry(
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
-                    temperature=self.config.llm_temperature,
-                    max_tokens=min(
-                        self.config.llm_max_tokens, 8000
-                    ),  # Conservative for batch
-                    response_format="json",
-                )
+        # Define the batch operation for resilience handling
+        async def batch_operation():
+            response = await self.llm_client.complete_with_retry(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                temperature=self.config.llm_temperature,
+                max_tokens=min(
+                    self.config.llm_max_tokens, 8000
+                ),  # Conservative for batch
+                response_format="json",
+            )
+            return response
 
+        # Define fallback function for graceful degradation
+        async def batch_fallback(*args, **kwargs):
+            logger.warning(
+                f"LLM service degraded during batch {batch_number}, falling back to individual analysis"
+            )
+            return await self._fallback_individual_analysis(
+                batch_content, max_findings_per_file
+            )
+
+        # Execute batch with comprehensive error recovery
+        recovery_result = await self.error_handler.execute_with_recovery(
+            batch_operation,
+            operation_name=f"llm_batch_{batch_number}",
+            circuit_breaker_name="llm_batch_service",
+            fallback_func=batch_fallback,
+        )
+
+        if recovery_result.success:
             # Parse batch response with enhanced error handling
             findings = self._parse_enhanced_batch_response(
-                response.content, batch_content
+                recovery_result.result.content, batch_content
             )
-
-            # Record success
-            self._record_batch_success(batch_hash)
-
             logger.info(
-                f"Batch {batch_number} (hash: {batch_hash[:8]}) completed: {len(findings)} findings from "
+                f"Batch {batch_number} completed: {len(findings)} findings from "
                 f"{len(batch_content)} files - SUCCESS"
             )
-
             return findings
-
-        except Exception as e:
-            # Record failure for circuit breaking
-            self._record_batch_failure(batch_hash)
-            logger.error(
-                f"Batch {batch_number} failed and recorded for circuit breaking: {e}"
+        else:
+            # Fallback was used, result should already be findings list
+            findings = recovery_result.result or []
+            logger.info(
+                f"Batch {batch_number} completed via fallback: {len(findings)} findings from "
+                f"{len(batch_content)} files"
             )
-            raise
+            return findings
 
     async def _fallback_individual_analysis(
         self, batch_content: list[dict], max_findings_per_file: int

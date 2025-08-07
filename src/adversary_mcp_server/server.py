@@ -5,6 +5,7 @@ import json
 import json as json_lib
 import os
 import sys
+import time
 import traceback
 from pathlib import Path
 from typing import Any
@@ -17,11 +18,15 @@ from mcp.types import ServerCapabilities, Tool, ToolsCapability
 from pydantic import BaseModel
 
 from . import get_version
+from .config import get_app_metrics_dir
 from .credentials import CredentialManager
 from .logger import get_logger
+from .monitoring import MetricsCollector
+from .monitoring.types import MonitoringConfig
 from .scanner.diff_scanner import GitDiffScanner
 from .scanner.exploit_generator import ExploitGenerator
 from .scanner.false_positive_manager import FalsePositiveManager
+from .scanner.result_formatter import ScanResultFormatter
 from .scanner.scan_engine import EnhancedScanResult, ScanEngine
 from .scanner.types import Severity, ThreatMatch
 
@@ -69,9 +74,19 @@ class AdversaryMCPServer:
             f"Configuration loaded - LLM analysis: {config.enable_llm_analysis}, Semgrep: {config.enable_semgrep_scanning}"
         )
 
+        logger.debug("Initializing monitoring...")
+        monitoring_config = MonitoringConfig(
+            enable_metrics=True,
+            enable_performance_monitoring=True,
+            json_export_path=str(get_app_metrics_dir()),
+        )
+        self.metrics_collector = MetricsCollector(monitoring_config)
+        logger.debug("Metrics collector initialized")
+
         logger.info("Initializing scan engine...")
         self.scan_engine = ScanEngine(
             self.credential_manager,
+            metrics_collector=self.metrics_collector,
             enable_llm_analysis=config.enable_llm_analysis,
             enable_semgrep_analysis=config.enable_semgrep_scanning,
         )
@@ -82,7 +97,9 @@ class AdversaryMCPServer:
         logger.debug("Exploit generator initialized")
 
         logger.debug("Initializing diff scanner...")
-        self.diff_scanner = GitDiffScanner(self.scan_engine)
+        self.diff_scanner = GitDiffScanner(
+            self.scan_engine, metrics_collector=self.metrics_collector
+        )
         logger.debug("diff scanner initialized")
 
         logger.debug("Initializing false positive manager...")
@@ -393,51 +410,100 @@ class AdversaryMCPServer:
             name: str, arguments: dict[str, Any]
         ) -> list[types.TextContent]:
             """Call the specified tool with the given arguments."""
+            tool_start_time = time.time()
+            payload_size = len(str(arguments))
+
+            # Record tool call start
+            self.metrics_collector.record_metric(
+                "mcp_tool_calls_total", 1, labels={"tool": name, "status": "started"}
+            )
+            self.metrics_collector.record_metric(
+                "mcp_request_payload_bytes", payload_size, labels={"tool": name}
+            )
+
             try:
                 logger.info(f"=== TOOL CALL START: {name} ===")
                 logger.debug(f"Tool arguments: {arguments}")
 
+                result = None
                 if name == "adv_scan_code":
                     logger.info("Handling scan_code request")
-                    return await self._handle_scan_code(arguments)
+                    result = await self._handle_scan_code(arguments)
 
                 elif name == "adv_scan_file":
                     logger.info("Handling scan_file request")
-                    return await self._handle_scan_file(arguments)
+                    result = await self._handle_scan_file(arguments)
 
                 elif name == "adv_scan_folder":
                     logger.info("Handling scan_folder request")
-                    return await self._handle_scan_directory(arguments)
+                    result = await self._handle_scan_directory(arguments)
 
                 elif name == "adv_diff_scan":
                     logger.info("Handling diff_scan request")
-                    return await self._handle_diff_scan(arguments)
+                    result = await self._handle_diff_scan(arguments)
 
                 elif name == "adv_configure_settings":
                     logger.info("Handling configure_settings request")
-                    return await self._handle_configure_settings(arguments)
+                    result = await self._handle_configure_settings(arguments)
 
                 elif name == "adv_get_status":
                     logger.info("Handling get_status request")
-                    return await self._handle_get_status()
+                    result = await self._handle_get_status()
 
                 elif name == "adv_get_version":
                     logger.info("Handling get_version request")
-                    return await self._handle_get_version()
+                    result = await self._handle_get_version()
 
                 elif name == "adv_mark_false_positive":
                     logger.info("Handling mark_false_positive request")
-                    return await self._handle_mark_false_positive(arguments)
+                    result = await self._handle_mark_false_positive(arguments)
 
                 elif name == "adv_unmark_false_positive":
                     logger.info("Handling unmark_false_positive request")
-                    return await self._handle_unmark_false_positive(arguments)
+                    result = await self._handle_unmark_false_positive(arguments)
 
                 else:
                     logger.error(f"Unknown tool requested: {name}")
+                    # Record unknown tool metric
+                    self.metrics_collector.record_metric(
+                        "mcp_tool_calls_total",
+                        1,
+                        labels={"tool": name, "status": "unknown"},
+                    )
                     raise AdversaryToolError(f"Unknown tool: {name}")
 
+                # Record successful tool execution
+                duration = time.time() - tool_start_time
+                response_size = len(str(result)) if result else 0
+
+                self.metrics_collector.record_metric(
+                    "mcp_tool_calls_total",
+                    1,
+                    labels={"tool": name, "status": "success"},
+                )
+                self.metrics_collector.record_histogram(
+                    "mcp_tool_duration_seconds",
+                    duration,
+                    labels={"tool": name, "status": "success"},
+                )
+                self.metrics_collector.record_metric(
+                    "mcp_response_payload_bytes", response_size, labels={"tool": name}
+                )
+
+                return result
+
             except Exception as e:
+                # Record tool failure metrics
+                duration = time.time() - tool_start_time
+                self.metrics_collector.record_metric(
+                    "mcp_tool_calls_total", 1, labels={"tool": name, "status": "failed"}
+                )
+                self.metrics_collector.record_histogram(
+                    "mcp_tool_duration_seconds",
+                    duration,
+                    labels={"tool": name, "status": "failed"},
+                )
+
                 logger.error(f"Tool {name} execution failed: {e}")
                 logger.debug("Tool {name} error details", exc_info=True)
                 raise AdversaryToolError(f"Tool {name} failed: {str(e)}")
@@ -519,9 +585,8 @@ class AdversaryMCPServer:
             # Format results based on output format
             if output_format == "json":
                 logger.debug("Formatting results as JSON")
-                result = self._format_json_scan_results(
-                    scan_result, "code", str(self._get_project_root())
-                )
+                formatter = ScanResultFormatter(str(self._get_project_root()))
+                result = formatter.format_single_file_results_json(scan_result, "code")
                 # Save JSON results to custom path or default location
                 save_path = str(output_path_resolved) if output_path_resolved else "."
                 saved_path = self._save_scan_results_json(result, save_path)
@@ -556,8 +621,9 @@ class AdversaryMCPServer:
                 logger.info(
                     f"🔧 adv_scan_code auto-save: project_root={project_root}, save_location={save_location}"
                 )
-                json_result = self._format_json_scan_results(
-                    scan_result, "code", str(project_root)
+                formatter = ScanResultFormatter(str(project_root))
+                json_result = formatter.format_single_file_results_json(
+                    scan_result, "code"
                 )
                 self._save_scan_results_json(json_result, save_location)
 
@@ -652,8 +718,9 @@ class AdversaryMCPServer:
             # Format results based on output format
             if output_format == "json":
                 logger.debug("Formatting results as JSON")
-                result = self._format_json_scan_results(
-                    scan_result, str(file_path), str(self._get_project_root())
+                formatter = ScanResultFormatter(str(self._get_project_root()))
+                result = formatter.format_single_file_results_json(
+                    scan_result, str(file_path)
                 )
                 # Save JSON results to custom path or default location
                 save_path = str(output_path_resolved) if output_path_resolved else "."
@@ -696,8 +763,9 @@ class AdversaryMCPServer:
                 logger.info(
                     f"🔧 adv_scan_file auto-save: file_path={file_path}, project_root={project_root}"
                 )
-                json_result = self._format_json_scan_results(
-                    scan_result, str(file_path), str(project_root)
+                formatter = ScanResultFormatter(str(project_root))
+                json_result = formatter.format_single_file_results_json(
+                    scan_result, str(file_path)
                 )
                 self._save_scan_results_json(json_result, str(project_root))
 
@@ -796,8 +864,9 @@ class AdversaryMCPServer:
             # Format results based on output format
             if output_format == "json":
                 logger.debug("Formatting results as JSON")
-                result = self._format_json_directory_results(
-                    scan_results, str(directory_path), str(self._get_project_root())
+                formatter = ScanResultFormatter(str(self._get_project_root()))
+                result = formatter.format_directory_results_json(
+                    scan_results, str(directory_path), scan_type="directory"
                 )
                 # Save JSON results to custom path or default location
                 save_path = str(output_path_resolved) if output_path_resolved else "."
@@ -850,8 +919,9 @@ class AdversaryMCPServer:
                 logger.info(
                     f"🔧 adv_scan_directory auto-save: directory_path={directory_path}, project_root={project_root}"
                 )
-                json_result = self._format_json_directory_results(
-                    scan_results, str(directory_path), str(project_root)
+                formatter = ScanResultFormatter(str(project_root))
+                json_result = formatter.format_directory_results_json(
+                    scan_results, str(directory_path), scan_type="directory"
                 )
                 self._save_scan_results_json(json_result, str(project_root))
 
@@ -894,7 +964,7 @@ class AdversaryMCPServer:
             working_dir_path = working_directory
 
             # Get diff summary first
-            diff_summary = self.diff_scanner.get_diff_summary(
+            diff_summary = await self.diff_scanner.get_diff_summary(
                 source_branch, target_branch, working_dir_path
             )
 
@@ -943,11 +1013,11 @@ class AdversaryMCPServer:
             # Format results based on output format
             if output_format == "json":
                 logger.debug("Formatting results as JSON")
-                result = self._format_json_diff_results(
+                formatter = ScanResultFormatter(str(working_directory))
+                result = formatter.format_diff_results_json(
                     scan_results,
                     diff_summary,
                     f"{source_branch}..{target_branch}",
-                    str(working_directory),
                 )
                 # Auto-save JSON results to project root
                 project_root = self._get_project_root()
@@ -976,7 +1046,7 @@ class AdversaryMCPServer:
                     ):
                         try:
                             # Get the changed code from the diff
-                            diff_changes = self.diff_scanner.get_diff_changes(
+                            diff_changes = await self.diff_scanner.get_diff_changes(
                                 source_branch, target_branch, working_dir_path
                             )
                             if file_path in diff_changes:
@@ -2815,6 +2885,11 @@ class AdversaryMCPServer:
     async def run(self) -> None:
         """Run the MCP server."""
         logger.info("Starting MCP server...")
+
+        # Start metrics collection
+        await self.metrics_collector.start_collection()
+        logger.info("Metrics collection started")
+
         try:
             async with stdio_server() as (read_stream, write_stream):
                 logger.info("MCP server running and accepting connections")
@@ -2833,6 +2908,13 @@ class AdversaryMCPServer:
             logger.error(f"Server runtime error: {e}")
             logger.debug("Server error details", exc_info=True)
             raise
+        finally:
+            # Stop metrics collection on shutdown
+            try:
+                await self.metrics_collector.stop_collection()
+                logger.info("Metrics collection stopped")
+            except Exception as e:
+                logger.warning(f"Error stopping metrics collection: {e}")
 
 
 async def async_main() -> None:

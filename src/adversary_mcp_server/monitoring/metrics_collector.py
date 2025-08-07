@@ -429,6 +429,17 @@ class MetricsCollector:
         history = list(self._metrics[name])
         return history[-limit:] if limit > 0 else history
 
+    def get_current_metrics(self) -> dict[str, list[MetricData]]:
+        """Get all current metrics.
+
+        Returns:
+            Dictionary mapping metric names to their historical data
+        """
+        current_metrics = {}
+        for name, history in self._metrics.items():
+            current_metrics[name] = list(history)
+        return current_metrics
+
     def export_metrics(self, format: str = "json") -> str | None:
         """Export current metrics to file.
 
@@ -482,6 +493,111 @@ class MetricsCollector:
         self._scan_metrics = ScanMetrics()
 
         logger.info("All metrics have been reset")
+
+    def load_exported_metrics(self) -> None:
+        """Load historical metrics from exported JSON files."""
+        if not self.export_path.exists():
+            logger.debug("No metrics export directory found")
+            return
+
+        # Find all exported metrics files
+        metrics_files = list(self.export_path.glob("metrics_*.json"))
+        if not metrics_files:
+            logger.debug("No exported metrics files found")
+            return
+
+        logger.info(f"Loading {len(metrics_files)} exported metrics files")
+        loaded_count = 0
+
+        for metrics_file in sorted(metrics_files):
+            try:
+                with open(metrics_file) as f:
+                    exported_data = json.load(f)
+
+                # Load scan metrics
+                if "scan_metrics" in exported_data:
+                    scan_data = exported_data["scan_metrics"]
+
+                    # Merge scan metrics (accumulate values)
+                    self._scan_metrics.total_scans += scan_data.get("total_scans", 0)
+                    self._scan_metrics.successful_scans += scan_data.get(
+                        "successful_scans", 0
+                    )
+                    self._scan_metrics.failed_scans += scan_data.get("failed_scans", 0)
+                    self._scan_metrics.total_scan_time += scan_data.get(
+                        "total_scan_time", 0
+                    )
+                    self._scan_metrics.files_processed += scan_data.get(
+                        "files_processed", 0
+                    )
+                    self._scan_metrics.files_failed += scan_data.get("files_failed", 0)
+                    self._scan_metrics.total_file_size_bytes += scan_data.get(
+                        "total_file_size_bytes", 0
+                    )
+                    self._scan_metrics.total_findings += scan_data.get(
+                        "total_findings", 0
+                    )
+
+                    # Merge dictionaries
+                    for severity, count in scan_data.get(
+                        "findings_by_severity", {}
+                    ).items():
+                        self._scan_metrics.findings_by_severity[severity] = (
+                            self._scan_metrics.findings_by_severity.get(severity, 0)
+                            + count
+                        )
+
+                    for category, count in scan_data.get(
+                        "findings_by_category", {}
+                    ).items():
+                        self._scan_metrics.findings_by_category[category] = (
+                            self._scan_metrics.findings_by_category.get(category, 0)
+                            + count
+                        )
+
+                    for scanner, count in scan_data.get(
+                        "findings_by_scanner", {}
+                    ).items():
+                        self._scan_metrics.findings_by_scanner[scanner] = (
+                            self._scan_metrics.findings_by_scanner.get(scanner, 0)
+                            + count
+                        )
+
+                    self._scan_metrics.cache_hits += scan_data.get("cache_hits", 0)
+                    self._scan_metrics.cache_misses += scan_data.get("cache_misses", 0)
+                    self._scan_metrics.llm_requests += scan_data.get("llm_requests", 0)
+                    self._scan_metrics.llm_tokens_consumed += scan_data.get(
+                        "llm_tokens_consumed", 0
+                    )
+                    self._scan_metrics.llm_errors += scan_data.get("llm_errors", 0)
+                    self._scan_metrics.batches_processed += scan_data.get(
+                        "batches_processed", 0
+                    )
+
+                # Load raw metrics
+                if "raw_metrics" in exported_data:
+                    raw_metrics = exported_data["raw_metrics"]
+                    file_timestamp = exported_data.get("timestamp", time.time())
+
+                    for metric_name, metric_data in raw_metrics.items():
+                        # Create MetricData objects from the exported data
+                        metric = MetricData(
+                            name=metric_name,
+                            metric_type=MetricType(metric_data.get("type", "gauge")),
+                            value=metric_data["value"],
+                            labels=metric_data.get("labels", {}),
+                            unit=metric_data.get("unit"),
+                            timestamp=metric_data.get("timestamp", file_timestamp),
+                        )
+                        self._metrics[metric_name].append(metric)
+
+                loaded_count += 1
+                logger.debug(f"Loaded metrics from: {metrics_file.name}")
+
+            except Exception as e:
+                logger.warning(f"Failed to load metrics from {metrics_file}: {e}")
+
+        logger.info(f"Successfully loaded historical metrics from {loaded_count} files")
 
     def get_summary(self) -> dict[str, Any]:
         """Get a summary of current metrics.

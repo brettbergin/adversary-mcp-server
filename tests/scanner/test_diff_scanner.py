@@ -1,10 +1,9 @@
 """Tests for the git diff scanner module."""
 
 import os
-import subprocess
 import sys
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -202,52 +201,70 @@ class TestGitDiffScanner:
         assert scanner._detect_language_from_path("README.md") == "generic"
 
     @patch("adversary_mcp_server.scanner.scan_engine.ScanEngine")
-    @patch("subprocess.run")
-    def test_run_git_command_success(self, mock_run, mock_scan_engine):
+    async def test_run_git_command_success(self, mock_scan_engine):
         """Test successful git command execution."""
-        mock_run.return_value = Mock(stdout="success output", stderr="")
-
         scanner = GitDiffScanner()
-        result = scanner._run_git_command(["status"])
+
+        # Mock the error handler to return successful result
+        from adversary_mcp_server.resilience.types import RecoveryAction, RecoveryResult
+
+        mock_recovery_result = RecoveryResult(
+            success=True, action_taken=RecoveryAction.RETRY, result="success output"
+        )
+        scanner.error_handler.execute_with_recovery = AsyncMock(
+            return_value=mock_recovery_result
+        )
+
+        result = await scanner._run_git_command(["status"])
 
         assert result == "success output"
-        mock_run.assert_called_once_with(
-            ["git", "status"],
-            cwd=scanner.working_dir,
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=30,
-        )
 
     @patch("adversary_mcp_server.scanner.scan_engine.ScanEngine")
-    @patch("subprocess.run")
-    def test_run_git_command_failure(self, mock_run, mock_scan_engine):
+    async def test_run_git_command_failure(self, mock_scan_engine):
         """Test failed git command execution."""
-        mock_run.side_effect = subprocess.CalledProcessError(
-            1, "git", stderr="error message"
+        scanner = GitDiffScanner()
+
+        # Mock the error handler to return failed result with error message
+        from adversary_mcp_server.resilience.types import RecoveryAction, RecoveryResult
+
+        mock_recovery_result = RecoveryResult(
+            success=False,
+            action_taken=RecoveryAction.FAIL,
+            error_message="Git command execution failed",
+        )
+        scanner.error_handler.execute_with_recovery = AsyncMock(
+            return_value=mock_recovery_result
         )
 
-        scanner = GitDiffScanner()
-        with pytest.raises(GitDiffError, match="Git command failed: error message"):
-            scanner._run_git_command(["status"])
+        with pytest.raises(GitDiffError, match="Git command execution failed"):
+            await scanner._run_git_command(["status"])
 
-    @patch("subprocess.run")
-    def test_run_git_command_not_found(self, mock_run):
+    async def test_run_git_command_not_found(self):
         """Test git command not found."""
-        mock_run.side_effect = FileNotFoundError()
-
         scanner = GitDiffScanner()
-        with pytest.raises(GitDiffError, match="Git command not found"):
-            scanner._run_git_command(["status"])
+
+        # Mock the error handler to return failed result with FileNotFoundError
+        from adversary_mcp_server.resilience.types import RecoveryAction, RecoveryResult
+
+        mock_recovery_result = RecoveryResult(
+            success=False,
+            action_taken=RecoveryAction.FAIL,
+            error_message="Git command unavailable: git status",
+        )
+        scanner.error_handler.execute_with_recovery = AsyncMock(
+            return_value=mock_recovery_result
+        )
+
+        with pytest.raises(GitDiffError, match="Git command unavailable: git status"):
+            await scanner._run_git_command(["status"])
 
     @patch("adversary_mcp_server.scanner.diff_scanner.GitDiffScanner._run_git_command")
-    def test_validate_branches_success(self, mock_run_git):
+    async def test_validate_branches_success(self, mock_run_git):
         """Test successful branch validation."""
         mock_run_git.return_value = "commit_hash"
 
         scanner = GitDiffScanner()
-        scanner._validate_branches("feature", "main")
+        await scanner._validate_branches("feature", "main")
 
         assert mock_run_git.call_count == 2
         mock_run_git.assert_any_call(
@@ -256,16 +273,16 @@ class TestGitDiffScanner:
         mock_run_git.assert_any_call(["rev-parse", "--verify", "main^{commit}"], None)
 
     @patch("adversary_mcp_server.scanner.diff_scanner.GitDiffScanner._run_git_command")
-    def test_validate_branches_failure(self, mock_run_git):
+    async def test_validate_branches_failure(self, mock_run_git):
         """Test branch validation failure."""
         mock_run_git.side_effect = GitDiffError("Branch not found")
 
         scanner = GitDiffScanner()
         with pytest.raises(GitDiffError, match="Branch validation failed"):
-            scanner._validate_branches("feature", "main")
+            await scanner._validate_branches("feature", "main")
 
     @patch("adversary_mcp_server.scanner.diff_scanner.GitDiffScanner._run_git_command")
-    def test_get_diff_changes_success(self, mock_run_git):
+    async def test_get_diff_changes_success(self, mock_run_git):
         """Test successful diff changes retrieval."""
         diff_output = """diff --git a/test.py b/test.py
 index 1234567..abcdefg 100644
@@ -279,7 +296,7 @@ index 1234567..abcdefg 100644
         mock_run_git.side_effect = ["commit_hash", "commit_hash", diff_output]
 
         scanner = GitDiffScanner()
-        changes = scanner.get_diff_changes("feature", "main")
+        changes = await scanner.get_diff_changes("feature", "main")
 
         assert "test.py" in changes
         assert len(changes["test.py"]) == 1
@@ -288,12 +305,12 @@ index 1234567..abcdefg 100644
         assert chunk.added_lines[0][1] == '    print("new line")'
 
     @patch("adversary_mcp_server.scanner.diff_scanner.GitDiffScanner._run_git_command")
-    def test_get_diff_changes_no_diff(self, mock_run_git):
+    async def test_get_diff_changes_no_diff(self, mock_run_git):
         """Test diff changes with no differences."""
         mock_run_git.side_effect = ["commit_hash", "commit_hash", ""]
 
         scanner = GitDiffScanner()
-        changes = scanner.get_diff_changes("feature", "main")
+        changes = await scanner.get_diff_changes("feature", "main")
 
         assert changes == {}
 
@@ -340,7 +357,7 @@ index 1234567..abcdefg 100644
         # Note: Cannot easily assert call count on async function mock without more complex setup
 
     @patch("adversary_mcp_server.scanner.diff_scanner.GitDiffScanner.get_diff_changes")
-    def test_get_diff_summary_success(self, mock_get_diff):
+    async def test_get_diff_summary_success(self, mock_get_diff):
         """Test getting diff summary successfully."""
         mock_chunk1 = Mock()
         mock_chunk1.added_lines = [(1, "line1"), (2, "line2")]
@@ -361,7 +378,7 @@ index 1234567..abcdefg 100644
         }
 
         scanner = GitDiffScanner()
-        summary = scanner.get_diff_summary("feature", "main")
+        summary = await scanner.get_diff_summary("feature", "main")
 
         assert summary["source_branch"] == "feature"
         assert summary["target_branch"] == "main"
@@ -375,12 +392,12 @@ index 1234567..abcdefg 100644
         assert "README.md" in summary["scannable_files"]  # Now included
 
     @patch("adversary_mcp_server.scanner.diff_scanner.GitDiffScanner.get_diff_changes")
-    def test_get_diff_summary_git_error(self, mock_get_diff):
+    async def test_get_diff_summary_git_error(self, mock_get_diff):
         """Test getting diff summary with git error."""
         mock_get_diff.side_effect = GitDiffError("Git error")
 
         scanner = GitDiffScanner()
-        summary = scanner.get_diff_summary("feature", "main")
+        summary = await scanner.get_diff_summary("feature", "main")
 
         assert summary["source_branch"] == "feature"
         assert summary["target_branch"] == "main"

@@ -50,15 +50,17 @@ class ErrorRecoveryStrategy:
 class ErrorHandler:
     """Comprehensive error handler with multiple recovery strategies."""
 
-    def __init__(self, config: ResilienceConfig):
+    def __init__(self, config: ResilienceConfig, metrics_collector=None):
         """Initialize error handler.
 
         Args:
             config: Resilience configuration
+            metrics_collector: Optional metrics collector for error handling analytics
         """
         self.config = config
-        self.retry_manager = RetryManager(config)
-        self.circuit_breakers = CircuitBreakerRegistry(config)
+        self.metrics_collector = metrics_collector
+        self.retry_manager = RetryManager(config, metrics_collector)
+        self.circuit_breakers = CircuitBreakerRegistry(config, metrics_collector)
         self.recovery_strategies: dict[ErrorCategory, ErrorRecoveryStrategy] = {}
 
         # Setup default recovery strategies
@@ -168,6 +170,14 @@ class ErrorHandler:
         start_time = time.time()
         circuit_breaker: CircuitBreaker | None = None
 
+        # Record error recovery operation start
+        if self.metrics_collector:
+            self.metrics_collector.record_metric(
+                "error_recovery_operations_total",
+                1,
+                labels={"operation": operation_name, "status": "started"},
+            )
+
         # Get circuit breaker if name provided
         if circuit_breaker_name and self.config.enable_circuit_breaker:
             circuit_breaker = await self.circuit_breakers.get_breaker(
@@ -183,6 +193,20 @@ class ErrorHandler:
 
             # Success case
             duration = time.time() - start_time
+
+            # Record successful recovery
+            if self.metrics_collector:
+                self.metrics_collector.record_metric(
+                    "error_recovery_operations_total",
+                    1,
+                    labels={"operation": operation_name, "status": "success"},
+                )
+                self.metrics_collector.record_histogram(
+                    "error_recovery_duration_seconds",
+                    duration,
+                    labels={"operation": operation_name, "outcome": "success"},
+                )
+
             return RecoveryResult(
                 success=True,
                 action_taken=RecoveryAction.RETRY,  # No action needed for success
@@ -193,11 +217,33 @@ class ErrorHandler:
         except CircuitBreakerError as e:
             # Circuit breaker is open
             logger.warning(f"Circuit breaker open for '{operation_name}': {e}")
+
+            # Record circuit breaker failure
+            if self.metrics_collector:
+                self.metrics_collector.record_metric(
+                    "error_recovery_circuit_breaker_trips_total",
+                    1,
+                    labels={"operation": operation_name, "breaker_name": e.name},
+                )
+
             return await self._handle_circuit_breaker_error(
                 e, operation_name, fallback_func, start_time, *args, **kwargs
             )
 
         except Exception as original_error:
+            # Record error occurrence
+            if self.metrics_collector:
+                error_category = self._classify_error(original_error, error_classifier)
+                self.metrics_collector.record_metric(
+                    "error_recovery_errors_total",
+                    1,
+                    labels={
+                        "operation": operation_name,
+                        "error_type": type(original_error).__name__,
+                        "error_category": error_category.value,
+                    },
+                )
+
             # Handle other errors with recovery strategies
             return await self._handle_error_with_strategy(
                 original_error,

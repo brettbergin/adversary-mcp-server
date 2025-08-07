@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -91,18 +92,21 @@ class LLMValidator:
         self,
         credential_manager: CredentialManager,
         cache_manager: CacheManager | None = None,
+        metrics_collector=None,
     ):
         """Initialize the LLM validator.
 
         Args:
             credential_manager: Credential manager for configuration
             cache_manager: Optional cache manager for validation results
+            metrics_collector: Optional metrics collector for validation analytics
         """
         logger.info("Initializing LLMValidator")
         self.credential_manager = credential_manager
         self.config = credential_manager.load_config()
         self.exploit_generator = ExploitGenerator(credential_manager)
         self.llm_client: LLMClient | None = None
+        self.metrics_collector = metrics_collector
         self.cache_manager = cache_manager
 
         # Initialize cache manager if not provided
@@ -129,7 +133,7 @@ class LLMValidator:
             group_by_language=False,  # Don't group by language for validation
             group_by_complexity=True,  # Group by complexity for better analysis
         )
-        self.batch_processor = BatchProcessor(batch_config)
+        self.batch_processor = BatchProcessor(batch_config, self.metrics_collector)
         logger.info(
             "Initialized BatchProcessor for validation with token-based strategy"
         )
@@ -144,7 +148,7 @@ class LLMValidator:
             base_delay_seconds=2.0,  # Longer base delay
             enable_graceful_degradation=True,
         )
-        self.error_handler = ErrorHandler(resilience_config)
+        self.error_handler = ErrorHandler(resilience_config, self.metrics_collector)
         logger.info("Initialized ErrorHandler for validation resilience")
 
         # Initialize LLM client if configured
@@ -183,6 +187,7 @@ class LLMValidator:
         Returns:
             Dictionary mapping finding UUID to validation result
         """
+        validation_start_time = time.time()
         logger.info(f"Starting validation of {len(findings)} findings for {file_path}")
         logger.debug(
             f"Generate exploits: {generate_exploits}, Source code length: {len(source_code)} chars"
@@ -232,6 +237,8 @@ class LLMValidator:
         """
         validation_results = {}
 
+        validation_start_time = time.time()
+
         # Check cache first if enabled
         cached_results = await self._get_cached_validation_results(
             findings, source_code, file_path
@@ -244,6 +251,19 @@ class LLMValidator:
             uncached_findings = [f for f in findings if f.uuid not in cached_results]
             if not uncached_findings:
                 logger.info("All validation results found in cache")
+
+                # Record cache hit metrics
+                if self.metrics_collector:
+                    validation_duration = time.time() - validation_start_time
+                    self.metrics_collector.record_histogram(
+                        "llm_validation_duration_seconds",
+                        validation_duration,
+                        labels={"status": "cached"},
+                    )
+                    self.metrics_collector.record_metric(
+                        "llm_validation_requests_total", 1, labels={"status": "cached"}
+                    )
+
                 return validation_results
             findings = uncached_findings
 
@@ -343,6 +363,46 @@ class LLMValidator:
         logger.info(f"Validation batch processing completed: {metrics.to_dict()}")
 
         logger.info(f"Validation completed: {len(validation_results)} total results")
+
+        # Record validation completion metrics
+        if self.metrics_collector:
+            validation_duration = time.time() - validation_start_time
+
+            # Count legitimate vs false positive findings
+            legitimate_count = sum(
+                1 for result in validation_results.values() if result.is_legitimate
+            )
+            false_positive_count = len(validation_results) - legitimate_count
+
+            # Calculate average confidence
+            avg_confidence = (
+                sum(result.confidence for result in validation_results.values())
+                / len(validation_results)
+                if validation_results
+                else 0
+            )
+
+            self.metrics_collector.record_histogram(
+                "llm_validation_duration_seconds",
+                validation_duration,
+                labels={"status": "completed"},
+            )
+            self.metrics_collector.record_metric(
+                "llm_validation_requests_total", 1, labels={"status": "completed"}
+            )
+            self.metrics_collector.record_metric(
+                "llm_validation_findings_total", len(validation_results)
+            )
+            self.metrics_collector.record_metric(
+                "llm_validation_legitimate_total", legitimate_count
+            )
+            self.metrics_collector.record_metric(
+                "llm_validation_false_positives_total", false_positive_count
+            )
+            self.metrics_collector.record_histogram(
+                "llm_validation_confidence_score", avg_confidence
+            )
+
         return validation_results
 
     async def _get_cached_validation_results(

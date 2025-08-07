@@ -3,7 +3,7 @@
 import os
 import sys
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -58,14 +58,14 @@ class TestServerDiffScanIntegration:
 
         mock_scan_results = {"test.py": [mock_scan_result]}
 
-        server.diff_scanner.get_diff_summary = Mock(return_value=mock_diff_summary)
+        server.diff_scanner.get_diff_summary = AsyncMock(return_value=mock_diff_summary)
 
         # Create an async mock for scan_diff since it's now async
         async def mock_scan_diff(*args, **kwargs):
             return mock_scan_results
 
         server.diff_scanner.scan_diff = mock_scan_diff
-        server.diff_scanner.get_diff_changes = Mock(return_value={})
+        server.diff_scanner.get_diff_changes = AsyncMock(return_value={})
 
         # Mock exploit generator
         server.exploit_generator.generate_exploits = Mock(return_value=["test exploit"])
@@ -102,7 +102,7 @@ class TestServerDiffScanIntegration:
             "scannable_files": [],
         }
 
-        server.diff_scanner.get_diff_summary = Mock(return_value=mock_diff_summary)
+        server.diff_scanner.get_diff_summary = AsyncMock(return_value=mock_diff_summary)
 
         # Create an async mock for scan_diff since it's now async
         async def mock_scan_diff(*args, **kwargs):
@@ -128,7 +128,7 @@ class TestServerDiffScanIntegration:
             "error": "Branch not found",
         }
 
-        server.diff_scanner.get_diff_summary = Mock(return_value=mock_diff_summary)
+        server.diff_scanner.get_diff_summary = AsyncMock(return_value=mock_diff_summary)
 
         arguments = {"source_branch": "feature", "target_branch": "main"}
 
@@ -176,14 +176,14 @@ class TestServerDiffScanIntegration:
         )
         mock_diff_changes = {"test.py": [mock_chunk]}
 
-        server.diff_scanner.get_diff_summary = Mock(return_value=mock_diff_summary)
+        server.diff_scanner.get_diff_summary = AsyncMock(return_value=mock_diff_summary)
 
         # Create an async mock for scan_diff since it's now async
         async def mock_scan_diff(*args, **kwargs):
             return mock_scan_results
 
         server.diff_scanner.scan_diff = mock_scan_diff
-        server.diff_scanner.get_diff_changes = Mock(return_value=mock_diff_changes)
+        server.diff_scanner.get_diff_changes = AsyncMock(return_value=mock_diff_changes)
 
         # Mock LLM analysis prompts
         server._add_llm_analysis_prompts = Mock(
@@ -236,7 +236,7 @@ class TestServerDiffScanIntegration:
 
         mock_scan_results = {"test.py": [mock_scan_result]}
 
-        server.diff_scanner.get_diff_summary = Mock(return_value=mock_diff_summary)
+        server.diff_scanner.get_diff_summary = AsyncMock(return_value=mock_diff_summary)
 
         # Create an async mock for scan_diff since it's now async
         async def mock_scan_diff(*args, **kwargs):
@@ -293,7 +293,7 @@ class TestServerDiffScanIntegration:
 
         mock_scan_results = {"test.py": [mock_scan_result]}
 
-        server.diff_scanner.get_diff_summary = Mock(return_value=mock_diff_summary)
+        server.diff_scanner.get_diff_summary = AsyncMock(return_value=mock_diff_summary)
 
         # Create an async mock for scan_diff since it's now async
         async def mock_scan_diff(*args, **kwargs):
@@ -319,7 +319,9 @@ class TestServerDiffScanIntegration:
         server = AdversaryMCPServer()
 
         # Mock diff scanner to raise exception
-        server.diff_scanner.get_diff_summary = Mock(side_effect=Exception("Test error"))
+        server.diff_scanner.get_diff_summary = AsyncMock(
+            side_effect=Exception("Test error")
+        )
 
         arguments = {"source_branch": "feature", "target_branch": "main"}
 
@@ -431,7 +433,7 @@ class TestServerDiffScanToolDefinition:
         assert callable(server._handle_diff_scan)
 
         # Mock the dependencies and test that it can be called
-        server.diff_scanner.get_diff_summary = Mock(
+        server.diff_scanner.get_diff_summary = AsyncMock(
             return_value={"error": "test error"}
         )
 
@@ -457,7 +459,7 @@ class TestServerDiffScanToolDefinition:
             "scannable_files": [],
         }
 
-        server.diff_scanner.get_diff_summary = Mock(return_value=mock_diff_summary)
+        server.diff_scanner.get_diff_summary = AsyncMock(return_value=mock_diff_summary)
 
         # Create an async mock for scan_diff since it's now async
         async def mock_scan_diff(*args, **kwargs):
@@ -515,7 +517,7 @@ class TestServerDiffScanIntegrationComplete:
         mock_scan_results = {"test.py": [mock_scan_result]}
 
         # Mock the diff scanner methods
-        server.diff_scanner.get_diff_summary = Mock(return_value=mock_diff_summary)
+        server.diff_scanner.get_diff_summary = AsyncMock(return_value=mock_diff_summary)
 
         # Create an async mock for scan_diff since it's now async
         async def mock_scan_diff(*args, **kwargs):

@@ -578,3 +578,393 @@ class TestLLMValidator:
             "Validation failed, keeping finding as precaution"
             in results["test-uuid-1"].reasoning
         )
+
+
+class TestLLMValidatorSyncWrapper:
+    """Test LLM validator sync wrapper for uncovered edge cases."""
+
+    def test_validate_findings_no_event_loop(self):
+        """Test validate_findings when no event loop exists."""
+        mock_manager = Mock()
+        mock_config = SecurityConfig()
+        mock_config.llm_provider = (
+            None  # No LLM provider to avoid client initialization
+        )
+        mock_manager.load_config.return_value = mock_config
+
+        # Mock the validator to take the event loop creation path
+        with patch(
+            "adversary_mcp_server.scanner.llm_validator.asyncio.get_event_loop"
+        ) as mock_get_loop:
+            # Simulate no event loop exists
+            mock_get_loop.side_effect = RuntimeError("No event loop")
+
+            with patch(
+                "adversary_mcp_server.scanner.llm_validator.asyncio.new_event_loop"
+            ) as mock_new_loop:
+                with patch(
+                    "adversary_mcp_server.scanner.llm_validator.asyncio.set_event_loop"
+                ) as mock_set_loop:
+                    mock_loop = Mock()
+                    mock_new_loop.return_value = mock_loop
+
+                    # Mock the async call to return default results (since no LLM client)
+                    expected_result = {
+                        "test-uuid": ValidationResult(
+                            finding_uuid="test-uuid",
+                            is_legitimate=True,
+                            confidence=0.7,
+                            reasoning="LLM validation not available, finding kept as precaution",
+                            validation_error="LLM client not initialized",
+                        )
+                    }
+                    mock_loop.run_until_complete.return_value = expected_result
+
+                    validator = LLMValidator(mock_manager)
+
+                    threat = ThreatMatch(
+                        rule_id="test",
+                        rule_name="Test",
+                        description="Test threat",
+                        category=Category.INJECTION,
+                        severity=Severity.HIGH,
+                        file_path="/test/file.py",
+                        line_number=10,
+                        uuid="test-uuid",
+                    )
+
+                    result = validator.validate_findings(
+                        [threat], "test code", "test.py"
+                    )
+
+                    # When no LLM client is available, it should return early with default results
+                    # and not create a new event loop - it returns from the sync path
+                    assert isinstance(result, dict)
+                    assert len(result) == 1
+                    assert "test-uuid" in result
+
+    def test_validate_findings_no_llm_client_default_results(self):
+        """Test validate_findings returns default results when LLM client not available."""
+        mock_manager = Mock()
+        mock_config = SecurityConfig()
+        mock_config.llm_provider = None  # No LLM provider
+        mock_manager.load_config.return_value = mock_config
+
+        validator = LLMValidator(mock_manager)
+
+        threat = ThreatMatch(
+            rule_id="test",
+            rule_name="Test",
+            description="Test threat",
+            category=Category.INJECTION,
+            severity=Severity.HIGH,
+            file_path="/test/file.py",
+            line_number=10,
+            uuid="test-uuid",
+        )
+
+        result = validator.validate_findings([threat], "test code", "test.py")
+
+        # Should return default results since no LLM client
+        assert len(result) == 1
+        assert "test-uuid" in result
+        assert result["test-uuid"].is_legitimate is True
+        assert result["test-uuid"].confidence == 0.7
+        assert "LLM validation not available" in result["test-uuid"].reasoning
+
+    def test_validate_findings_empty_findings_list(self):
+        """Test validate_findings with empty findings list."""
+        mock_manager = Mock()
+        mock_config = SecurityConfig()
+        mock_manager.load_config.return_value = mock_config
+
+        validator = LLMValidator(mock_manager)
+
+        result = validator.validate_findings([], "test code", "test.py")
+
+        # Should return empty dict for no findings
+        assert result == {}
+
+
+class TestLLMValidatorBatchProcessingErrors:
+    """Test LLM validator batch processing error scenarios."""
+
+    @pytest.mark.asyncio
+    async def test_validate_findings_async_batch_processor_error(self):
+        """Test _validate_findings_async when batch processor raises an error."""
+        mock_manager = Mock()
+        mock_config = SecurityConfig()
+        mock_config.llm_provider = "openai"
+        mock_config.llm_api_key = "test-key"
+        mock_config.enable_caching = False  # Disable caching to simplify test
+        mock_manager.load_config.return_value = mock_config
+
+        with (
+            patch(
+                "adversary_mcp_server.scanner.llm_validator.create_llm_client"
+            ) as mock_create_client,
+            patch(
+                "adversary_mcp_server.scanner.llm_validator.BatchProcessor"
+            ) as mock_batch_processor_class,
+        ):
+            # Mock LLM client
+            mock_llm_client = Mock()
+            mock_create_client.return_value = mock_llm_client
+
+            # Mock batch processor creation and methods
+            from unittest.mock import AsyncMock
+
+            mock_batch_processor = Mock()
+            mock_batch_processor.create_batches.return_value = [[]]  # Empty batch list
+            # Mock process_batches to return empty list as async function
+            mock_batch_processor.process_batches = AsyncMock(
+                return_value=[]
+            )  # Return empty results
+            mock_batch_processor.get_metrics.return_value = Mock()
+            mock_batch_processor.get_metrics.return_value.to_dict.return_value = {}
+            mock_batch_processor_class.return_value = mock_batch_processor
+
+            validator = LLMValidator(mock_manager)
+            validator.llm_client = (
+                mock_llm_client  # Set directly to avoid initialization issues
+            )
+
+            threat = ThreatMatch(
+                rule_id="test",
+                rule_name="Test",
+                description="Test threat",
+                category=Category.INJECTION,
+                severity=Severity.HIGH,
+                file_path="/test/file.py",
+                line_number=10,
+                uuid="test-uuid",
+                code_snippet="test code",
+            )
+
+            # Should handle empty batch processing results gracefully
+            result = await validator._validate_findings_async(
+                [threat], "test code", "test.py"
+            )
+
+            # Should still return results dict (empty due to no batch results)
+            assert isinstance(result, dict)
+
+    @pytest.mark.asyncio
+    async def test_validate_findings_async_llm_response_error(self):
+        """Test _validate_findings_async when LLM returns malformed response."""
+        mock_manager = Mock()
+        mock_config = SecurityConfig()
+        mock_config.llm_provider = "openai"
+        mock_config.llm_api_key = "test-key"
+        mock_manager.load_config.return_value = mock_config
+
+        with patch(
+            "adversary_mcp_server.scanner.llm_validator.create_llm_client"
+        ) as mock_create_client:
+            # Mock LLM client that returns invalid response
+            mock_llm_client = Mock()
+            mock_response = Mock()
+            mock_response.content = "invalid json response"  # Not valid JSON
+            mock_llm_client.complete_with_retry.return_value = mock_response
+            mock_create_client.return_value = mock_llm_client
+
+            validator = LLMValidator(mock_manager)
+            validator.llm_client = mock_llm_client
+
+            threat = ThreatMatch(
+                rule_id="test",
+                rule_name="Test",
+                description="Test threat",
+                category=Category.INJECTION,
+                severity=Severity.HIGH,
+                file_path="/test/file.py",
+                line_number=10,
+                uuid="test-uuid",
+            )
+
+            # Should handle malformed response gracefully
+            result = await validator._validate_findings_async(
+                [threat], "test code", "test.py"
+            )
+
+            # Should return default results when parsing fails
+            assert isinstance(result, dict)
+            assert len(result) == 1
+            assert "test-uuid" in result
+
+
+class TestLLMValidatorEdgeCases:
+    """Test LLM validator edge cases for better coverage."""
+
+    def test_create_default_results_with_exploits(self):
+        """Test _create_default_results with exploit generation enabled."""
+        mock_manager = Mock()
+        mock_config = SecurityConfig()
+        mock_manager.load_config.return_value = mock_config
+
+        validator = LLMValidator(mock_manager)
+
+        threat = ThreatMatch(
+            rule_id="test",
+            rule_name="Test",
+            description="Test threat",
+            category=Category.INJECTION,
+            severity=Severity.HIGH,
+            file_path="/test/file.py",
+            line_number=10,
+            uuid="test-uuid",
+        )
+
+        # Mock exploit generator to be available and return exploits
+        validator.exploit_generator.is_llm_available = Mock(return_value=True)
+        validator.exploit_generator.generate_exploits = Mock(
+            return_value=["test exploit"]
+        )
+
+        # Test with exploit generation enabled
+        result = validator._create_default_results([threat], True, "test code")
+
+        assert len(result) == 1
+        assert "test-uuid" in result
+        validation_result = result["test-uuid"]
+        assert validation_result.is_legitimate is True
+        assert validation_result.confidence == 0.7
+        assert "LLM validation not available" in validation_result.reasoning
+
+        # Should have exploit POC when exploit generation enabled and succeeds
+        assert validation_result.exploit_poc == ["test exploit"]
+        # exploitation_vector is not created by _create_default_results (that's done elsewhere)
+        assert validation_result.exploitation_vector is None
+
+    def test_create_default_results_without_exploits(self):
+        """Test _create_default_results with exploit generation disabled."""
+        mock_manager = Mock()
+        mock_config = SecurityConfig()
+        mock_manager.load_config.return_value = mock_config
+
+        validator = LLMValidator(mock_manager)
+
+        threat = ThreatMatch(
+            rule_id="test",
+            rule_name="Test",
+            description="Test threat",
+            category=Category.INJECTION,
+            severity=Severity.HIGH,
+            file_path="/test/file.py",
+            line_number=10,
+            uuid="test-uuid",
+        )
+
+        # Test with exploit generation disabled
+        result = validator._create_default_results([threat], False, "test code")
+
+        assert len(result) == 1
+        assert "test-uuid" in result
+        validation_result = result["test-uuid"]
+        assert validation_result.is_legitimate is True
+        assert validation_result.confidence == 0.7
+
+        # Should not have exploitation vector when exploits disabled
+        assert validation_result.exploitation_vector is None
+
+    def test_filter_false_positives_edge_cases(self):
+        """Test filter_false_positives with various confidence levels."""
+        mock_manager = Mock()
+        mock_config = SecurityConfig()
+        mock_manager.load_config.return_value = mock_config
+
+        validator = LLMValidator(mock_manager)
+
+        # Create threats with different UUIDs
+        threat1 = ThreatMatch(
+            rule_id="test1",
+            rule_name="Test1",
+            description="Test threat 1",
+            category=Category.INJECTION,
+            severity=Severity.HIGH,
+            file_path="/test/file.py",
+            line_number=10,
+            uuid="uuid-1",
+        )
+
+        threat2 = ThreatMatch(
+            rule_id="test2",
+            rule_name="Test2",
+            description="Test threat 2",
+            category=Category.XSS,
+            severity=Severity.MEDIUM,
+            file_path="/test/file.py",
+            line_number=20,
+            uuid="uuid-2",
+        )
+
+        # Create validation results with different confidence levels
+        validation_results = {
+            "uuid-1": ValidationResult(
+                finding_uuid="uuid-1",
+                is_legitimate=True,
+                confidence=0.8,  # Above threshold
+                reasoning="High confidence",
+            ),
+            "uuid-2": ValidationResult(
+                finding_uuid="uuid-2",
+                is_legitimate=True,
+                confidence=0.3,  # Below threshold
+                reasoning="Low confidence",
+            ),
+        }
+
+        filtered_threats = validator.filter_false_positives(
+            [threat1, threat2], validation_results
+        )
+
+        # Should only keep threat1 (above confidence threshold)
+        assert len(filtered_threats) == 1
+        assert filtered_threats[0].uuid == "uuid-1"
+
+    def test_get_validation_stats_comprehensive(self):
+        """Test get_validation_stats with comprehensive validation results."""
+        mock_manager = Mock()
+        mock_config = SecurityConfig()
+        mock_manager.load_config.return_value = mock_config
+
+        validator = LLMValidator(mock_manager)
+
+        # Create comprehensive validation results
+        validation_results = {
+            "uuid-1": ValidationResult(
+                finding_uuid="uuid-1",
+                is_legitimate=True,
+                confidence=0.9,
+                reasoning="High confidence legitimate",
+            ),
+            "uuid-2": ValidationResult(
+                finding_uuid="uuid-2",
+                is_legitimate=False,
+                confidence=0.8,
+                reasoning="High confidence false positive",
+            ),
+            "uuid-3": ValidationResult(
+                finding_uuid="uuid-3",
+                is_legitimate=True,
+                confidence=0.4,  # Low confidence
+                reasoning="Low confidence",
+            ),
+            "uuid-4": ValidationResult(
+                finding_uuid="uuid-4",
+                is_legitimate=True,
+                confidence=0.7,
+                reasoning="Medium confidence",
+                validation_error="Some validation error",
+            ),
+        }
+
+        stats = validator.get_validation_stats(validation_results)
+
+        # Verify comprehensive stats
+        assert stats["total_validated"] == 4
+        assert stats["legitimate_findings"] == 3  # 3 marked as legitimate
+        assert stats["false_positives"] == 1  # 1 marked as false positive
+        assert stats["false_positive_rate"] == 0.25  # 1/4 = 0.25
+        assert stats["average_confidence"] == 0.7  # (0.9 + 0.8 + 0.4 + 0.7) / 4
+        assert stats["validation_errors"] == 1  # 1 has validation error

@@ -3,6 +3,8 @@
 import datetime
 import json
 import sys
+import time
+from functools import wraps
 from pathlib import Path
 
 import click
@@ -12,14 +14,159 @@ from rich.table import Table
 
 from . import get_version
 from .benchmarks import BenchmarkRunner
+from .config import get_app_metrics_dir
 from .credentials import CredentialManager
 from .logger import get_logger
+from .monitoring import MetricsCollector
+from .monitoring.dashboard import MonitoringDashboard
+from .monitoring.types import MonitoringConfig
 from .scanner.diff_scanner import GitDiffScanner
 from .scanner.scan_engine import ScanEngine
 from .scanner.types import Severity
 
 console = Console()
 logger = get_logger("cli")
+
+# Global shared metrics collector for CLI commands to persist metrics across invocations
+_shared_metrics_collector: MetricsCollector | None = None
+
+
+def _initialize_monitoring(enable_metrics: bool = True) -> MetricsCollector | None:
+    """Initialize central monitoring for CLI operations.
+
+    Uses a shared metrics collector instance to persist metrics across CLI commands.
+
+    Args:
+        enable_metrics: Whether to enable metrics collection
+
+    Returns:
+        MetricsCollector instance or None if disabled
+    """
+    global _shared_metrics_collector
+
+    if not enable_metrics:
+        return None
+
+    # Return existing shared collector if already initialized
+    if _shared_metrics_collector is not None:
+        return _shared_metrics_collector
+
+    try:
+        logger.debug("Initializing shared CLI monitoring...")
+        monitoring_config = MonitoringConfig(
+            enable_metrics=True,
+            enable_performance_monitoring=True,
+            json_export_path=str(get_app_metrics_dir()),
+        )
+        _shared_metrics_collector = MetricsCollector(monitoring_config)
+        logger.debug("Shared CLI monitoring initialized successfully")
+        return _shared_metrics_collector
+    except Exception as e:
+        logger.warning(f"Failed to initialize CLI monitoring: {e}")
+        return None
+
+
+def _initialize_scan_components(
+    use_validation: bool = True, metrics_collector: MetricsCollector | None = None
+) -> tuple[CredentialManager, ScanEngine]:
+    """Initialize scan components with centralized monitoring.
+
+    Args:
+        use_validation: Whether to enable LLM validation
+        metrics_collector: Optional metrics collector for monitoring
+
+    Returns:
+        Tuple of (CredentialManager, ScanEngine)
+    """
+    logger.debug("Initializing scan components...")
+    credential_manager = CredentialManager()
+    config = credential_manager.load_config()
+
+    scan_engine = ScanEngine(
+        credential_manager=credential_manager,
+        metrics_collector=metrics_collector,
+        enable_llm_validation=use_validation,
+        enable_llm_analysis=config.enable_llm_analysis,
+        enable_semgrep_analysis=config.enable_semgrep_scanning,
+    )
+
+    logger.debug("Scan components initialized with monitoring support")
+    return credential_manager, scan_engine
+
+
+def cli_command_monitor(command_name: str):
+    """Decorator to monitor CLI command execution timing and outcomes.
+
+    Args:
+        command_name: Name of the CLI command for metrics labeling
+    """
+
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            start_time = time.time()
+            logger.debug(f"Starting CLI command: {command_name}")
+
+            # Initialize monitoring for this command
+            metrics_collector = _initialize_monitoring()
+
+            if metrics_collector:
+                metrics_collector.record_metric(
+                    "cli_commands_total",
+                    1,
+                    labels={"command": command_name, "status": "started"},
+                )
+
+            try:
+                # Execute the command
+                result = func(*args, **kwargs)
+
+                # Record successful completion
+                duration = time.time() - start_time
+                if metrics_collector:
+                    metrics_collector.record_metric(
+                        "cli_commands_total",
+                        1,
+                        labels={"command": command_name, "status": "success"},
+                    )
+                    metrics_collector.record_histogram(
+                        "cli_command_duration_seconds",
+                        duration,
+                        labels={"command": command_name, "status": "success"},
+                    )
+
+                logger.debug(
+                    f"CLI command {command_name} completed successfully in {duration:.2f}s"
+                )
+                return result
+
+            except Exception as e:
+                # Record failure
+                duration = time.time() - start_time
+                if metrics_collector:
+                    metrics_collector.record_metric(
+                        "cli_commands_total",
+                        1,
+                        labels={
+                            "command": command_name,
+                            "status": "error",
+                            "error_type": type(e).__name__,
+                        },
+                    )
+                    metrics_collector.record_histogram(
+                        "cli_command_duration_seconds",
+                        duration,
+                        labels={"command": command_name, "status": "error"},
+                    )
+
+                logger.error(
+                    f"CLI command {command_name} failed after {duration:.2f}s: {e}"
+                )
+                raise
+
+        return wrapper
+
+    return decorator
 
 
 def _get_project_root(custom_path: str | None = None) -> Path:
@@ -112,6 +259,7 @@ def cli():
     is_flag=True,
     help="Clear all LLM configuration",
 )
+@cli_command_monitor("configure")
 def configure(
     severity_threshold: str | None,
     enable_safety_mode: bool,
@@ -295,15 +443,19 @@ def configure(
 
 
 @cli.command()
+@cli_command_monitor("status")
 def status():
     """Show current server status and configuration."""
     logger.info("=== Starting status command ===")
 
     try:
         logger.debug("Initializing components for status check...")
-        credential_manager = CredentialManager()
+        metrics_collector = _initialize_monitoring()
+        credential_manager, scan_engine = _initialize_scan_components(
+            use_validation=True,  # Need to initialize validation to report its status
+            metrics_collector=metrics_collector,
+        )
         config = credential_manager.load_config()
-        scan_engine = ScanEngine(credential_manager)
         logger.debug("Components initialized successfully")
 
         # Status panel
@@ -541,6 +693,7 @@ def debug_config():
     "--working-directory",
     help="Working directory to use as project root (defaults to current directory)",
 )
+@cli_command_monitor("scan")
 def scan(
     target: str | None,
     source_branch: str | None,
@@ -564,11 +717,10 @@ def scan(
 
     try:
         # Initialize scanner components
-        logger.debug("Initializing scan engine...")
-        credential_manager = CredentialManager()
-        scan_engine = ScanEngine(
-            credential_manager=credential_manager,
-            enable_llm_validation=use_validation,
+        logger.debug("Initializing scan components with monitoring...")
+        metrics_collector = _initialize_monitoring()
+        credential_manager, scan_engine = _initialize_scan_components(
+            use_validation=use_validation, metrics_collector=metrics_collector
         )
 
         # Git diff scanning mode
@@ -580,9 +732,11 @@ def scan(
 
             # Initialize git diff scanner with project root
             git_diff_scanner = GitDiffScanner(
-                scan_engine=scan_engine, working_dir=project_root
+                scan_engine=scan_engine,
+                working_dir=project_root,
+                metrics_collector=metrics_collector,
             )
-            logger.debug("Git diff scanner initialized")
+            logger.debug("Git diff scanner initialized with monitoring")
 
             # Perform diff scan
             severity_enum = Severity(severity) if severity else None
@@ -684,10 +838,41 @@ def scan(
             _display_scan_results(threats, target)
 
         # Save results to file if requested
-        if output and "all_threats" in locals():
-            _save_results_to_file(all_threats, output)
-        elif output and "threats" in locals():
-            _save_results_to_file(threats, output)
+        project_root = _get_project_root(working_directory)
+        if output and source_branch and target_branch and "all_threats" in locals():
+            # For git diff scans, convert diff results to list of scan results
+            diff_scan_results = []
+            for file_path, file_scan_results in scan_results.items():
+                diff_scan_results.extend(file_scan_results)
+            _save_results_to_file(
+                diff_scan_results,
+                f"diff: {source_branch}...{target_branch}",
+                output,
+                str(project_root),
+            )
+        elif (
+            output
+            and "scan_result" in locals()
+            and not isinstance(locals().get("scan_results"), list)
+        ):
+            # Single file scan
+            _save_results_to_file(scan_result, target, output, str(project_root))
+        elif (
+            output
+            and "scan_results" in locals()
+            and isinstance(locals().get("scan_results"), list)
+        ):
+            # Directory scan
+            _save_results_to_file(scan_results, target, output, str(project_root))
+
+        # Export metrics to persist scan data for monitoring
+        if metrics_collector:
+            try:
+                metrics_file = metrics_collector.export_metrics()
+                if metrics_file:
+                    logger.debug(f"Scan metrics exported to: {metrics_file}")
+            except Exception as e:
+                logger.warning(f"Failed to export scan metrics: {e}")
 
         logger.info("=== Scan command completed successfully ===")
 
@@ -699,6 +884,7 @@ def scan(
 
 
 @cli.command()
+@cli_command_monitor("demo")
 def demo():
     """Run a demonstration of the vulnerability scanner."""
     logger.info("=== Starting demo command ===")
@@ -758,8 +944,11 @@ const PASSWORD = "admin123";
     try:
         # Initialize scanner
         logger.debug("Initializing scanner components for demo...")
-        credential_manager = CredentialManager()
-        scan_engine = ScanEngine(credential_manager)
+        metrics_collector = _initialize_monitoring()
+        credential_manager, scan_engine = _initialize_scan_components(
+            use_validation=False,  # Simple demo without validation
+            metrics_collector=metrics_collector,
+        )
 
         all_threats = []
 
@@ -1129,56 +1318,48 @@ def _display_scan_results(threats, target):
     logger.info(f"Displayed scan results for {target}")
 
 
-def _save_results_to_file(threats, output_file):
-    """Save scan results to a JSON file."""
-    logger.info(f"Saving results to file: {output_file}")
+def _save_results_to_file(
+    scan_results, scan_target, output_file, working_directory="."
+):
+    """Save comprehensive scan results to a JSON file using unified formatter.
+
+    Args:
+        scan_results: Enhanced scan results (single EnhancedScanResult or list)
+        scan_target: Target that was scanned (file path or directory)
+        output_file: Output file path
+        working_directory: Working directory for false positive tracking
+    """
+    logger.info(f"Saving comprehensive scan results to file: {output_file}")
     try:
+        from .scanner.result_formatter import ScanResultFormatter
+
         output_path = Path(output_file)
+        formatter = ScanResultFormatter(working_directory)
 
-        # Convert threats to serializable format
-        logger.debug(f"Converting {len(threats)} threats to serializable format...")
-        results = []
-        for threat in threats:
-            threat_data = {
-                "file_path": threat.file_path,
-                "line_number": threat.line_number,
-                "rule_id": threat.rule_id,
-                "rule_name": threat.rule_name,
-                "description": threat.description,
-                "severity": threat.severity.value,
-                "category": threat.category.value,
-                "confidence": threat.confidence,
-                "code_snippet": threat.code_snippet,
-            }
-
-            # Add optional fields if present
-            if hasattr(threat, "cwe_id") and threat.cwe_id:
-                threat_data["cwe_id"] = threat.cwe_id
-            if hasattr(threat, "owasp_category") and threat.owasp_category:
-                threat_data["owasp_category"] = threat.owasp_category
-            if hasattr(threat, "exploit_examples") and threat.exploit_examples:
-                threat_data["exploit_examples"] = threat.exploit_examples
-
-            results.append(threat_data)
+        # Handle both single results and lists of results
+        if isinstance(scan_results, list):
+            logger.debug(
+                f"Formatting {len(scan_results)} scan results as directory scan"
+            )
+            json_content = formatter.format_directory_results_json(
+                scan_results, scan_target, scan_type="directory"
+            )
+        else:
+            logger.debug("Formatting single scan result as file scan")
+            json_content = formatter.format_single_file_results_json(
+                scan_results, scan_target
+            )
 
         # Save to file
         with open(output_path, "w") as f:
-            json.dump(
-                {
-                    "scan_timestamp": datetime.datetime.now().isoformat(),
-                    "threats_count": len(threats),
-                    "threats": results,
-                },
-                f,
-                indent=2,
-            )
+            f.write(json_content)
 
-        console.print(f"✅ Results saved to {output_path}", style="green")
-        logger.info(f"Results saved to {output_path}")
+        console.print(f"✅ Comprehensive results saved to {output_path}", style="green")
+        logger.info(f"Comprehensive scan results saved to {output_path}")
 
     except Exception as e:
-        logger.error(f"Failed to save results: {e}")
-        logger.debug("Save results error details", exc_info=True)
+        logger.error(f"Failed to save comprehensive results: {e}")
+        logger.debug("Save comprehensive results error details", exc_info=True)
         console.print(f"❌ Failed to save results: {e}", style="red")
 
 
@@ -1314,6 +1495,198 @@ def benchmark(scenario: str | None, output: str | None):
         logger.error(f"Benchmark command failed: {e}")
         logger.debug("Benchmark error details", exc_info=True)
         console.print(f"❌ Benchmark failed: {e}", style="red")
+        sys.exit(1)
+
+
+@cli.command()
+@click.option(
+    "--export-format",
+    type=click.Choice(["json", "prometheus"]),
+    default="json",
+    help="Export format for metrics data",
+)
+@click.option(
+    "--output-path", type=click.Path(), help="Custom output path for exported metrics"
+)
+@click.option(
+    "--show-dashboard", is_flag=True, help="Display real-time monitoring dashboard"
+)
+@cli_command_monitor("monitoring")
+def monitoring(export_format: str, output_path: str | None, show_dashboard: bool):
+    """Monitor system metrics and export monitoring data."""
+    logger.info("=== Starting monitoring command ===")
+
+    try:
+        # Initialize monitoring components
+        metrics_collector = _initialize_monitoring(enable_metrics=True)
+        if not metrics_collector:
+            console.print("❌ [red]Failed to initialize monitoring system[/red]")
+            sys.exit(1)
+
+        # Load historical metrics from exported files
+        logger.debug("Loading historical metrics from exported files...")
+        metrics_collector.load_exported_metrics()
+
+        dashboard = MonitoringDashboard(metrics_collector, console)
+
+        if show_dashboard:
+            console.print("🔍 [bold cyan]Real-Time Monitoring Dashboard[/bold cyan]")
+            console.print("Press Ctrl+C to exit the dashboard\n")
+
+            try:
+                import signal
+
+                def signal_handler(sig, frame):
+                    console.print("\n👋 [yellow]Dashboard monitoring stopped[/yellow]")
+                    sys.exit(0)
+
+                signal.signal(signal.SIGINT, signal_handler)
+
+                # Display dashboard continuously
+                while True:
+                    dashboard.display_real_time_dashboard()
+                    console.print(
+                        "\n⏱️  [dim]Refreshing in 5 seconds... (Press Ctrl+C to exit)[/dim]"
+                    )
+                    time.sleep(5)
+
+            except KeyboardInterrupt:
+                console.print("\n👋 [yellow]Dashboard monitoring stopped[/yellow]")
+                sys.exit(0)
+        else:
+            # Export metrics in specified format
+            output_path_obj = Path(output_path) if output_path else None
+
+            if export_format == "json":
+                exported_file = dashboard.export_dashboard_report(output_path_obj)
+                console.print(
+                    f"📊 [green]Dashboard report exported to: {exported_file}[/green]"
+                )
+            elif export_format == "prometheus":
+                exported_file = dashboard.export_prometheus_metrics(output_path_obj)
+                console.print(
+                    f"📈 [green]Prometheus metrics exported to: {exported_file}[/green]"
+                )
+
+            # Show summary
+            console.print("\n📋 [bold]Current Metrics Summary:[/bold]")
+            dashboard.display_real_time_dashboard()
+
+    except Exception as e:
+        logger.error(f"Monitoring command failed: {e}")
+        logger.debug("Monitoring error details", exc_info=True)
+        console.print(f"❌ [red]Monitoring command failed: {e}[/red]")
+        sys.exit(1)
+
+
+@cli.command()
+@click.option(
+    "--metrics-dir",
+    type=click.Path(exists=True),
+    help="Directory containing metrics files to analyze",
+)
+@click.option(
+    "--time-range",
+    type=str,
+    default="24h",
+    help="Time range for analysis (e.g., 1h, 24h, 7d)",
+)
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json", "csv"]),
+    default="table",
+    help="Output format for analysis results",
+)
+@cli_command_monitor("metrics-analyze")
+def metrics_analyze(metrics_dir: str | None, time_range: str, output_format: str):
+    """Analyze historical metrics data and generate insights."""
+    logger.info("=== Starting metrics analysis command ===")
+
+    try:
+        # Initialize monitoring for analysis
+        metrics_collector = _initialize_monitoring(enable_metrics=True)
+        if not metrics_collector:
+            console.print("❌ [red]Failed to initialize monitoring system[/red]")
+            sys.exit(1)
+
+        dashboard = MonitoringDashboard(metrics_collector, console)
+
+        console.print(
+            f"📊 [bold cyan]Metrics Analysis - {time_range} time range[/bold cyan]\n"
+        )
+
+        # Parse time range
+        time_multiplier = {"h": 3600, "d": 86400, "w": 604800}
+        time_unit = time_range[-1].lower()
+        time_value = int(time_range[:-1])
+        lookback_seconds = time_value * time_multiplier.get(time_unit, 3600)
+        lookback_minutes = lookback_seconds // 60
+
+        # Generate analysis report
+        analysis_data = {
+            "analysis_period": time_range,
+            "system_overview": dashboard._generate_system_overview_data(),
+            "scanner_performance": dashboard._generate_scanner_performance_data(),
+            "error_analytics": dashboard._generate_error_analytics_data(),
+            "resource_utilization": dashboard._generate_resource_utilization_data(),
+        }
+
+        if output_format == "table":
+            # Display analysis in table format
+            console.print("🔍 [bold]System Performance Analysis[/bold]")
+            dashboard.display_real_time_dashboard()
+
+        elif output_format == "json":
+            # Export as JSON
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            analysis_file = Path(f"metrics_analysis_{timestamp}.json")
+
+            with open(analysis_file, "w") as f:
+                json.dump(analysis_data, f, indent=2)
+
+            console.print(f"📁 [green]Analysis exported to: {analysis_file}[/green]")
+
+        elif output_format == "csv":
+            # Export as CSV (simplified metrics)
+            import csv
+
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            csv_file = Path(f"metrics_analysis_{timestamp}.csv")
+
+            with open(csv_file, "w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(["Metric", "Category", "Value", "Unit"])
+
+                # System overview metrics
+                for metric, data in analysis_data["system_overview"].items():
+                    if isinstance(data, dict):
+                        for key, value in data.items():
+                            writer.writerow([f"{metric}_{key}", "system", value, ""])
+                    else:
+                        writer.writerow([metric, "system", data, ""])
+
+                # Scanner performance
+                for scanner, data in analysis_data["scanner_performance"].items():
+                    for key, value in data.items():
+                        writer.writerow([f"{scanner}_{key}", "scanner", value, ""])
+
+                # Error analytics
+                for error_type, count in analysis_data["error_analytics"].items():
+                    writer.writerow([error_type, "error", count, "count"])
+
+                # Resource utilization
+                for resource, value in analysis_data["resource_utilization"].items():
+                    writer.writerow([resource, "resource", value, ""])
+
+            console.print(f"📊 [green]CSV analysis exported to: {csv_file}[/green]")
+
+        logger.info("=== Metrics analysis completed successfully ===")
+
+    except Exception as e:
+        logger.error(f"Metrics analysis failed: {e}")
+        logger.debug("Metrics analysis error details", exc_info=True)
+        console.print(f"❌ [red]Metrics analysis failed: {e}[/red]")
         sys.exit(1)
 
 

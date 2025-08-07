@@ -22,6 +22,7 @@ class CacheManager:
         max_size_mb: int = 500,
         max_age_hours: int = 24,
         enable_persistence: bool = True,
+        metrics_collector=None,
     ):
         """Initialize cache manager.
 
@@ -30,6 +31,7 @@ class CacheManager:
             max_size_mb: Maximum cache size in MB
             max_age_hours: Maximum age for cache entries in hours
             enable_persistence: Whether to persist cache to disk
+            metrics_collector: Optional metrics collector for cache operations
         """
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -37,6 +39,7 @@ class CacheManager:
         self.max_size_bytes = max_size_mb * 1024 * 1024
         self.max_age_seconds = max_age_hours * 3600
         self.enable_persistence = enable_persistence
+        self.metrics_collector = metrics_collector
 
         # In-memory cache storage
         self._cache: dict[str, CacheEntry] = {}
@@ -276,6 +279,14 @@ class CacheManager:
             freed_size += entry.size_bytes
             self._stats.eviction_count += 1
 
+            if self.metrics_collector:
+                self.metrics_collector.record_metric(
+                    "cache_evictions_total", 1, labels={"reason": "lru"}
+                )
+                self.metrics_collector.record_metric(
+                    "cache_evicted_bytes_total", entry.size_bytes
+                )
+
             logger.debug(f"Evicted cache entry: {key_str}")
 
         if freed_size > 0:
@@ -313,6 +324,8 @@ class CacheManager:
 
         if key_str not in self._cache:
             self._stats.miss_count += 1
+            if self.metrics_collector:
+                self.metrics_collector.record_cache_operation("get", hit=False)
             logger.debug(f"Cache miss: {key_str}")
             return None
 
@@ -323,12 +336,16 @@ class CacheManager:
             del self._cache[key_str]
             self._remove_entry_from_disk(key_str)
             self._stats.miss_count += 1
+            if self.metrics_collector:
+                self.metrics_collector.record_cache_operation("get", hit=False)
             logger.debug(f"Cache expired: {key_str}")
             return None
 
         # Update access stats
         entry.mark_accessed()
         self._stats.hit_count += 1
+        if self.metrics_collector:
+            self.metrics_collector.record_cache_operation("get", hit=True)
         logger.debug(f"Cache hit: {key_str}")
 
         return entry.data

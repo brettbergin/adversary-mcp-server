@@ -23,15 +23,17 @@ logger = get_logger("batch_processor")
 class BatchProcessor:
     """Advanced batch processor for efficient LLM operations."""
 
-    def __init__(self, config: BatchConfig):
+    def __init__(self, config: BatchConfig, metrics_collector=None):
         """Initialize batch processor.
 
         Args:
             config: Batch processing configuration
+            metrics_collector: Optional metrics collector for batch processing analytics
         """
         self.config = config
         self.token_estimator = TokenEstimator()
         self.metrics = BatchMetrics()
+        self.metrics_collector = metrics_collector
 
         # Batch deduplication tracking
         self.processed_batch_hashes: set[str] = set()
@@ -219,6 +221,7 @@ class BatchProcessor:
         if not file_contexts:
             return []
 
+        batch_creation_start_time = time.time()
         logger.info(
             f"Creating batches for {len(file_contexts)} files using {self.config.strategy}"
         )
@@ -248,6 +251,53 @@ class BatchProcessor:
             batch_sizes = [len(batch) for batch in batches]
             self.metrics.min_batch_size = min(batch_sizes)
             self.metrics.max_batch_size = max(batch_sizes)
+
+            # Record batch creation metrics
+            if self.metrics_collector:
+                batch_creation_duration = time.time() - batch_creation_start_time
+
+                # Calculate resource usage metrics
+                total_files = len(file_contexts)
+                total_tokens = sum(ctx.estimated_tokens for ctx in file_contexts)
+                total_bytes = sum(ctx.file_size_bytes for ctx in file_contexts)
+                avg_complexity = (
+                    sum(ctx.complexity_score for ctx in file_contexts) / total_files
+                    if total_files > 0
+                    else 0
+                )
+
+                # Record timing metrics
+                self.metrics_collector.record_histogram(
+                    "batch_creation_duration_seconds",
+                    batch_creation_duration,
+                    labels={"strategy": self.config.strategy.value},
+                )
+
+                # Record batch size distribution
+                self.metrics_collector.record_metric(
+                    "batch_processor_batches_created_total",
+                    len(batches),
+                    labels={"strategy": self.config.strategy.value},
+                )
+                self.metrics_collector.record_histogram(
+                    "batch_size_files",
+                    sum(batch_sizes) / len(batches) if batches else 0,
+                    labels={"strategy": self.config.strategy.value},
+                )
+
+                # Record resource utilization
+                self.metrics_collector.record_metric(
+                    "batch_processor_files_batched_total", total_files
+                )
+                self.metrics_collector.record_metric(
+                    "batch_processor_tokens_batched_total", total_tokens
+                )
+                self.metrics_collector.record_metric(
+                    "batch_processor_bytes_batched_total", total_bytes
+                )
+                self.metrics_collector.record_histogram(
+                    "batch_complexity_score", avg_complexity
+                )
 
         logger.info(
             f"Created {len(batches)} batches with sizes: {[len(b) for b in batches]}"
@@ -528,6 +578,46 @@ class BatchProcessor:
                     batch_tokens = sum(ctx.estimated_tokens for ctx in batch)
                     self.metrics.total_tokens_processed += batch_tokens
 
+                    # Record individual batch metrics
+                    if self.metrics_collector:
+                        # Record batch processing timing
+                        self.metrics_collector.record_histogram(
+                            "batch_individual_processing_duration_seconds",
+                            batch_time,
+                            labels={"status": "success"},
+                        )
+
+                        # Record batch resource consumption
+                        batch_bytes = sum(ctx.file_size_bytes for ctx in batch)
+                        avg_complexity = sum(
+                            ctx.complexity_score for ctx in batch
+                        ) / len(batch)
+
+                        self.metrics_collector.record_metric(
+                            "batch_individual_files_processed_total", len(batch)
+                        )
+                        self.metrics_collector.record_metric(
+                            "batch_individual_tokens_processed_total", batch_tokens
+                        )
+                        self.metrics_collector.record_metric(
+                            "batch_individual_bytes_processed_total", batch_bytes
+                        )
+                        self.metrics_collector.record_histogram(
+                            "batch_individual_complexity_score", avg_complexity
+                        )
+
+                        # Record batch efficiency metrics
+                        if batch_time > 0:
+                            files_per_second = len(batch) / batch_time
+                            tokens_per_second = batch_tokens / batch_time
+
+                            self.metrics_collector.record_histogram(
+                                "batch_processing_files_per_second", files_per_second
+                            )
+                            self.metrics_collector.record_histogram(
+                                "batch_processing_tokens_per_second", tokens_per_second
+                            )
+
                     # Mark batch as processed and cache result
                     self.processed_batch_hashes.add(batch_hash)
                     if result is not None:  # Only cache successful results
@@ -550,22 +640,78 @@ class BatchProcessor:
                     return (batch_idx, result)
 
                 except TimeoutError:
+                    batch_time = time.time() - batch_start_time
                     logger.error(
                         f"Batch {batch_idx + 1} timed out after {self.config.batch_timeout_seconds}s"
                     )
                     self.metrics.batch_failures += 1
                     self.metrics.files_failed += len(batch)
+
+                    # Record timeout metrics
+                    if self.metrics_collector:
+                        self.metrics_collector.record_metric(
+                            "batch_processing_timeouts_total", 1
+                        )
+                        self.metrics_collector.record_histogram(
+                            "batch_individual_processing_duration_seconds",
+                            batch_time,
+                            labels={"status": "timeout"},
+                        )
+                        self.metrics_collector.record_metric(
+                            "batch_processing_failed_files_total",
+                            len(batch),
+                            labels={"reason": "timeout"},
+                        )
+
                     # Mark as processed but don't cache the failure
                     self.processed_batch_hashes.add(batch_hash)
                     return (batch_idx, None)
 
                 except Exception as e:
+                    batch_time = time.time() - batch_start_time
                     logger.error(f"Batch {batch_idx + 1} failed: {e}")
                     self.metrics.batch_failures += 1
                     self.metrics.files_failed += len(batch)
+
+                    # Record error metrics
+                    if self.metrics_collector:
+                        self.metrics_collector.record_metric(
+                            "batch_processing_errors_total",
+                            1,
+                            labels={"error_type": type(e).__name__},
+                        )
+                        self.metrics_collector.record_histogram(
+                            "batch_individual_processing_duration_seconds",
+                            batch_time,
+                            labels={"status": "error"},
+                        )
+                        self.metrics_collector.record_metric(
+                            "batch_processing_failed_files_total",
+                            len(batch),
+                            labels={"reason": "error"},
+                        )
+
                     # Mark as processed but don't cache the failure
                     self.processed_batch_hashes.add(batch_hash)
                     return (batch_idx, None)
+
+        # Record batch processing start metrics
+        batch_processing_start_time = time.time()
+        if self.metrics_collector:
+            self.metrics_collector.record_metric(
+                "batch_processing_sessions_total",
+                1,
+                labels={"strategy": self.config.strategy.value},
+            )
+            self.metrics_collector.record_metric(
+                "batch_processing_queue_size", len(batches)
+            )
+            self.metrics_collector.record_metric(
+                "batch_processing_unique_batches", len(unique_batches)
+            )
+            self.metrics_collector.record_metric(
+                "batch_processing_deduplicated_batches", skipped_batches
+            )
 
         # Process unique batches concurrently
         tasks = [process_single_batch(batch_info) for batch_info in unique_batches]
@@ -592,6 +738,54 @@ class BatchProcessor:
 
         # Update final metrics
         self.metrics.mark_completed()
+
+        # Record batch processing completion metrics
+        if self.metrics_collector:
+            total_processing_time = time.time() - batch_processing_start_time
+            success_rate = len(valid_results) / len(batches) if batches else 0
+
+            # Record timing and throughput metrics
+            self.metrics_collector.record_histogram(
+                "batch_processing_total_duration_seconds",
+                total_processing_time,
+                labels={"strategy": self.config.strategy.value},
+            )
+            self.metrics_collector.record_histogram(
+                "batch_processing_throughput_batches_per_second",
+                (
+                    len(batches) / total_processing_time
+                    if total_processing_time > 0
+                    else 0
+                ),
+                labels={"strategy": self.config.strategy.value},
+            )
+
+            # Record success and failure metrics
+            self.metrics_collector.record_metric(
+                "batch_processing_successful_batches_total", len(valid_results)
+            )
+            self.metrics_collector.record_metric(
+                "batch_processing_failed_batches_total",
+                len(batches) - len(valid_results),
+            )
+            self.metrics_collector.record_histogram(
+                "batch_processing_success_rate",
+                success_rate,
+                labels={"strategy": self.config.strategy.value},
+            )
+
+            # Record resource utilization metrics
+            files_processed = sum(len(batch) for batch in batches if batch)
+            self.metrics_collector.record_metric(
+                "batch_processing_files_processed_total", files_processed
+            )
+
+            # Record queue management metrics
+            self.metrics_collector.record_histogram(
+                "batch_processing_queue_efficiency",
+                len(unique_batches) / len(batches) if batches else 0,
+                labels={"reason": "deduplication"},
+            )
 
         logger.info(
             f"Batch processing completed: {len(valid_results)}/{len(batches)} batches succeeded "

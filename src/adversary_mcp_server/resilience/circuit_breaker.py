@@ -25,16 +25,18 @@ class CircuitBreakerError(Exception):
 class CircuitBreaker:
     """Circuit breaker for preventing cascading failures in external service calls."""
 
-    def __init__(self, name: str, config: ResilienceConfig):
+    def __init__(self, name: str, config: ResilienceConfig, metrics_collector=None):
         """Initialize circuit breaker.
 
         Args:
             name: Unique name for this circuit breaker
             config: Resilience configuration
+            metrics_collector: Optional metrics collector for circuit breaker analytics
         """
         self.name = name
         self.config = config
         self.stats = CircuitBreakerStats(name=name, state=CircuitBreakerState.CLOSED)
+        self.metrics_collector = metrics_collector
         self._lock = asyncio.Lock()
 
         logger.info(
@@ -66,16 +68,28 @@ class CircuitBreaker:
 
             if self.stats.state == CircuitBreakerState.OPEN:
                 logger.warning(f"Circuit breaker '{self.name}' is open, failing fast")
+
+                # Record circuit breaker rejection
+                if self.metrics_collector:
+                    self.metrics_collector.record_metric(
+                        "circuit_breaker_rejections_total",
+                        1,
+                        labels={"breaker_name": self.name, "state": "open"},
+                    )
+
                 raise CircuitBreakerError(self.name, self.stats)
 
             # Execute function and handle result
+            execution_start_time = time.time()
             try:
                 result = await self._execute_function(func, *args, **kwargs)
-                await self._record_success()
+                execution_time = time.time() - execution_start_time
+                await self._record_success(execution_time)
                 return result
 
             except Exception as e:
-                await self._record_failure(e)
+                execution_time = time.time() - execution_start_time
+                await self._record_failure(e, execution_time)
                 raise
 
     async def _execute_function(self, func: Callable, *args, **kwargs) -> Any:
@@ -111,11 +125,28 @@ class CircuitBreaker:
             ):
                 await self._transition_to_open()
 
-    async def _record_success(self) -> None:
+    async def _record_success(self, execution_time: float = 0.0) -> None:
         """Record a successful operation."""
         self.stats.success_count += 1
         self.stats.total_requests += 1
         self.stats.last_success_time = time.time()
+
+        # Record success metrics
+        if self.metrics_collector:
+            self.metrics_collector.record_metric(
+                "circuit_breaker_requests_total",
+                1,
+                labels={
+                    "breaker_name": self.name,
+                    "status": "success",
+                    "state": self.stats.state.value,
+                },
+            )
+            self.metrics_collector.record_histogram(
+                "circuit_breaker_execution_duration_seconds",
+                execution_time,
+                labels={"breaker_name": self.name, "status": "success"},
+            )
 
         if self.stats.state == CircuitBreakerState.HALF_OPEN:
             # Check if we have enough successes to close the circuit
@@ -126,11 +157,35 @@ class CircuitBreaker:
             f"Circuit breaker '{self.name}' recorded success: {self.stats.success_count} total"
         )
 
-    async def _record_failure(self, error: Exception) -> None:
+    async def _record_failure(
+        self, error: Exception, execution_time: float = 0.0
+    ) -> None:
         """Record a failed operation."""
         self.stats.failure_count += 1
         self.stats.total_requests += 1
         self.stats.last_failure_time = time.time()
+
+        # Record failure metrics
+        if self.metrics_collector:
+            self.metrics_collector.record_metric(
+                "circuit_breaker_requests_total",
+                1,
+                labels={
+                    "breaker_name": self.name,
+                    "status": "failure",
+                    "state": self.stats.state.value,
+                },
+            )
+            self.metrics_collector.record_histogram(
+                "circuit_breaker_execution_duration_seconds",
+                execution_time,
+                labels={"breaker_name": self.name, "status": "failure"},
+            )
+            self.metrics_collector.record_metric(
+                "circuit_breaker_failures_total",
+                1,
+                labels={"breaker_name": self.name, "error_type": type(error).__name__},
+            )
 
         if self.stats.state == CircuitBreakerState.HALF_OPEN:
             # Any failure in half-open immediately opens the circuit
@@ -145,25 +200,77 @@ class CircuitBreaker:
     async def _transition_to_open(self) -> None:
         """Transition circuit breaker to OPEN state."""
         if self.stats.state != CircuitBreakerState.OPEN:
+            previous_state = self.stats.state
             self.stats.state = CircuitBreakerState.OPEN
             self.stats.state_change_time = time.time()
+
+            # Record state transition
+            if self.metrics_collector:
+                self.metrics_collector.record_metric(
+                    "circuit_breaker_state_changes_total",
+                    1,
+                    labels={
+                        "breaker_name": self.name,
+                        "from_state": previous_state.value,
+                        "to_state": "open",
+                    },
+                )
+                self.metrics_collector.record_metric(
+                    "circuit_breaker_open_events_total",
+                    1,
+                    labels={"breaker_name": self.name},
+                )
+
             logger.warning(f"Circuit breaker '{self.name}' opened due to failures")
 
     async def _transition_to_half_open(self) -> None:
         """Transition circuit breaker to HALF_OPEN state."""
+        previous_state = self.stats.state
         self.stats.state = CircuitBreakerState.HALF_OPEN
         self.stats.state_change_time = time.time()
         # Reset counters for half-open testing
         self.stats.success_count = 0
         self.stats.failure_count = 0
+
+        # Record state transition
+        if self.metrics_collector:
+            self.metrics_collector.record_metric(
+                "circuit_breaker_state_changes_total",
+                1,
+                labels={
+                    "breaker_name": self.name,
+                    "from_state": previous_state.value,
+                    "to_state": "half_open",
+                },
+            )
+
         logger.info(f"Circuit breaker '{self.name}' moved to half-open for testing")
 
     async def _transition_to_closed(self) -> None:
         """Transition circuit breaker to CLOSED state."""
+        previous_state = self.stats.state
         self.stats.state = CircuitBreakerState.CLOSED
         self.stats.state_change_time = time.time()
         # Reset failure count when closing
         self.stats.failure_count = 0
+
+        # Record state transition and recovery
+        if self.metrics_collector:
+            self.metrics_collector.record_metric(
+                "circuit_breaker_state_changes_total",
+                1,
+                labels={
+                    "breaker_name": self.name,
+                    "from_state": previous_state.value,
+                    "to_state": "closed",
+                },
+            )
+            self.metrics_collector.record_metric(
+                "circuit_breaker_recovery_events_total",
+                1,
+                labels={"breaker_name": self.name},
+            )
+
         logger.info(f"Circuit breaker '{self.name}' closed after successful recovery")
 
     def get_stats(self) -> CircuitBreakerStats:
@@ -206,13 +313,15 @@ class CircuitBreaker:
 class CircuitBreakerRegistry:
     """Registry for managing multiple circuit breakers."""
 
-    def __init__(self, config: ResilienceConfig):
+    def __init__(self, config: ResilienceConfig, metrics_collector=None):
         """Initialize circuit breaker registry.
 
         Args:
             config: Resilience configuration
+            metrics_collector: Optional metrics collector for circuit breaker analytics
         """
         self.config = config
+        self.metrics_collector = metrics_collector
         self._breakers: dict[str, CircuitBreaker] = {}
         self._lock = asyncio.Lock()
 
@@ -229,7 +338,17 @@ class CircuitBreakerRegistry:
             async with self._lock:
                 # Double-check pattern
                 if name not in self._breakers:
-                    self._breakers[name] = CircuitBreaker(name, self.config)
+                    self._breakers[name] = CircuitBreaker(
+                        name, self.config, self.metrics_collector
+                    )
+
+                    # Record new circuit breaker creation
+                    if self.metrics_collector:
+                        self.metrics_collector.record_metric(
+                            "circuit_breaker_instances_total",
+                            1,
+                            labels={"breaker_name": name},
+                        )
 
         return self._breakers[name]
 

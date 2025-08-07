@@ -618,9 +618,16 @@ class TestMCPToolHandlers:
     @pytest.mark.asyncio
     async def test_handle_get_status(self, server):
         """Test get_status tool handler."""
-        with patch.object(
-            server.scan_engine, "get_scanner_stats", return_value={"status": "ok"}
+        with (
+            patch.object(
+                server.scan_engine, "get_scanner_stats", return_value={"status": "ok"}
+            ),
+            patch("subprocess.run") as mock_run,
         ):
+            # Mock subprocess.run for semgrep status check
+            mock_run.return_value.returncode = 0
+            mock_run.return_value.stdout = "semgrep version 1.0.0"
+
             result = await server._handle_get_status()
 
         assert len(result) == 1
