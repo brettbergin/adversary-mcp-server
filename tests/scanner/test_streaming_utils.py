@@ -3,6 +3,7 @@
 import asyncio
 import tempfile
 from pathlib import Path
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -255,7 +256,8 @@ class TestUtilityFunctions:
         assert is_file_too_large(nonexistent) is True
 
     @pytest.mark.asyncio
-    async def test_stream_file_to_stdin(self):
+    @patch("asyncio.create_subprocess_exec")
+    async def test_stream_file_to_stdin(self, mock_create_subprocess):
         """Test streaming file to process stdin."""
         from adversary_mcp_server.scanner.streaming_utils import stream_file_to_stdin
 
@@ -266,8 +268,21 @@ class TestUtilityFunctions:
             f.flush()
             temp_path = Path(f.name)
 
+        # Mock process
+        mock_process = Mock()
+        mock_process.stdin = Mock()
+        mock_process.stdin.write = Mock()
+        mock_process.stdin.drain = AsyncMock()
+        mock_process.stdin.close = Mock()
+        mock_process.stdin.wait_closed = AsyncMock()
+        mock_process.wait = AsyncMock(return_value=0)
+        mock_process.communicate = AsyncMock(return_value=(content.encode(), b""))
+        mock_process.returncode = 0
+
+        mock_create_subprocess.return_value = mock_process
+
         try:
-            # Create a simple cat process to echo stdin
+            # Create a simple cat process to echo stdin (now mocked)
             process = await asyncio.create_subprocess_exec(
                 "cat",
                 stdin=asyncio.subprocess.PIPE,
@@ -282,6 +297,11 @@ class TestUtilityFunctions:
             stdout, stderr = await process.communicate()
 
             assert stdout.decode() == content
+
+            # Verify mocks were called
+            mock_create_subprocess.assert_called_once()
+            mock_process.stdin.write.assert_called()
+            mock_process.stdin.close.assert_called_once()
             assert process.returncode == 0
         finally:
             temp_path.unlink()

@@ -32,13 +32,15 @@ class RetryExhaustedException(Exception):
 class RetryManager:
     """Manages retry logic with various backoff strategies."""
 
-    def __init__(self, config: ResilienceConfig):
+    def __init__(self, config: ResilienceConfig, metrics_collector=None):
         """Initialize retry manager.
 
         Args:
             config: Resilience configuration
+            metrics_collector: Optional metrics collector for retry analytics
         """
         self.config = config
+        self.metrics_collector = metrics_collector
         logger.info(
             f"RetryManager initialized with max attempts: {config.max_retry_attempts}"
         )
@@ -75,12 +77,39 @@ class RetryManager:
         start_time = time.time()
         last_error: Exception | None = None
 
+        # Record retry operation start
+        if self.metrics_collector:
+            self.metrics_collector.record_metric(
+                "retry_operations_total",
+                1,
+                labels={"operation": operation_name, "strategy": retry_strategy.value},
+            )
+
         for attempt in range(1, self.config.max_retry_attempts + 1):
             try:
                 logger.debug(
                     f"Executing '{operation_name}' attempt {attempt}/{self.config.max_retry_attempts}"
                 )
+                attempt_start_time = time.time()
                 result = await self._execute_function(func, *args, **kwargs)
+                attempt_duration = time.time() - attempt_start_time
+
+                # Record successful retry
+                if self.metrics_collector:
+                    self.metrics_collector.record_metric(
+                        "retry_attempts_total",
+                        attempt,
+                        labels={
+                            "operation": operation_name,
+                            "status": "success",
+                            "final_attempt": str(attempt),
+                        },
+                    )
+                    self.metrics_collector.record_histogram(
+                        "retry_attempt_duration_seconds",
+                        attempt_duration,
+                        labels={"operation": operation_name, "attempt": str(attempt)},
+                    )
 
                 if attempt > 1:
                     logger.info(f"'{operation_name}' succeeded on attempt {attempt}")
@@ -90,6 +119,19 @@ class RetryManager:
             except Exception as e:
                 last_error = e
                 error_category = self._classify_error(e, error_classifier)
+
+                # Record failed attempt
+                if self.metrics_collector:
+                    self.metrics_collector.record_metric(
+                        "retry_failed_attempts_total",
+                        1,
+                        labels={
+                            "operation": operation_name,
+                            "attempt": str(attempt),
+                            "error_type": type(e).__name__,
+                            "error_category": error_category.value,
+                        },
+                    )
 
                 # Create error context
                 context = ErrorContext(
@@ -121,9 +163,38 @@ class RetryManager:
                     f"'{operation_name}' attempt {attempt} failed: {e}. Retrying in {delay:.2f}s"
                 )
 
+                # Record retry delay
+                if self.metrics_collector:
+                    self.metrics_collector.record_histogram(
+                        "retry_delay_seconds",
+                        delay,
+                        labels={
+                            "operation": operation_name,
+                            "strategy": retry_strategy.value,
+                        },
+                    )
+
                 await asyncio.sleep(delay)
 
         # All retries exhausted
+        if self.metrics_collector:
+            total_duration = time.time() - start_time
+            self.metrics_collector.record_metric(
+                "retry_exhausted_total",
+                1,
+                labels={
+                    "operation": operation_name,
+                    "final_error": (
+                        type(last_error).__name__ if last_error else "unknown"
+                    ),
+                },
+            )
+            self.metrics_collector.record_histogram(
+                "retry_total_duration_seconds",
+                total_duration,
+                labels={"operation": operation_name, "outcome": "exhausted"},
+            )
+
         raise RetryExhaustedException(
             operation_name,
             self.config.max_retry_attempts,

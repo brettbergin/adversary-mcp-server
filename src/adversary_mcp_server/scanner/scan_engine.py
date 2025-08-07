@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +10,7 @@ from ..cache import CacheKey, CacheManager, CacheType, SerializableThreatMatch
 from ..config import get_app_cache_dir
 from ..credentials import CredentialManager
 from ..logger import get_logger
+from ..monitoring import MetricsCollector
 from ..resilience import ErrorHandler, ResilienceConfig
 from .file_filter import FileFilter
 from .llm_scanner import LLMScanner
@@ -214,6 +216,7 @@ class ScanEngine:
         self,
         credential_manager: CredentialManager | None = None,
         cache_manager: CacheManager | None = None,
+        metrics_collector: MetricsCollector | None = None,
         enable_llm_analysis: bool = True,
         enable_semgrep_analysis: bool = True,
         enable_llm_validation: bool = True,
@@ -223,6 +226,7 @@ class ScanEngine:
         Args:
             credential_manager: Credential manager for configuration
             cache_manager: Optional cache manager for scan results
+            metrics_collector: Optional metrics collector for performance monitoring
             enable_llm_analysis: Whether to enable LLM analysis
             enable_semgrep_analysis: Whether to enable Semgrep analysis
             enable_llm_validation: Whether to enable LLM validation of findings
@@ -230,6 +234,7 @@ class ScanEngine:
         logger.info("=== Initializing ScanEngine ===")
         self.credential_manager = credential_manager or CredentialManager()
         self.cache_manager = cache_manager
+        self.metrics_collector = metrics_collector
         logger.debug("Initialized core components")
 
         # Load configuration
@@ -242,6 +247,7 @@ class ScanEngine:
                 cache_dir=cache_dir,
                 max_size_mb=config.cache_max_size_mb,
                 max_age_hours=config.cache_max_age_hours,
+                metrics_collector=self.metrics_collector,
             )
             logger.info(f"Initialized cache manager for scan engine at {cache_dir}")
 
@@ -269,7 +275,8 @@ class ScanEngine:
         # Initialize Semgrep scanner
         logger.debug("Initializing Semgrep scanner...")
         self.semgrep_scanner = SemgrepScanner(
-            credential_manager=self.credential_manager
+            credential_manager=self.credential_manager,
+            metrics_collector=self.metrics_collector,
         )
 
         # Check if Semgrep scanning is available and enabled
@@ -289,7 +296,9 @@ class ScanEngine:
         self.llm_analyzer = None
         if self.enable_llm_analysis:
             logger.debug("Initializing LLM analyzer...")
-            self.llm_analyzer = LLMScanner(self.credential_manager, self.cache_manager)
+            self.llm_analyzer = LLMScanner(
+                self.credential_manager, self.cache_manager, self.metrics_collector
+            )
             if not self.llm_analyzer.is_available():
                 logger.warning(
                     "LLM analysis requested but not available - API key not configured"
@@ -305,7 +314,7 @@ class ScanEngine:
         if self.enable_llm_validation:
             logger.debug("Initializing LLM validator...")
             self.llm_validator = LLMValidator(
-                self.credential_manager, self.cache_manager
+                self.credential_manager, self.cache_manager, self.metrics_collector
             )
             logger.info("LLM validator initialized successfully")
         else:
@@ -400,7 +409,9 @@ class ScanEngine:
 
         if enabled and not self.llm_analyzer:
             logger.debug("Creating new LLM analyzer...")
-            self.llm_analyzer = LLMScanner(self.credential_manager)
+            self.llm_analyzer = LLMScanner(
+                self.credential_manager, self.cache_manager, self.metrics_collector
+            )
 
         old_state = self.enable_llm_analysis
         self.enable_llm_analysis = enabled and (
@@ -421,7 +432,9 @@ class ScanEngine:
         # Reinitialize LLM analyzer with new configuration
         if self.enable_llm_analysis:
             logger.debug("Reinitializing LLM analyzer...")
-            self.llm_analyzer = LLMScanner(self.credential_manager)
+            self.llm_analyzer = LLMScanner(
+                self.credential_manager, self.cache_manager, self.metrics_collector
+            )
             if not self.llm_analyzer.is_available():
                 logger.warning(
                     "LLM analysis disabled after reload - API key not configured"
@@ -529,7 +542,12 @@ class ScanEngine:
         Returns:
             Enhanced scan result
         """
+        scan_start_time = time.time()
         file_path_abs = str(Path(file_path).resolve())
+
+        # Record scan start
+        if self.metrics_collector:
+            self.metrics_collector.record_scan_start("code", file_count=1)
 
         # Check cache first if enabled
         cached_result = await self._get_cached_scan_result(
@@ -730,6 +748,14 @@ class ScanEngine:
 
         # Apply LLM validation if enabled
         validation_results = {}
+
+        # Debug logging for validation conditions
+        logger.debug("Validation conditions check:")
+        logger.debug(f"  use_validation: {use_validation}")
+        logger.debug(f"  self.enable_llm_validation: {self.enable_llm_validation}")
+        logger.debug(f"  self.llm_validator: {self.llm_validator is not None}")
+        logger.debug(f"  self.llm_validator type: {type(self.llm_validator)}")
+
         if use_validation and self.enable_llm_validation and self.llm_validator:
             # Combine all threats for validation
             all_threats_for_validation = llm_threats + semgrep_threats
@@ -739,11 +765,13 @@ class ScanEngine:
                     f"Validating {len(all_threats_for_validation)} findings with LLM validator"
                 )
                 try:
-                    validation_results = self.llm_validator.validate_findings(
-                        findings=all_threats_for_validation,
-                        source_code=source_code,
-                        file_path=file_path,
-                        generate_exploits=True,
+                    validation_results = (
+                        await self.llm_validator._validate_findings_async(
+                            findings=all_threats_for_validation,
+                            source_code=source_code,
+                            file_path=file_path,
+                            generate_exploits=True,
+                        )
                     )
 
                     # Filter false positives based on validation
@@ -768,12 +796,16 @@ class ScanEngine:
                     scan_metadata["llm_validation_success"] = False
                     scan_metadata["llm_validation_error"] = str(e)
         else:
+            logger.debug("Validation conditions not met - entering else clause")
             scan_metadata["llm_validation_success"] = False
             if not use_validation:
+                logger.debug("Reason: use_validation=False")
                 scan_metadata["llm_validation_reason"] = "disabled"
             elif not self.enable_llm_validation:
+                logger.debug("Reason: self.enable_llm_validation=False")
                 scan_metadata["llm_validation_reason"] = "disabled"
             else:
+                logger.debug("Reason: self.llm_validator is None or falsy")
                 scan_metadata["llm_validation_reason"] = "not_available"
 
         result = EnhancedScanResult(
@@ -800,6 +832,13 @@ class ScanEngine:
             f"Total threats: {len(result.all_threats)} ==="
         )
 
+        # Record scan completion
+        if self.metrics_collector:
+            duration = time.time() - scan_start_time
+            self.metrics_collector.record_scan_completion(
+                "code", duration, success=True, findings_count=len(result.all_threats)
+            )
+
         return result
 
     async def scan_file(
@@ -822,12 +861,17 @@ class ScanEngine:
         Returns:
             Enhanced scan result
         """
+        scan_start_time = time.time()
         file_path_abs = str(Path(file_path).resolve())
         logger.info(f"=== Starting file scan: {file_path_abs} ===")
 
         if not file_path.exists():
             logger.error(f"File not found: {file_path_abs}")
             raise FileNotFoundError(f"File not found: {file_path}")
+
+        # Record scan start
+        if self.metrics_collector:
+            self.metrics_collector.record_scan_start("file", file_count=1)
 
         # Auto-detect language from file extension
         logger.debug(f"Auto-detecting language for: {file_path_abs}")
@@ -991,15 +1035,20 @@ class ScanEngine:
                     f"Validating {len(all_threats_for_validation)} findings with LLM validator"
                 )
                 try:
-                    # Read file content for validation
-                    with open(file_path, encoding="utf-8") as f:
-                        source_code = f.read()
+                    # Read file content for validation using streaming reader
+                    reader = StreamingFileReader()
+                    chunks = []
+                    async for chunk in reader.read_file_async(file_path):
+                        chunks.append(chunk)
+                    source_code = "".join(chunks)
 
-                    validation_results = self.llm_validator.validate_findings(
-                        findings=all_threats_for_validation,
-                        source_code=source_code,
-                        file_path=str(file_path),
-                        generate_exploits=True,
+                    validation_results = (
+                        await self.llm_validator._validate_findings_async(
+                            findings=all_threats_for_validation,
+                            source_code=source_code,
+                            file_path=str(file_path),
+                            generate_exploits=True,
+                        )
                     )
 
                     # Filter false positives based on validation
@@ -1024,12 +1073,16 @@ class ScanEngine:
                     scan_metadata["llm_validation_success"] = False
                     scan_metadata["llm_validation_error"] = str(e)
         else:
+            logger.debug("Validation conditions not met - entering else clause")
             scan_metadata["llm_validation_success"] = False
             if not use_validation:
+                logger.debug("Reason: use_validation=False")
                 scan_metadata["llm_validation_reason"] = "disabled"
             elif not self.enable_llm_validation:
+                logger.debug("Reason: self.enable_llm_validation=False")
                 scan_metadata["llm_validation_reason"] = "disabled"
             else:
+                logger.debug("Reason: self.llm_validator is None or falsy")
                 scan_metadata["llm_validation_reason"] = "not_available"
 
         result = EnhancedScanResult(
@@ -1044,6 +1097,13 @@ class ScanEngine:
             f"=== File scan complete for {file_path} - "
             f"Total threats: {len(result.all_threats)} ==="
         )
+
+        # Record scan completion
+        if self.metrics_collector:
+            duration = time.time() - scan_start_time
+            self.metrics_collector.record_scan_completion(
+                "file", duration, success=True, findings_count=len(result.all_threats)
+            )
 
         return result
 
@@ -1464,15 +1524,20 @@ class ScanEngine:
                                 preview_size=10000,  # 10KB preview for validation
                             )
                         else:
-                            # Read small files normally
-                            with open(file_path, encoding="utf-8") as f:
-                                source_code = f.read()
+                            # Read small files using streaming reader
+                            reader = StreamingFileReader()
+                            chunks = []
+                            async for chunk in reader.read_file_async(file_path):
+                                chunks.append(chunk)
+                            source_code = "".join(chunks)
 
-                        validation_results = self.llm_validator.validate_findings(
-                            findings=all_threats_for_validation,
-                            source_code=source_code,
-                            file_path=str(file_path),
-                            generate_exploits=True,
+                        validation_results = (
+                            await self.llm_validator._validate_findings_async(
+                                findings=all_threats_for_validation,
+                                source_code=source_code,
+                                file_path=str(file_path),
+                                generate_exploits=True,
+                            )
                         )
 
                         # Filter false positives based on validation

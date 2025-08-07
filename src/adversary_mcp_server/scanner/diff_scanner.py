@@ -1,10 +1,12 @@
 """Git diff scanner for analyzing security vulnerabilities in code changes."""
 
+import asyncio
 import re
-import subprocess
+import time
 from pathlib import Path
 
 from ..logger import get_logger
+from ..resilience import ErrorHandler, ResilienceConfig
 from .scan_engine import EnhancedScanResult, ScanEngine
 from .types import Severity
 
@@ -212,24 +214,42 @@ class GitDiffScanner:
         self,
         scan_engine: ScanEngine | None = None,
         working_dir: Path | None = None,
+        metrics_collector=None,
     ):
         """Initialize the git diff scanner.
 
         Args:
             scan_engine: Scan engine for vulnerability detection
             working_dir: Working directory for git operations (defaults to current directory)
+            metrics_collector: Optional metrics collector for diff scanning analytics
         """
         logger.info("=== Initializing GitDiffScanner ===")
         self.scan_engine = scan_engine or ScanEngine()
         self.working_dir = working_dir or Path.cwd()
         self.parser = GitDiffParser()
+        self.metrics_collector = metrics_collector
+
+        # Initialize ErrorHandler for git command resilience
+        resilience_config = ResilienceConfig(
+            enable_circuit_breaker=True,
+            failure_threshold=3,
+            recovery_timeout_seconds=30,
+            enable_retry=True,
+            max_retry_attempts=2,
+            base_delay_seconds=1.0,
+            enable_graceful_degradation=True,
+            default_timeout_seconds=30.0,
+        )
+        self.error_handler = ErrorHandler(resilience_config, self.metrics_collector)
 
         logger.info(f"Working directory: {self.working_dir}")
-        logger.debug("Scan engine and parser initialized")
+        logger.debug("Scan engine, parser, and error handler initialized")
         logger.info("=== GitDiffScanner initialization complete ===")
 
-    def _run_git_command(self, args: list[str], working_dir: Path | None = None) -> str:
-        """Run a git command and return its output.
+    async def _run_git_command(
+        self, args: list[str], working_dir: Path | None = None
+    ) -> str:
+        """Run a git command and return its output with resilience handling.
 
         Args:
             args: Git command arguments
@@ -243,33 +263,140 @@ class GitDiffScanner:
         """
         target_dir = working_dir or self.working_dir
         cmd = ["git"] + args
-        logger.debug(f"Executing git command: {' '.join(cmd)} in {target_dir}")
+        command_str = " ".join(cmd)
+        logger.debug(f"Executing git command: {command_str} in {target_dir}")
+
+        # Record git operation start
+        git_start_time = time.time()
+        if self.metrics_collector:
+            self.metrics_collector.record_metric(
+                "git_operations_total",
+                1,
+                labels={"command": args[0] if args else "unknown", "status": "started"},
+            )
+
+        # Define the git operation for resilience handling
+        async def git_operation():
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                cwd=target_dir,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    proc.communicate(), timeout=30.0
+                )
+                if proc.returncode == 0:
+                    return stdout.decode("utf-8")
+                else:
+                    error_msg = (
+                        stderr.decode("utf-8").strip() if stderr else "Unknown error"
+                    )
+                    raise GitDiffError(f"Git command failed: {error_msg}")
+            finally:
+                if proc.returncode is None:
+                    try:
+                        proc.terminate()
+                        await proc.wait()
+                    except ProcessLookupError:
+                        pass
+
+        # Define fallback function for graceful degradation
+        async def git_fallback(*args, **kwargs):
+            logger.warning(f"Git service degraded for command: {' '.join(cmd)}")
+            raise GitDiffError(f"Git command unavailable: {' '.join(cmd)}")
 
         try:
-            result = subprocess.run(
-                cmd,
-                cwd=target_dir,
-                capture_output=True,
-                text=True,
-                check=True,
-                timeout=30,  # Add timeout to prevent hanging
+            # Execute with comprehensive error recovery
+            recovery_result = await self.error_handler.execute_with_recovery(
+                git_operation,
+                operation_name=f"git_{'_'.join(args[:2])}",
+                circuit_breaker_name="git_service",
+                fallback_func=git_fallback,
             )
-            logger.debug(f"Git command successful: {len(result.stdout)} chars output")
-            return result.stdout
-        except subprocess.TimeoutExpired:
-            logger.error(f"Git command timed out: {' '.join(cmd)}")
-            raise GitDiffError("Git command timed out")
-        except subprocess.CalledProcessError as e:
-            error_msg = e.stderr.strip() if e.stderr else "Unknown error"
-            logger.error(f"Git command failed: {' '.join(cmd)} - {error_msg}")
-            raise GitDiffError(f"Git command failed: {error_msg}")
+
+            if recovery_result.success:
+                result = recovery_result.result
+                git_duration = time.time() - git_start_time
+
+                # Record successful git operation
+                if self.metrics_collector:
+                    self.metrics_collector.record_metric(
+                        "git_operations_total",
+                        1,
+                        labels={
+                            "command": args[0] if args else "unknown",
+                            "status": "success",
+                        },
+                    )
+                    self.metrics_collector.record_histogram(
+                        "git_operation_duration_seconds",
+                        git_duration,
+                        labels={
+                            "command": args[0] if args else "unknown",
+                            "status": "success",
+                        },
+                    )
+                    self.metrics_collector.record_metric(
+                        "git_output_size_bytes", len(result)
+                    )
+
+                logger.debug(f"Git command successful: {len(result)} chars output")
+                return result
+            else:
+                git_duration = time.time() - git_start_time
+                error_msg = recovery_result.error_message or "Git service unavailable"
+
+                # Record failed git operation
+                if self.metrics_collector:
+                    self.metrics_collector.record_metric(
+                        "git_operations_total",
+                        1,
+                        labels={
+                            "command": args[0] if args else "unknown",
+                            "status": "failure",
+                        },
+                    )
+                    self.metrics_collector.record_histogram(
+                        "git_operation_duration_seconds",
+                        git_duration,
+                        labels={
+                            "command": args[0] if args else "unknown",
+                            "status": "failure",
+                        },
+                    )
+
+                raise GitDiffError(f"Git command failed with recovery: {error_msg}")
+
         except FileNotFoundError:
+            git_duration = time.time() - git_start_time
+
+            # Record git not found error
+            if self.metrics_collector:
+                self.metrics_collector.record_metric(
+                    "git_operations_total",
+                    1,
+                    labels={
+                        "command": args[0] if args else "unknown",
+                        "status": "not_found",
+                    },
+                )
+                self.metrics_collector.record_histogram(
+                    "git_operation_duration_seconds",
+                    git_duration,
+                    labels={
+                        "command": args[0] if args else "unknown",
+                        "status": "not_found",
+                    },
+                )
+
             logger.error("Git command not found in PATH")
             raise GitDiffError(
                 "Git command not found. Please ensure git is installed and in PATH."
             )
 
-    def _validate_branches(
+    async def _validate_branches(
         self, source_branch: str, target_branch: str, working_dir: Path | None = None
     ) -> None:
         """Validate that the specified branches exist.
@@ -287,14 +414,14 @@ class GitDiffScanner:
         try:
             # Check if source branch exists
             logger.debug(f"Validating source branch: {source_branch}")
-            self._run_git_command(
+            await self._run_git_command(
                 ["rev-parse", "--verify", f"{source_branch}^{{commit}}"], working_dir
             )
             logger.debug(f"Source branch {source_branch} exists")
 
             # Check if target branch exists
             logger.debug(f"Validating target branch: {target_branch}")
-            self._run_git_command(
+            await self._run_git_command(
                 ["rev-parse", "--verify", f"{target_branch}^{{commit}}"], working_dir
             )
             logger.debug(f"Target branch {target_branch} exists")
@@ -320,7 +447,7 @@ class GitDiffScanner:
         )
         return "generic"
 
-    def get_diff_changes(
+    async def get_diff_changes(
         self, source_branch: str, target_branch: str, working_dir: Path | None = None
     ) -> dict[str, list[DiffChunk]]:
         """Get diff changes between two branches.
@@ -336,27 +463,80 @@ class GitDiffScanner:
         Raises:
             GitDiffError: If git operations fail
         """
+        diff_analysis_start_time = time.time()
         logger.info(f"=== Getting diff changes: {source_branch} -> {target_branch} ===")
 
+        # Record diff analysis start
+        if self.metrics_collector:
+            self.metrics_collector.record_metric(
+                "diff_analysis_operations_total",
+                1,
+                labels={"source_branch": source_branch, "target_branch": target_branch},
+            )
+
         # Validate branches exist
-        self._validate_branches(source_branch, target_branch, working_dir)
+        await self._validate_branches(source_branch, target_branch, working_dir)
 
         # Get diff between branches
         diff_args = ["diff", f"{target_branch}...{source_branch}"]
         logger.debug(f"Getting diff with command: git {' '.join(diff_args)}")
-        diff_output = self._run_git_command(diff_args, working_dir)
+        diff_output = await self._run_git_command(diff_args, working_dir)
 
         if not diff_output.strip():
             logger.info(
                 f"No differences found between {source_branch} and {target_branch}"
             )
+
+            # Record no changes metric
+            if self.metrics_collector:
+                diff_duration = time.time() - diff_analysis_start_time
+                self.metrics_collector.record_histogram(
+                    "diff_analysis_duration_seconds",
+                    diff_duration,
+                    labels={"outcome": "no_changes"},
+                )
+                self.metrics_collector.record_metric("diff_analysis_files_changed", 0)
+
             return {}
 
         logger.info(f"Diff output received: {len(diff_output)} characters")
 
         # Parse the diff output
         logger.debug("Parsing diff output...")
+        parse_start_time = time.time()
         changes = self.parser.parse_diff(diff_output)
+        parse_duration = time.time() - parse_start_time
+
+        # Record diff analysis metrics
+        if self.metrics_collector:
+            diff_duration = time.time() - diff_analysis_start_time
+            total_chunks = sum(len(chunks) for chunks in changes.values())
+            total_added_lines = sum(
+                len(chunk.added_lines)
+                for chunks in changes.values()
+                for chunk in chunks
+            )
+
+            self.metrics_collector.record_histogram(
+                "diff_analysis_duration_seconds",
+                diff_duration,
+                labels={"outcome": "changes_found"},
+            )
+            self.metrics_collector.record_histogram(
+                "diff_parsing_duration_seconds", parse_duration
+            )
+            self.metrics_collector.record_metric(
+                "diff_analysis_files_changed", len(changes)
+            )
+            self.metrics_collector.record_metric(
+                "diff_analysis_chunks_total", total_chunks
+            )
+            self.metrics_collector.record_metric(
+                "diff_analysis_added_lines_total", total_added_lines
+            )
+            self.metrics_collector.record_metric(
+                "diff_output_size_bytes", len(diff_output)
+            )
 
         logger.info(f"=== Diff changes retrieved - {len(changes)} files changed ===")
         return changes
@@ -390,18 +570,46 @@ class GitDiffScanner:
         Raises:
             GitDiffError: If git operations fail
         """
+        diff_scan_start_time = time.time()
         logger.info(f"=== Starting diff scan: {source_branch} -> {target_branch} ===")
         logger.debug(
             f"Scan parameters - LLM: {use_llm}, Semgrep: {use_semgrep}, "
             f"Validation: {use_validation}, Rules: {use_rules}, Severity: {severity_threshold}"
         )
 
+        # Record diff scan start
+        if self.metrics_collector:
+            self.metrics_collector.record_metric(
+                "diff_scan_operations_total",
+                1,
+                labels={
+                    "source_branch": source_branch,
+                    "target_branch": target_branch,
+                    "use_llm": str(use_llm),
+                    "use_semgrep": str(use_semgrep),
+                    "use_validation": str(use_validation),
+                },
+            )
+
         # Get diff changes
         logger.debug("Retrieving diff changes...")
-        diff_changes = self.get_diff_changes(source_branch, target_branch, working_dir)
+        diff_changes = await self.get_diff_changes(
+            source_branch, target_branch, working_dir
+        )
 
         if not diff_changes:
             logger.info("No diff changes found - returning empty results")
+
+            # Record no changes scan
+            if self.metrics_collector:
+                diff_scan_duration = time.time() - diff_scan_start_time
+                self.metrics_collector.record_histogram(
+                    "diff_scan_duration_seconds",
+                    diff_scan_duration,
+                    labels={"outcome": "no_changes"},
+                )
+                self.metrics_collector.record_metric("diff_scan_files_processed", 0)
+
             return {}
 
         logger.info(f"Processing {len(diff_changes)} changed files")
@@ -501,6 +709,33 @@ class GitDiffScanner:
                 files_failed += 1
                 continue
 
+        # Record diff scan completion metrics
+        if self.metrics_collector:
+            diff_scan_duration = time.time() - diff_scan_start_time
+
+            self.metrics_collector.record_histogram(
+                "diff_scan_duration_seconds",
+                diff_scan_duration,
+                labels={"outcome": "completed"},
+            )
+            self.metrics_collector.record_metric(
+                "diff_scan_files_processed", files_processed
+            )
+            self.metrics_collector.record_metric(
+                "diff_scan_files_skipped", files_skipped
+            )
+            self.metrics_collector.record_metric("diff_scan_files_failed", files_failed)
+            self.metrics_collector.record_metric(
+                "diff_scan_threats_found_total", total_threats_found
+            )
+
+            # Record scan performance metrics
+            if diff_scan_duration > 0:
+                files_per_second = len(diff_changes) / diff_scan_duration
+                self.metrics_collector.record_histogram(
+                    "diff_scan_files_per_second", files_per_second
+                )
+
         logger.info(
             f"=== Diff scan complete - Processed: {files_processed}, "
             f"Skipped: {files_skipped}, Failed: {files_failed}, "
@@ -539,7 +774,7 @@ class GitDiffScanner:
             )
         )
 
-    def get_diff_summary(
+    async def get_diff_summary(
         self, source_branch: str, target_branch: str, working_dir: Path | None = None
     ) -> dict[str, any]:
         """Get a summary of the diff between two branches.
@@ -555,7 +790,7 @@ class GitDiffScanner:
         logger.info(f"Getting diff summary: {source_branch} -> {target_branch}")
 
         try:
-            diff_changes = self.get_diff_changes(
+            diff_changes = await self.get_diff_changes(
                 source_branch, target_branch, working_dir
             )
 

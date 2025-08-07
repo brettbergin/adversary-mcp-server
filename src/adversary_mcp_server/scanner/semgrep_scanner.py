@@ -5,7 +5,6 @@ import os
 import sys
 import tempfile
 import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -51,15 +50,6 @@ except Exception:
     _SEMGREP_AVAILABLE = False
 
 
-@dataclass
-class ScanResult:
-    """Cached scan result."""
-
-    findings: list[dict[str, Any]]
-    timestamp: float
-    file_hash: str
-
-
 class OptimizedSemgrepScanner:
     """Optimized Semgrep scanner using async subprocess for MCP servers."""
 
@@ -70,6 +60,7 @@ class OptimizedSemgrepScanner:
         threat_engine=None,
         credential_manager: CredentialManager | None = None,
         cache_manager: CacheManager | None = None,
+        metrics_collector=None,
     ):
         """Initialize scanner.
 
@@ -79,15 +70,16 @@ class OptimizedSemgrepScanner:
             threat_engine: Threat engine (for compatibility, unused)
             credential_manager: Credential manager for configuration
             cache_manager: Optional advanced cache manager
+            metrics_collector: Optional metrics collector for performance tracking
         """
         self.config = config
         self.cache_ttl = cache_ttl
-        self._cache: dict[str, ScanResult] = {}  # Keep for backwards compatibility
         self._semgrep_path = None
 
         self.threat_engine = threat_engine
         self.credential_manager = credential_manager
         self.cache_manager = cache_manager
+        self.metrics_collector = metrics_collector
 
         # Initialize advanced cache manager if not provided
         if cache_manager is None and self.credential_manager is not None:
@@ -164,25 +156,6 @@ class OptimizedSemgrepScanner:
                 continue
 
         raise RuntimeError("Semgrep not found in PATH or common locations")
-
-    def _get_cache_key(
-        self, source_code: str, file_path: str, language: str | None
-    ) -> str:
-        """Generate cache key for scan."""
-        content = f"{source_code}|{file_path}|{language}|{self.config}"
-        return hashlib.sha256(content.encode()).hexdigest()
-
-    def _get_file_hash(self, source_code: str) -> str:
-        """Generate hash for file content."""
-        return hashlib.sha256(source_code.encode()).hexdigest()
-
-    def _is_cache_valid(self, result: ScanResult, current_hash: str) -> bool:
-        """Check if cached result is still valid."""
-        current_time = time.time()
-        return (
-            current_time - result.timestamp < self.cache_ttl
-            and result.file_hash == current_hash
-        )
 
     def _map_semgrep_severity(self, severity: str) -> Severity:
         """Map Semgrep severity to our severity enum."""
@@ -364,33 +337,13 @@ class OptimizedSemgrepScanner:
         Returns:
             List of ThreatMatch objects
         """
-        # Check advanced cache first, fallback to legacy cache
+        # Check cache first
         cached_threats = await self._get_cached_scan_result(
             source_code, file_path, language, config, rules, severity_threshold
         )
         if cached_threats is not None:
-            logger.debug(f"Advanced cache hit for {file_path}")
+            logger.debug(f"Cache hit for {file_path}")
             return cached_threats
-
-        # Fallback to legacy cache check
-        cache_key = self._get_cache_key(source_code, file_path, language)
-        file_hash = self._get_file_hash(source_code)
-
-        if cache_key in self._cache:
-            cached_result = self._cache[cache_key]
-            if self._is_cache_valid(cached_result, file_hash):
-                logger.debug(f"Legacy cache hit for {file_path}")
-                # Convert cached findings to ThreatMatch objects
-                threats = []
-                for finding in cached_result.findings:
-                    threat = self._convert_semgrep_finding_to_threat(finding, file_path)
-                    threats.append(threat)
-
-                # Apply severity filtering if specified
-                if severity_threshold:
-                    threats = self._filter_by_severity(threats, severity_threshold)
-
-                return threats
 
         # Perform scan with resilience protection
         start_time = time.time()
@@ -410,59 +363,69 @@ class OptimizedSemgrepScanner:
             )
             return []
 
-        try:
-            # Execute scan with comprehensive error recovery
-            recovery_result = await self.error_handler.execute_with_recovery(
-                scan_operation,
-                operation_name=f"semgrep_scan_{Path(file_path).name}",
-                circuit_breaker_name="semgrep_service",
-                fallback_func=scan_fallback,
+        # Execute scan with comprehensive error recovery
+        recovery_result = await self.error_handler.execute_with_recovery(
+            scan_operation,
+            operation_name=f"semgrep_scan_{Path(file_path).name}",
+            circuit_breaker_name="semgrep_service",
+            fallback_func=scan_fallback,
+        )
+
+        if recovery_result.success:
+            raw_findings = recovery_result.result
+        else:
+            # Fallback was used or complete failure
+            raw_findings = recovery_result.result or []
+
+        scan_time = time.time() - start_time
+        logger.info(f"Code scan completed in {scan_time:.2f}s for {file_path}")
+
+        # Record scan metrics
+        if self.metrics_collector:
+            self.metrics_collector.record_histogram(
+                "semgrep_scan_duration_seconds",
+                scan_time,
+                labels={"operation": "code", "language": language},
+            )
+            self.metrics_collector.record_metric(
+                "semgrep_scans_total",
+                1,
+                labels={
+                    "operation": "code",
+                    "status": "success" if recovery_result.success else "fallback",
+                },
+            )
+            self.metrics_collector.record_metric(
+                "semgrep_findings_total",
+                len(raw_findings),
+                labels={"operation": "code", "language": language},
             )
 
-            if recovery_result.success:
-                raw_findings = recovery_result.result
-            else:
-                # Fallback was used or complete failure
-                raw_findings = recovery_result.result or []
+        # Convert raw findings to ThreatMatch objects
+        threats = []
+        for finding in raw_findings:
+            try:
+                threat = self._convert_semgrep_finding_to_threat(finding, file_path)
+                threats.append(threat)
+            except Exception as e:
+                logger.warning(f"Failed to convert finding to threat: {e}")
 
-            scan_time = time.time() - start_time
-            logger.info(f"Code scan completed in {scan_time:.2f}s for {file_path}")
+        # Apply severity filtering if specified
+        if severity_threshold:
+            threats = self._filter_by_severity(threats, severity_threshold)
 
-            # Cache the raw findings (legacy cache for backwards compatibility)
-            self._cache[cache_key] = ScanResult(
-                findings=raw_findings, timestamp=time.time(), file_hash=file_hash
-            )
+        # Cache the final processed results
+        await self._cache_scan_result(
+            threats,
+            source_code,
+            file_path,
+            language,
+            config,
+            rules,
+            severity_threshold,
+        )
 
-            # Convert raw findings to ThreatMatch objects
-            threats = []
-            for finding in raw_findings:
-                try:
-                    threat = self._convert_semgrep_finding_to_threat(finding, file_path)
-                    threats.append(threat)
-                except Exception as e:
-                    logger.warning(f"Failed to convert finding to threat: {e}")
-
-            # Apply severity filtering if specified
-            if severity_threshold:
-                threats = self._filter_by_severity(threats, severity_threshold)
-
-            # Cache the final processed results in advanced cache
-            await self._cache_scan_result(
-                threats,
-                source_code,
-                file_path,
-                language,
-                config,
-                rules,
-                severity_threshold,
-            )
-
-            return threats
-
-        except Exception as e:
-            scan_time = time.time() - start_time
-            logger.error(f"Code scan failed after {scan_time:.2f}s: {e}")
-            return []
+        return threats
 
     async def scan_file(
         self,
@@ -502,60 +465,95 @@ class OptimizedSemgrepScanner:
             # Skip binary files
             return []
 
-        # Check cache first (independent caching for file scans)
-        cache_key = self._get_cache_key(source_code, file_path, language)
-        file_hash = self._get_file_hash(source_code)
+        # Check cache first
+        cached_threats = await self._get_cached_scan_result(
+            source_code, file_path, language, config, rules, severity_threshold
+        )
+        if cached_threats is not None:
+            logger.debug(f"Cache hit for {file_path}")
+            return cached_threats
 
-        if cache_key in self._cache:
-            cached_result = self._cache[cache_key]
-            if self._is_cache_valid(cached_result, file_hash):
-                logger.debug(f"Cache hit for {file_path}")
-                # Convert cached findings to ThreatMatch objects
-                threats = []
-                for finding in cached_result.findings:
-                    threat = self._convert_semgrep_finding_to_threat(finding, file_path)
-                    threats.append(threat)
-
-                # Apply severity filtering if specified
-                if severity_threshold:
-                    threats = self._filter_by_severity(threats, severity_threshold)
-
-                return threats
-
-        # Perform scan directly (independent of scan_code)
+        # Perform scan with resilience protection
         start_time = time.time()
-        try:
+
+        # Define the scan operation for resilience handling
+        async def scan_operation():
             language_str = language
             raw_findings = await self._perform_scan(
                 source_code, file_path, language_str, timeout
             )
-            scan_time = time.time() - start_time
-            logger.info(f"File scan completed in {scan_time:.2f}s for {file_path}")
+            return raw_findings
 
-            # Cache the raw findings
-            self._cache[cache_key] = ScanResult(
-                findings=raw_findings, timestamp=time.time(), file_hash=file_hash
+        # Define fallback function for graceful degradation
+        async def scan_fallback(*args, **kwargs):
+            logger.warning(
+                f"Semgrep service degraded during file scan, returning empty results for {file_path}"
+            )
+            return []
+
+        # Execute scan with comprehensive error recovery
+        recovery_result = await self.error_handler.execute_with_recovery(
+            scan_operation,
+            operation_name=f"semgrep_file_scan_{Path(file_path).name}",
+            circuit_breaker_name="semgrep_service",
+            fallback_func=scan_fallback,
+        )
+
+        if recovery_result.success:
+            raw_findings = recovery_result.result
+        else:
+            # Fallback was used or complete failure
+            raw_findings = recovery_result.result or []
+
+        scan_time = time.time() - start_time
+        logger.info(f"File scan completed in {scan_time:.2f}s for {file_path}")
+
+        # Record scan metrics
+        if self.metrics_collector:
+            self.metrics_collector.record_histogram(
+                "semgrep_scan_duration_seconds",
+                scan_time,
+                labels={"operation": "file", "language": language},
+            )
+            self.metrics_collector.record_metric(
+                "semgrep_scans_total",
+                1,
+                labels={
+                    "operation": "file",
+                    "status": "success" if recovery_result.success else "fallback",
+                },
+            )
+            self.metrics_collector.record_metric(
+                "semgrep_findings_total",
+                len(raw_findings),
+                labels={"operation": "file", "language": language},
             )
 
-            # Convert raw findings to ThreatMatch objects
-            threats = []
-            for finding in raw_findings:
-                try:
-                    threat = self._convert_semgrep_finding_to_threat(finding, file_path)
-                    threats.append(threat)
-                except Exception as e:
-                    logger.warning(f"Failed to convert finding to threat: {e}")
+        # Convert raw findings to ThreatMatch objects
+        threats = []
+        for finding in raw_findings:
+            try:
+                threat = self._convert_semgrep_finding_to_threat(finding, file_path)
+                threats.append(threat)
+            except Exception as e:
+                logger.warning(f"Failed to convert finding to threat: {e}")
 
-            # Apply severity filtering if specified
-            if severity_threshold:
-                threats = self._filter_by_severity(threats, severity_threshold)
+        # Apply severity filtering if specified
+        if severity_threshold:
+            threats = self._filter_by_severity(threats, severity_threshold)
 
-            return threats
+        # Cache the final processed results
+        await self._cache_scan_result(
+            threats,
+            source_code,
+            file_path,
+            language,
+            config,
+            rules,
+            severity_threshold,
+        )
 
-        except Exception as e:
-            scan_time = time.time() - start_time
-            logger.error(f"File scan failed after {scan_time:.2f}s: {e}")
-            return []
+        return threats
 
     async def scan_directory(
         self,
@@ -587,73 +585,83 @@ class OptimizedSemgrepScanner:
         if not os.path.isdir(directory_path):
             raise FileNotFoundError(f"Directory not found: {directory_path}")
 
-        # Check cache first (use directory path as key)
-        cache_key = self._get_cache_key("", directory_path, "directory")
-        # For directories, we use modification time as a simple hash
-        dir_hash = self._get_directory_hash(directory_path)
+        # Check cache first
+        cached_threats = await self._get_cached_scan_result(
+            "", directory_path, "directory", config, rules, severity_threshold
+        )
+        if cached_threats is not None:
+            logger.debug(f"Cache hit for directory {directory_path}")
+            return cached_threats
 
-        if cache_key in self._cache:
-            cached_result = self._cache[cache_key]
-            if self._is_cache_valid(cached_result, dir_hash):
-                logger.debug(f"Cache hit for directory {directory_path}")
-                # Convert cached findings to ThreatMatch objects
-                threats = []
-                for finding in cached_result.findings:
-                    file_path = finding.get("path", directory_path)
-                    threat = self._convert_semgrep_finding_to_threat(finding, file_path)
-                    threats.append(threat)
-
-                # Apply severity filtering if specified
-                if severity_threshold:
-                    threats = self._filter_by_severity(threats, severity_threshold)
-
-                return threats
-
-        # Perform scan directly on directory (independent of other scan methods)
+        # Perform scan with resilience protection
         start_time = time.time()
-        try:
+
+        # Define the scan operation for resilience handling
+        async def scan_operation():
             raw_findings = await self._perform_directory_scan(
                 directory_path, timeout, recursive
             )
-            scan_time = time.time() - start_time
-            logger.info(
-                f"Directory scan completed in {scan_time:.2f}s for {directory_path}"
+            return raw_findings
+
+        # Define fallback function for graceful degradation
+        async def scan_fallback(*args, **kwargs):
+            logger.warning(
+                f"Semgrep service degraded during directory scan, returning empty results for {directory_path}"
             )
-
-            # Cache the raw findings
-            self._cache[cache_key] = ScanResult(
-                findings=raw_findings, timestamp=time.time(), file_hash=dir_hash
-            )
-
-            # Convert raw findings to ThreatMatch objects
-            threats = []
-            files_with_findings = set()
-
-            for finding in raw_findings:
-                try:
-                    file_path = finding.get("path", directory_path)
-                    files_with_findings.add(file_path)
-                    threat = self._convert_semgrep_finding_to_threat(finding, file_path)
-                    threats.append(threat)
-                except Exception as e:
-                    logger.warning(f"Failed to convert finding to threat: {e}")
-
-            logger.info(f"Findings span {len(files_with_findings)} file(s)")
-
-            # Apply severity filtering if specified
-            if severity_threshold:
-                before_count = len(threats)
-                threats = self._filter_by_severity(threats, severity_threshold)
-                logger.info(
-                    f"Severity filtering: {before_count} → {len(threats)} threats"
-                )
-
-            return threats
-
-        except Exception as e:
-            scan_time = time.time() - start_time
-            logger.error(f"Directory scan failed after {scan_time:.2f}s: {e}")
             return []
+
+        # Execute scan with comprehensive error recovery
+        recovery_result = await self.error_handler.execute_with_recovery(
+            scan_operation,
+            operation_name=f"semgrep_dir_scan_{Path(directory_path).name}",
+            circuit_breaker_name="semgrep_service",
+            fallback_func=scan_fallback,
+        )
+
+        if recovery_result.success:
+            raw_findings = recovery_result.result
+        else:
+            # Fallback was used or complete failure
+            raw_findings = recovery_result.result or []
+
+        scan_time = time.time() - start_time
+        logger.info(
+            f"Directory scan completed in {scan_time:.2f}s for {directory_path}"
+        )
+
+        # Convert raw findings to ThreatMatch objects
+        threats = []
+        files_with_findings = set()
+
+        for finding in raw_findings:
+            try:
+                file_path = finding.get("path", directory_path)
+                files_with_findings.add(file_path)
+                threat = self._convert_semgrep_finding_to_threat(finding, file_path)
+                threats.append(threat)
+            except Exception as e:
+                logger.warning(f"Failed to convert finding to threat: {e}")
+
+        logger.info(f"Findings span {len(files_with_findings)} file(s)")
+
+        # Apply severity filtering if specified
+        if severity_threshold:
+            before_count = len(threats)
+            threats = self._filter_by_severity(threats, severity_threshold)
+            logger.info(f"Severity filtering: {before_count} → {len(threats)} threats")
+
+        # Cache the final processed results
+        await self._cache_scan_result(
+            threats,
+            "",
+            directory_path,
+            "directory",
+            config,
+            rules,
+            severity_threshold,
+        )
+
+        return threats
 
     def _get_directory_hash(self, directory_path: str) -> str:
         """Generate hash for directory (based on modification time)."""
@@ -960,23 +968,23 @@ class OptimizedSemgrepScanner:
 
     def clear_cache(self):
         """Clear the result cache."""
-        self._cache.clear()
-        logger.info("Cache cleared")
+        if self.cache_manager:
+            self.cache_manager.clear()
+            logger.info("Cache cleared")
+        else:
+            logger.warning("No cache manager available to clear")
 
     def get_cache_stats(self) -> dict[str, Any]:
         """Get cache statistics."""
-        return {
-            "cache_size": len(self._cache),
-            "cache_ttl": self.cache_ttl,
-            "entries": [
-                {
-                    "key": key[:16] + "...",
-                    "findings_count": len(result.findings),
-                    "age_seconds": time.time() - result.timestamp,
-                }
-                for key, result in self._cache.items()
-            ],
-        }
+        if self.cache_manager:
+            return self.cache_manager.get_stats().to_dict()
+        else:
+            return {
+                "cache_size": 0,
+                "cache_ttl": self.cache_ttl,
+                "entries": [],
+                "error": "No cache manager available",
+            }
 
     def is_available(self) -> bool:
         """Check if Semgrep is available (compatibility method)."""

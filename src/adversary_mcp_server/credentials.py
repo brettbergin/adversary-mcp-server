@@ -219,7 +219,7 @@ class CredentialManager:
                         **json.loads(verification_json)
                     )
                     logger.info(
-                        f"✅ Keyring storage verified - stored config has provider: {verification_config.llm_provider}"
+                        f"Keyring storage verified - stored config has provider: {verification_config.llm_provider}"
                     )
                 else:
                     # Don't fail on verification issues - storage might still have worked
@@ -504,20 +504,20 @@ class CredentialManager:
             try:
                 self.store_llm_api_key(config.llm_provider, config.llm_api_key)
                 logger.info(
-                    f"✅ Successfully stored {config.llm_provider} API key separately"
+                    f"Successfully stored {config.llm_provider} API key separately"
                 )
             except Exception as e:
                 logger.error(
-                    f"❌ Failed to store {config.llm_provider} API key separately: {e}"
+                    f"Failed to store {config.llm_provider} API key separately: {e}"
                 )
 
         if config.semgrep_api_key:
             logger.info("Storing Semgrep API key separately in keyring...")
             try:
                 self.store_semgrep_api_key(config.semgrep_api_key)
-                logger.info("✅ Successfully stored Semgrep API key separately")
+                logger.info("Successfully stored Semgrep API key separately")
             except Exception as e:
-                logger.error(f"❌ Failed to store Semgrep API key separately: {e}")
+                logger.error(f"Failed to store Semgrep API key separately: {e}")
 
         # Create a copy of config with API keys set to None for main storage
         # (Following the pattern from CLI where keys are stored separately)
@@ -541,9 +541,9 @@ class CredentialManager:
             # Update cache with the ORIGINAL config (with API keys)
             self._config_cache = config
             self._cache_loaded = True
-            logger.info("✅ Configuration stored successfully in keyring")
+            logger.info("Configuration stored successfully in keyring")
             logger.info(
-                f"✅ Cache updated with full config (LLM key: {'SET' if config.llm_api_key else 'NULL'}, Semgrep key: {'SET' if config.semgrep_api_key else 'NULL'})"
+                f"Cache updated with full config (LLM key: {'SET' if config.llm_api_key else 'NULL'}, Semgrep key: {'SET' if config.semgrep_api_key else 'NULL'})"
             )
             return
 
@@ -553,9 +553,9 @@ class CredentialManager:
         # Update cache with the ORIGINAL config (with API keys)
         self._config_cache = config
         self._cache_loaded = True
-        logger.info("✅ Configuration stored successfully in encrypted file")
+        logger.info("Configuration stored successfully in encrypted file")
         logger.info(
-            f"✅ Cache updated with full config (LLM key: {'SET' if config.llm_api_key else 'NULL'}, Semgrep key: {'SET' if config.semgrep_api_key else 'NULL'})"
+            f"Cache updated with full config (LLM key: {'SET' if config.llm_api_key else 'NULL'}, Semgrep key: {'SET' if config.semgrep_api_key else 'NULL'})"
         )
 
     def load_config(self) -> SecurityConfig:
@@ -600,16 +600,14 @@ class CredentialManager:
                 if api_key:
                     config.llm_api_key = api_key
                     logger.info(
-                        f"✅ Successfully injected {config.llm_provider} API key from keyring"
+                        f"Successfully injected {config.llm_provider} API key from keyring"
                     )
                 else:
                     logger.warning(
-                        f"❌ Failed to retrieve {config.llm_provider} API key from keyring"
+                        f"Failed to retrieve {config.llm_provider} API key from keyring"
                     )
             elif config.llm_provider and config.llm_api_key:
-                logger.info(
-                    f"✅ {config.llm_provider} API key already present in config"
-                )
+                logger.info(f"{config.llm_provider} API key already present in config")
             elif not config.llm_provider:
                 logger.debug("No LLM provider configured, skipping API key injection")
 
@@ -619,11 +617,11 @@ class CredentialManager:
                 semgrep_key = self.get_semgrep_api_key()
                 if semgrep_key:
                     config.semgrep_api_key = semgrep_key
-                    logger.info("✅ Successfully injected Semgrep API key from keyring")
+                    logger.info("Successfully injected Semgrep API key from keyring")
                 else:
-                    logger.warning("❌ Failed to retrieve Semgrep API key from keyring")
+                    logger.warning("Failed to retrieve Semgrep API key from keyring")
             elif config.enable_semgrep_scanning and config.semgrep_api_key:
-                logger.info("✅ Semgrep API key already present in config")
+                logger.info("Semgrep API key already present in config")
 
             # Log final configuration state
             logger.info(
@@ -635,7 +633,7 @@ class CredentialManager:
             # Cache the loaded config
             self._config_cache = config
             self._cache_loaded = True
-            logger.info("✅ Configuration loaded from keyring and cached")
+            logger.info("Configuration loaded from keyring and cached")
             return config
 
         # Try encrypted file
@@ -660,16 +658,14 @@ class CredentialManager:
                 if api_key:
                     config.llm_api_key = api_key
                     logger.info(
-                        f"✅ Successfully injected {config.llm_provider} API key from keyring"
+                        f"Successfully injected {config.llm_provider} API key from keyring"
                     )
                 else:
                     logger.warning(
-                        f"❌ Failed to retrieve {config.llm_provider} API key from keyring"
+                        f"Failed to retrieve {config.llm_provider} API key from keyring"
                     )
             elif config.llm_provider and config.llm_api_key:
-                logger.info(
-                    f"✅ {config.llm_provider} API key already present in config"
-                )
+                logger.info(f"{config.llm_provider} API key already present in config")
 
             # Also inject Semgrep API key if needed
             if config.enable_semgrep_scanning and not config.semgrep_api_key:
@@ -677,11 +673,11 @@ class CredentialManager:
                 semgrep_key = self.get_semgrep_api_key()
                 if semgrep_key:
                     config.semgrep_api_key = semgrep_key
-                    logger.info("✅ Successfully injected Semgrep API key from keyring")
+                    logger.info("Successfully injected Semgrep API key from keyring")
                 else:
-                    logger.warning("❌ Failed to retrieve Semgrep API key from keyring")
+                    logger.warning("Failed to retrieve Semgrep API key from keyring")
             elif config.enable_semgrep_scanning and config.semgrep_api_key:
-                logger.info("✅ Semgrep API key already present in config")
+                logger.info("Semgrep API key already present in config")
 
             # Log final configuration state
             logger.info(
@@ -693,7 +689,7 @@ class CredentialManager:
             # Cache the loaded config
             self._config_cache = config
             self._cache_loaded = True
-            logger.info("✅ Configuration loaded from encrypted file and cached")
+            logger.info("Configuration loaded from encrypted file and cached")
             return config
 
         # Return default configuration if none found and cache it
@@ -754,15 +750,15 @@ class CredentialManager:
             api_key = keyring.get_password(self.keyring_service, keyring_key)
             if api_key:
                 logger.info(
-                    f"✅ Semgrep API key found in keyring (length: {len(api_key)} chars)"
+                    f"Semgrep API key found in keyring (length: {len(api_key)} chars)"
                 )
             else:
                 logger.warning(
-                    f"❌ No Semgrep API key found in keyring at key: {keyring_key}"
+                    f"No Semgrep API key found in keyring at key: {keyring_key}"
                 )
             return api_key
         except KeyringError as e:
-            logger.error(f"❌ KeyringError retrieving Semgrep API key: {e}")
+            logger.error(f"KeyringError retrieving Semgrep API key: {e}")
             return None
 
     def delete_semgrep_api_key(self) -> bool:
@@ -826,15 +822,15 @@ class CredentialManager:
             api_key = keyring.get_password(self.keyring_service, keyring_key)
             if api_key:
                 logger.info(
-                    f"✅ {provider} API key found in keyring (length: {len(api_key)} chars)"
+                    f"{provider} API key found in keyring (length: {len(api_key)} chars)"
                 )
             else:
                 logger.warning(
-                    f"❌ No {provider} API key found in keyring at key: {keyring_key}"
+                    f"No {provider} API key found in keyring at key: {keyring_key}"
                 )
             return api_key
         except KeyringError as e:
-            logger.error(f"❌ KeyringError retrieving {provider} API key: {e}")
+            logger.error(f"KeyringError retrieving {provider} API key: {e}")
             return None
 
     def delete_llm_api_key(self, provider: str) -> bool:
