@@ -162,7 +162,7 @@ class TestFalsePositiveIntegration:
         arguments = {
             "finding_uuid": "test-uuid-1",
             "reason": "Test marking via MCP",
-            "adversary_file_path": str(project_dir / ".adversary.json"),
+            "path": str(project_dir),
         }
 
         result = await server._handle_mark_false_positive(arguments)
@@ -171,7 +171,7 @@ class TestFalsePositiveIntegration:
         assert "test-uuid-1" in result[0].text
 
         # Test list false positives via MCP tool
-        list_arguments = {"adversary_file_path": str(project_dir / ".adversary.json")}
+        list_arguments = {"path": str(project_dir)}
 
         result = await server._handle_list_false_positives(list_arguments)
         assert len(result) == 1
@@ -181,7 +181,7 @@ class TestFalsePositiveIntegration:
         # Test unmark false positive via MCP tool
         unmark_arguments = {
             "finding_uuid": "test-uuid-1",
-            "adversary_file_path": str(project_dir / ".adversary.json"),
+            "path": str(project_dir),
         }
 
         result = await server._handle_unmark_false_positive(unmark_arguments)

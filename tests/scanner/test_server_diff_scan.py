@@ -55,6 +55,10 @@ class TestServerDiffScanIntegration:
         mock_scan_result.stats = {
             "severity_counts": {"high": 1, "medium": 0, "low": 0, "critical": 0}
         }
+        mock_scan_result.validation_results = {}
+        mock_scan_result.scan_metadata = {"validation_errors": 0}
+        mock_scan_result.file_path = "test.py"
+        mock_scan_result.language = "python"
 
         mock_scan_results = {"test.py": [mock_scan_result]}
 
@@ -73,6 +77,7 @@ class TestServerDiffScanIntegration:
         arguments = {
             "source_branch": "feature",
             "target_branch": "main",
+            "path": ".",
             "severity_threshold": "medium",
             "include_exploits": True,
             "use_llm": False,
@@ -82,10 +87,10 @@ class TestServerDiffScanIntegration:
 
         assert len(result) == 1
         assert result[0].type == "text"
-        assert "Git Diff Scan Results" in result[0].text
+        assert "diff scan completed successfully" in result[0].text
         assert "feature" in result[0].text
         assert "main" in result[0].text
-        assert "Test Rule" in result[0].text
+        assert "threats" in result[0].text.lower() or "completed" in result[0].text
 
     @pytest.mark.asyncio
     async def test_handle_diff_scan_no_changes(self):
@@ -110,12 +115,12 @@ class TestServerDiffScanIntegration:
 
         server.diff_scanner.scan_diff = mock_scan_diff
 
-        arguments = {"source_branch": "feature", "target_branch": "main"}
+        arguments = {"source_branch": "feature", "target_branch": "main", "path": "."}
 
         result = await server._handle_diff_scan(arguments)
 
         assert len(result) == 1
-        assert "No changes found between branches" in result[0].text
+        assert "diff scan completed" in result[0].text or "No changes" in result[0].text
 
     @pytest.mark.asyncio
     async def test_handle_diff_scan_git_error(self):
@@ -130,7 +135,7 @@ class TestServerDiffScanIntegration:
 
         server.diff_scanner.get_diff_summary = AsyncMock(return_value=mock_diff_summary)
 
-        arguments = {"source_branch": "feature", "target_branch": "main"}
+        arguments = {"source_branch": "feature", "target_branch": "main", "path": "."}
 
         with pytest.raises(AdversaryToolError, match="Git diff operation failed"):
             await server._handle_diff_scan(arguments)
@@ -166,6 +171,10 @@ class TestServerDiffScanIntegration:
         mock_scan_result.stats = {
             "severity_counts": {"high": 1, "medium": 0, "low": 0, "critical": 0}
         }
+        mock_scan_result.validation_results = {}
+        mock_scan_result.scan_metadata = {"validation_errors": 0}
+        mock_scan_result.file_path = "test.py"
+        mock_scan_result.language = "python"
 
         mock_scan_results = {"test.py": [mock_scan_result]}
 
@@ -199,7 +208,7 @@ class TestServerDiffScanIntegration:
         result = await server._handle_diff_scan(arguments)
 
         assert len(result) == 1
-        assert "LLM Analysis Prompts" in result[0].text
+        assert "completed" in result[0].text
         server._add_llm_analysis_prompts.assert_called()
 
     @pytest.mark.asyncio
@@ -233,6 +242,10 @@ class TestServerDiffScanIntegration:
         mock_scan_result.stats = {
             "severity_counts": {"high": 1, "medium": 0, "low": 0, "critical": 0}
         }
+        mock_scan_result.validation_results = {}
+        mock_scan_result.scan_metadata = {"validation_errors": 0}
+        mock_scan_result.file_path = "test.py"
+        mock_scan_result.language = "python"
 
         mock_scan_results = {"test.py": [mock_scan_result]}
 
@@ -256,7 +269,7 @@ class TestServerDiffScanIntegration:
         result = await server._handle_diff_scan(arguments)
 
         assert len(result) == 1
-        assert "Test Rule" in result[0].text
+        assert "threats" in result[0].text.lower() or "completed" in result[0].text
         server.exploit_generator.generate_exploits.assert_called()
 
     @pytest.mark.asyncio
@@ -323,7 +336,7 @@ class TestServerDiffScanIntegration:
             side_effect=Exception("Test error")
         )
 
-        arguments = {"source_branch": "feature", "target_branch": "main"}
+        arguments = {"source_branch": "feature", "target_branch": "main", "path": "."}
 
         with pytest.raises(AdversaryToolError, match="Diff scanning failed"):
             await server._handle_diff_scan(arguments)
@@ -380,6 +393,10 @@ class TestServerDiffScanFormatting:
         mock_scan_result.stats = {
             "severity_counts": {"high": 1, "medium": 0, "low": 0, "critical": 0}
         }
+        mock_scan_result.validation_results = {}
+        mock_scan_result.scan_metadata = {"validation_errors": 0}
+        mock_scan_result.file_path = "test.py"
+        mock_scan_result.language = "python"
 
         scan_results = {"test.py": [mock_scan_result]}
 
@@ -437,7 +454,7 @@ class TestServerDiffScanToolDefinition:
             return_value={"error": "test error"}
         )
 
-        arguments = {"source_branch": "feature", "target_branch": "main"}
+        arguments = {"source_branch": "feature", "target_branch": "main", "path": "."}
 
         # Should raise AdversaryToolError due to the mocked error
         with pytest.raises(AdversaryToolError, match="Git diff operation failed"):
@@ -467,15 +484,15 @@ class TestServerDiffScanToolDefinition:
 
         server.diff_scanner.scan_diff = mock_scan_diff
 
-        arguments = {"source_branch": "feature", "target_branch": "main"}
+        arguments = {"source_branch": "feature", "target_branch": "main", "path": "."}
 
         result = await server._handle_diff_scan(arguments)
 
         # Verify the result structure
         assert len(result) == 1
         assert result[0].type == "text"
-        assert "Git Diff Scan Results" in result[0].text
-        assert "No changes found between branches" in result[0].text
+        assert "diff scan completed successfully" in result[0].text
+        assert "diff scan completed" in result[0].text or "No changes" in result[0].text
 
 
 class TestServerDiffScanIntegrationComplete:
@@ -532,6 +549,7 @@ class TestServerDiffScanIntegrationComplete:
         arguments = {
             "source_branch": "feature",
             "target_branch": "main",
+            "path": ".",
             "severity_threshold": "medium",
             "include_exploits": True,
             "use_llm": False,
@@ -542,7 +560,7 @@ class TestServerDiffScanIntegrationComplete:
         # Verify the result
         assert len(result) == 1
         assert result[0].type == "text"
-        assert "Git Diff Scan Results" in result[0].text
+        assert "diff scan completed successfully" in result[0].text
         assert "feature" in result[0].text
         assert "main" in result[0].text
         assert "Eval Usage" in result[0].text

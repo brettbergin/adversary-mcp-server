@@ -15,7 +15,7 @@ class TestDemoCommand:
         """Setup test fixtures."""
         self.runner = CliRunner()
 
-    @patch("adversary_mcp_server.cli.CredentialManager")
+    @patch("adversary_mcp_server.cli.get_credential_manager")
     @patch("adversary_mcp_server.cli.ScanEngine")
     @patch("adversary_mcp_server.cli.console")
     def test_demo_command_success(
@@ -74,7 +74,7 @@ class TestDemoCommand:
         # Verify that scan_code_sync was called for both languages
         assert mock_scanner_instance.scan_code_sync.call_count == 2
 
-    @patch("adversary_mcp_server.cli.CredentialManager")
+    @patch("adversary_mcp_server.cli.get_credential_manager")
     @patch("adversary_mcp_server.cli.ScanEngine")
     @patch("adversary_mcp_server.cli.console")
     def test_demo_command_with_scanner_error(
@@ -94,7 +94,7 @@ class TestDemoCommand:
         # Should handle scanner errors gracefully and still complete
         assert result.exit_code == 1
 
-    @patch("adversary_mcp_server.cli.CredentialManager")
+    @patch("adversary_mcp_server.cli.get_credential_manager")
     @patch("adversary_mcp_server.cli.ScanEngine")
     @patch("adversary_mcp_server.cli.console")
     def test_demo_command_no_threats(
@@ -121,7 +121,7 @@ class TestDemoCommand:
         assert result.exit_code == 0
         mock_console.print.assert_called()
 
-    @patch("adversary_mcp_server.cli.CredentialManager")
+    @patch("adversary_mcp_server.cli.get_credential_manager")
     @patch("adversary_mcp_server.cli.ScanEngine")
     @patch("adversary_mcp_server.cli.console")
     def test_demo_command_exploit_generation_error(

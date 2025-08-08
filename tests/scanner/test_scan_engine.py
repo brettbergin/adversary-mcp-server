@@ -740,7 +740,8 @@ class TestScanEngine:
             )
 
     @patch("adversary_mcp_server.scanner.scan_engine.SemgrepScanner")
-    def test_scan_directory_success(self, mock_semgrep_scanner):
+    @pytest.mark.asyncio
+    async def test_scan_directory_success(self, mock_semgrep_scanner):
         """Test directory scanning success."""
         mock_threat_engine = Mock()
         mock_credential_manager = create_mock_credential_manager()
@@ -759,6 +760,7 @@ class TestScanEngine:
         mock_config.semgrep_rules = None
         mock_config.semgrep_timeout = 60
         mock_config.max_file_size_mb = 10  # Add required attribute for FileFilter
+        mock_config.enable_caching = False  # Disable caching to prevent hangs
         mock_credential_manager.load_config.return_value = mock_config
 
         # Mock AST scanner
@@ -774,6 +776,8 @@ class TestScanEngine:
         scanner = ScanEngine(
             credential_manager=mock_credential_manager,
             enable_llm_analysis=False,
+            cache_manager=None,
+            enable_llm_validation=False,
         )
 
         # Create a temporary directory with Python files
@@ -785,10 +789,11 @@ class TestScanEngine:
             (temp_path / "test2.js").write_text("console.log('test2');")
             (temp_path / "test3.txt").write_text("not a code file")
 
-            results = scanner.scan_directory_sync(
+            results = await scanner.scan_directory(
                 directory_path=temp_path,
                 recursive=False,
                 use_llm=False,
+                use_validation=False,
             )
 
             # Should scan 3 files (Python, JavaScript, and Generic)
@@ -1146,6 +1151,7 @@ class TestScanEngine:
         mock_config.llm_max_tokens = 4000
         mock_config.enable_semgrep_scanning = False
         mock_config.max_file_size_mb = 10  # Add required attribute for FileFilter
+        mock_config.enable_caching = False  # Disable caching for this test
         mock_credential_manager.load_config.return_value = mock_config
 
         # Mock AST scanner
@@ -1163,6 +1169,11 @@ class TestScanEngine:
 
         mock_llm_instance = Mock()
         mock_llm_instance.is_available.return_value = True
+        mock_llm_instance.get_status.return_value = {
+            "available": True,
+            "installation_status": "installed",
+            "description": "Test LLM",
+        }
         mock_finding = LLMSecurityFinding(
             finding_type="test",
             severity="high",
@@ -1178,6 +1189,7 @@ class TestScanEngine:
 
         scanner = ScanEngine(
             credential_manager=mock_credential_manager,
+            cache_manager=None,  # Disable cache for this test
             enable_llm_analysis=True,
             enable_llm_validation=False,  # Disable validation for this test
         )
@@ -1192,6 +1204,7 @@ class TestScanEngine:
                 file_path=temp_file,
                 use_llm=True,
                 use_semgrep=False,
+                use_validation=False,  # Disable validation to avoid complications
             )
 
             assert isinstance(result, EnhancedScanResult)
@@ -1202,14 +1215,117 @@ class TestScanEngine:
         finally:
             temp_file.unlink()
 
+    @patch("adversary_mcp_server.scanner.scan_engine.SemgrepScanner")
+    @patch("adversary_mcp_server.scanner.scan_engine.LLMScanner")
+    @pytest.mark.asyncio
+    async def test_scan_file_llm_analysis_exception_fixed(
+        self, mock_llm_scanner, mock_semgrep_scanner
+    ):
+        """Test scan_file handles LLM analysis exceptions gracefully while preserving Semgrep results."""
+        mock_credential_manager = create_mock_credential_manager()
+
+        # Create properly configured SecurityConfig
+        mock_config = SecurityConfig()
+        mock_config.exploit_safety_mode = True
+        mock_config.llm_provider = None
+        mock_config.llm_api_key = None
+        mock_config.llm_model = None
+        mock_config.llm_batch_size = 5
+        mock_config.llm_max_tokens = 4000
+        mock_config.enable_semgrep_scanning = True  # Enable Semgrep for this test
+        mock_config.max_file_size_mb = 10
+        mock_config.enable_caching = False  # Disable caching
+        mock_credential_manager.load_config.return_value = mock_config
+
+        # Mock Semgrep scanner to return a finding
+        from adversary_mcp_server.scanner.types import Category, Severity, ThreatMatch
+
+        mock_semgrep_instance = Mock()
+        mock_semgrep_instance.is_available.return_value = True
+        mock_semgrep_instance.get_status.return_value = {
+            "available": True,
+            "installation_status": "installed",
+            "version": "1.0.0",
+        }
+
+        # Create a mock Semgrep finding
+        semgrep_finding = ThreatMatch(
+            rule_id="test-rule",
+            rule_name="Test Rule",
+            severity=Severity.HIGH,
+            category=Category.MISC,
+            description="Test finding",
+            file_path="test.py",
+            line_number=1,
+            code_snippet="print('test')",
+            source="semgrep",
+        )
+
+        mock_semgrep_instance.scan_file = AsyncMock(return_value=[semgrep_finding])
+        mock_semgrep_scanner.return_value = mock_semgrep_instance
+
+        # Mock LLM scanner to throw exception
+        mock_llm_instance = Mock()
+        mock_llm_instance.is_available.return_value = True
+        mock_llm_instance.get_status.return_value = {
+            "available": True,
+            "installation_status": "installed",
+            "description": "Test LLM",
+        }
+        mock_llm_instance.analyze_file = AsyncMock(
+            side_effect=Exception("LLM analysis failed")
+        )
+        mock_llm_scanner.return_value = mock_llm_instance
+
+        scanner = ScanEngine(
+            credential_manager=mock_credential_manager,
+            cache_manager=None,  # Disable cache
+            enable_llm_analysis=True,
+            enable_llm_validation=False,  # Disable validation
+        )
+
+        # Create temporary file
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write("print('test')")
+            temp_file = Path(f.name)
+
+        try:
+            result = await scanner.scan_file(
+                file_path=temp_file,
+                use_llm=True,
+                use_semgrep=True,
+                use_validation=False,  # Disable validation
+            )
+
+            # Verify the result
+            assert isinstance(result, EnhancedScanResult)
+
+            # Should have Semgrep findings despite LLM failure
+            assert len(result.semgrep_threats) == 1
+            assert result.semgrep_threats[0].rule_id == "test-rule"
+
+            # Should have no LLM findings due to exception
+            assert len(result.llm_threats) == 0
+
+            # Should show LLM scan failed
+            assert result.scan_metadata["llm_scan_success"] is False
+            assert "LLM analysis failed" in result.scan_metadata.get(
+                "llm_scan_error", ""
+            )
+
+            # Should show Semgrep scan succeeded
+            assert result.scan_metadata["semgrep_scan_success"] is True
+
+        finally:
+            temp_file.unlink()
+
     @patch("adversary_mcp_server.scanner.scan_engine.LLMScanner")
     @patch("adversary_mcp_server.scanner.scan_engine.SemgrepScanner")
     @pytest.mark.asyncio
-    async def test_scan_file_llm_analysis_exception(
+    async def test_scan_file_llm_disabled_by_user(
         self, mock_semgrep_scanner, mock_llm_scanner
     ):
-        """Test scan_file handles LLM analysis exceptions."""
-        mock_threat_engine = Mock()
+        """Test scan_file with LLM disabled by user."""
         mock_credential_manager = create_mock_credential_manager()
         # Create a proper SecurityConfig instead of Mock
         mock_config = SecurityConfig()
@@ -1223,29 +1339,34 @@ class TestScanEngine:
         mock_config.llm_max_tokens = 4000
         mock_config.enable_semgrep_scanning = False
         mock_config.max_file_size_mb = 10  # Add required attribute for FileFilter
+        mock_config.enable_caching = False  # Disable caching for this test
         mock_credential_manager.load_config.return_value = mock_config
-
-        # Mock AST scanner
-        mock_semgrep_instance = Mock()
-        mock_semgrep_instance.scan_code.return_value = []
-        mock_semgrep_scanner.return_value = mock_semgrep_instance
 
         # Mock Semgrep scanner
         mock_semgrep_instance = Mock()
         mock_semgrep_instance.is_available.return_value = False
+        mock_semgrep_instance.get_status.return_value = {
+            "available": False,
+            "installation_status": "not_installed",
+            "error": "Semgrep not available",
+        }
         mock_semgrep_scanner.return_value = mock_semgrep_instance
 
-        # Mock LLM scanner to raise exception
+        # Mock LLM scanner
         mock_llm_instance = Mock()
         mock_llm_instance.is_available.return_value = True
-        mock_llm_instance.analyze_file = AsyncMock(
-            side_effect=Exception("LLM analysis failed")
-        )
+        mock_llm_instance.get_status.return_value = {
+            "available": True,
+            "installation_status": "installed",
+            "description": "Test LLM",
+        }
         mock_llm_scanner.return_value = mock_llm_instance
 
         scanner = ScanEngine(
             credential_manager=mock_credential_manager,
+            cache_manager=None,  # Disable cache for this test
             enable_llm_analysis=True,
+            enable_llm_validation=False,  # Disable validation for this test
         )
 
         # Create a temporary file
@@ -1256,70 +1377,9 @@ class TestScanEngine:
         try:
             result = await scanner.scan_file(
                 file_path=temp_file,
-                use_llm=True,
-                use_semgrep=False,
-            )
-
-            assert isinstance(result, EnhancedScanResult)
-            assert result.scan_metadata["llm_scan_success"] is False
-            assert result.scan_metadata["llm_scan_reason"] == "analysis_failed"
-            assert "LLM analysis failed" in result.scan_metadata["llm_scan_error"]
-
-        finally:
-            temp_file.unlink()
-
-    @patch("adversary_mcp_server.scanner.scan_engine.LLMScanner")
-    @patch("adversary_mcp_server.scanner.scan_engine.SemgrepScanner")
-    def test_scan_file_llm_disabled_by_user(
-        self, mock_semgrep_scanner, mock_llm_scanner
-    ):
-        """Test scan_file with LLM disabled by user."""
-        mock_threat_engine = Mock()
-        mock_credential_manager = create_mock_credential_manager()
-        # Create a proper SecurityConfig instead of Mock
-        mock_config = SecurityConfig()
-        mock_config.exploit_safety_mode = True
-        mock_config.llm_provider = (
-            None  # Set to None to avoid LLM client initialization
-        )
-        mock_config.llm_api_key = None
-        mock_config.llm_model = None
-        mock_config.llm_batch_size = 5
-        mock_config.llm_max_tokens = 4000
-        mock_config.enable_semgrep_scanning = False
-        mock_config.max_file_size_mb = 10  # Add required attribute for FileFilter
-        mock_credential_manager.load_config.return_value = mock_config
-
-        # Mock AST scanner
-        mock_semgrep_instance = Mock()
-        mock_semgrep_instance.scan_code.return_value = []
-        mock_semgrep_scanner.return_value = mock_semgrep_instance
-
-        # Mock Semgrep scanner
-        mock_semgrep_instance = Mock()
-        mock_semgrep_instance.is_available.return_value = False
-        mock_semgrep_scanner.return_value = mock_semgrep_instance
-
-        # Mock LLM scanner
-        mock_llm_instance = Mock()
-        mock_llm_instance.is_available.return_value = True
-        mock_llm_scanner.return_value = mock_llm_instance
-
-        scanner = ScanEngine(
-            credential_manager=mock_credential_manager,
-            enable_llm_analysis=True,
-        )
-
-        # Create a temporary file
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write("print('test')")
-            temp_file = Path(f.name)
-
-        try:
-            result = scanner.scan_file_sync(
-                file_path=temp_file,
                 use_llm=False,  # Disabled by user
                 use_semgrep=False,
+                use_validation=False,  # Disable validation to avoid complications
             )
 
             assert isinstance(result, EnhancedScanResult)
@@ -1818,9 +1878,9 @@ class TestScanEngine:
             assert scanner.enable_semgrep_analysis is False
 
     @patch("adversary_mcp_server.scanner.scan_engine.SemgrepScanner")
-    def test_scan_file_generic_language_skips_ast(self, mock_semgrep_scanner):
+    @pytest.mark.asyncio
+    async def test_scan_file_generic_language_skips_ast(self, mock_semgrep_scanner):
         """Test that scan_file skips AST scanning for generic files."""
-        mock_threat_engine = Mock()
         mock_credential_manager = create_mock_credential_manager()
         # Create a proper SecurityConfig instead of Mock
         mock_config = SecurityConfig()
@@ -1834,16 +1894,25 @@ class TestScanEngine:
         mock_config.llm_max_tokens = 4000
         mock_config.enable_semgrep_scanning = False
         mock_config.max_file_size_mb = 10  # Add required attribute for FileFilter
+        mock_config.enable_caching = False  # Disable caching for this test
         mock_credential_manager.load_config.return_value = mock_config
 
         # Mock Semgrep scanner
         mock_semgrep_instance = Mock()
         mock_semgrep_instance.is_available.return_value = False
+        mock_semgrep_instance.get_status.return_value = {
+            "available": False,
+            "installation_status": "not_installed",
+            "error": "Semgrep not available",
+        }
+        mock_semgrep_instance.scan_code = Mock()  # Add scan_code mock for assertion
         mock_semgrep_scanner.return_value = mock_semgrep_instance
 
         scanner = ScanEngine(
             credential_manager=mock_credential_manager,
+            cache_manager=None,  # Disable cache for this test
             enable_llm_analysis=False,
+            enable_llm_validation=False,  # Disable validation for this test
         )
 
         # Create a temporary file with generic extension
@@ -1854,10 +1923,11 @@ class TestScanEngine:
             temp_file = Path(f.name)
 
         try:
-            result = scanner.scan_file_sync(
+            result = await scanner.scan_file(
                 file_path=temp_file,
                 use_llm=False,
                 use_semgrep=False,
+                use_validation=False,  # Disable validation to avoid complications
             )
 
             assert isinstance(result, EnhancedScanResult)
@@ -1868,15 +1938,15 @@ class TestScanEngine:
             )
 
             # AST scanner should not be called for generic files
-            mock_semgrep_scanner.return_value.scan_code.assert_not_called()
+            mock_semgrep_instance.scan_code.assert_not_called()
 
         finally:
             temp_file.unlink()
 
     @patch("adversary_mcp_server.scanner.scan_engine.SemgrepScanner")
-    def test_scan_file_binary_file_handling(self, mock_semgrep_scanner):
+    @pytest.mark.asyncio
+    async def test_scan_file_binary_file_handling(self, mock_semgrep_scanner):
         """Test that scan_file handles binary files gracefully."""
-        mock_threat_engine = Mock()
         mock_credential_manager = create_mock_credential_manager()
         # Create a proper SecurityConfig instead of Mock
         mock_config = SecurityConfig()
@@ -1890,16 +1960,24 @@ class TestScanEngine:
         mock_config.llm_max_tokens = 4000
         mock_config.enable_semgrep_scanning = False
         mock_config.max_file_size_mb = 10  # Add required attribute for FileFilter
+        mock_config.enable_caching = False  # Disable caching for this test
         mock_credential_manager.load_config.return_value = mock_config
 
         # Mock Semgrep scanner
         mock_semgrep_instance = Mock()
         mock_semgrep_instance.is_available.return_value = False
+        mock_semgrep_instance.get_status.return_value = {
+            "available": False,
+            "installation_status": "not_installed",
+            "error": "Semgrep not available",
+        }
         mock_semgrep_scanner.return_value = mock_semgrep_instance
 
         scanner = ScanEngine(
             credential_manager=mock_credential_manager,
+            cache_manager=None,  # Disable cache for this test
             enable_llm_analysis=False,
+            enable_llm_validation=False,  # Disable validation for this test
         )
 
         # Create a temporary binary file
@@ -1919,10 +1997,11 @@ class TestScanEngine:
                     )
                 )
 
-                result = scanner.scan_file_sync(
+                result = await scanner.scan_file(
                     file_path=temp_file,
                     use_llm=False,
                     use_semgrep=False,
+                    use_validation=False,  # Disable validation to avoid complications
                 )
 
                 assert isinstance(result, EnhancedScanResult)
@@ -1936,7 +2015,8 @@ class TestScanEngine:
             temp_file.unlink()
 
     @patch("adversary_mcp_server.scanner.scan_engine.SemgrepScanner")
-    def test_scan_file_rules_disabled(self, mock_semgrep_scanner):
+    @pytest.mark.asyncio
+    async def test_scan_file_rules_disabled(self, mock_semgrep_scanner):
         """Test scan_file with rules disabled."""
         mock_threat_engine = Mock()
         mock_credential_manager = create_mock_credential_manager()
@@ -1952,16 +2032,23 @@ class TestScanEngine:
         mock_config.llm_max_tokens = 4000
         mock_config.enable_semgrep_scanning = False
         mock_config.max_file_size_mb = 10  # Add required attribute for FileFilter
+        mock_config.enable_caching = False  # Disable caching to prevent hangs
         mock_credential_manager.load_config.return_value = mock_config
 
         # Mock Semgrep scanner
         mock_semgrep_instance = Mock()
         mock_semgrep_instance.is_available.return_value = False
+        mock_semgrep_instance.get_status.return_value = {
+            "available": False,
+            "error": "Disabled",
+        }
         mock_semgrep_scanner.return_value = mock_semgrep_instance
 
         scanner = ScanEngine(
             credential_manager=mock_credential_manager,
             enable_llm_analysis=False,
+            cache_manager=None,
+            enable_llm_validation=False,
         )
 
         # Create a temporary file
@@ -1970,10 +2057,11 @@ class TestScanEngine:
             temp_file = Path(f.name)
 
         try:
-            result = scanner.scan_file_sync(
+            result = await scanner.scan_file(
                 file_path=temp_file,
                 use_llm=False,
                 use_semgrep=False,
+                use_validation=False,
             )
 
             assert isinstance(result, EnhancedScanResult)
@@ -1990,7 +2078,8 @@ class TestScanEngine:
             temp_file.unlink()
 
     @patch("adversary_mcp_server.scanner.scan_engine.SemgrepScanner")
-    def test_scan_file_semgrep_unavailable(self, mock_semgrep_scanner):
+    @pytest.mark.asyncio
+    async def test_scan_file_semgrep_unavailable(self, mock_semgrep_scanner):
         """Test scan_file with Semgrep unavailable."""
         mock_threat_engine = Mock()
         mock_credential_manager = create_mock_credential_manager()
@@ -2006,6 +2095,7 @@ class TestScanEngine:
         mock_config.llm_max_tokens = 4000
         mock_config.enable_semgrep_scanning = True
         mock_config.max_file_size_mb = 10  # Add required attribute for FileFilter
+        mock_config.enable_caching = False  # Disable caching to prevent hangs
         mock_credential_manager.load_config.return_value = mock_config
 
         # Mock AST scanner
@@ -2027,6 +2117,8 @@ class TestScanEngine:
         scanner = ScanEngine(
             credential_manager=mock_credential_manager,
             enable_llm_analysis=False,
+            cache_manager=None,
+            enable_llm_validation=False,
         )
 
         # Create a temporary file
@@ -2035,10 +2127,11 @@ class TestScanEngine:
             temp_file = Path(f.name)
 
         try:
-            result = scanner.scan_file_sync(
+            result = await scanner.scan_file(
                 file_path=temp_file,
                 use_llm=False,
                 use_semgrep=True,
+                use_validation=False,
             )
 
             assert isinstance(result, EnhancedScanResult)
@@ -2323,10 +2416,22 @@ class TestScanEngineParallelProcessing:
 
                 # Mock credential manager and scanners
                 with (
-                    patch("adversary_mcp_server.credentials.CredentialManager"),
+                    patch(
+                        "adversary_mcp_server.credentials.get_credential_manager"
+                    ) as mock_get_cred,
                     patch("adversary_mcp_server.scanner.scan_engine.SemgrepScanner"),
                     patch("adversary_mcp_server.scanner.scan_engine.LLMScanner"),
                 ):
+                    # Mock credential manager with proper config
+                    mock_cred_manager = Mock()
+                    mock_config = Mock()
+                    mock_config.llm_batch_size = 5
+                    mock_config.llm_provider = None
+                    mock_config.enable_llm_validation = False
+                    mock_config.enable_llm_analysis = False
+                    mock_config.enable_semgrep_scanning = True
+                    mock_cred_manager.load_config.return_value = mock_config
+                    mock_get_cred.return_value = mock_cred_manager
 
                     scanner = ScanEngine()
                     results = await scanner.scan_directory(temp_path)
@@ -2345,10 +2450,13 @@ class TestScanEngineParallelProcessing:
 
             # Mock dependencies
             with (
-                patch("adversary_mcp_server.credentials.CredentialManager"),
+                patch(
+                    "adversary_mcp_server.credentials.get_credential_manager"
+                ) as mock_get_cred,
                 patch("adversary_mcp_server.scanner.scan_engine.SemgrepScanner"),
                 patch("adversary_mcp_server.scanner.scan_engine.LLMScanner"),
             ):
+                mock_get_cred.return_value = create_mock_credential_manager()
 
                 scanner = ScanEngine()
                 semaphore = asyncio.Semaphore(1)
@@ -2401,11 +2509,14 @@ class TestScanEngineParallelProcessing:
                 ]
 
             with (
-                patch("adversary_mcp_server.credentials.CredentialManager"),
+                patch(
+                    "adversary_mcp_server.credentials.get_credential_manager"
+                ) as mock_get_cred,
                 patch("adversary_mcp_server.scanner.scan_engine.SemgrepScanner"),
                 patch("adversary_mcp_server.scanner.scan_engine.LLMScanner"),
                 patch("asyncio.gather", side_effect=mock_gather),
             ):
+                mock_get_cred.return_value = create_mock_credential_manager()
 
                 scanner = ScanEngine()
                 results = await scanner.scan_directory(temp_path)
@@ -2427,7 +2538,9 @@ class TestScanEngineParallelProcessing:
                 test_file.write_text(f"print('test {i}')")
 
             with (
-                patch("adversary_mcp_server.credentials.CredentialManager"),
+                patch(
+                    "adversary_mcp_server.credentials.get_credential_manager"
+                ) as mock_get_cred,
                 patch(
                     "adversary_mcp_server.scanner.scan_engine.ScanEngine.scan_file"
                 ) as mock_scan_file,
@@ -2485,13 +2598,16 @@ class TestScanEngineFileFiltering:
             tmp_file.write_text("temporary")
 
             with (
-                patch("adversary_mcp_server.credentials.CredentialManager"),
+                patch(
+                    "adversary_mcp_server.credentials.get_credential_manager"
+                ) as mock_get_cred,
                 patch("adversary_mcp_server.scanner.scan_engine.SemgrepScanner"),
                 patch("adversary_mcp_server.scanner.scan_engine.LLMScanner"),
                 patch(
                     "adversary_mcp_server.scanner.scan_engine.ScanEngine._process_single_file"
                 ) as mock_process,
             ):
+                mock_get_cred.return_value = create_mock_credential_manager()
 
                 mock_process.return_value = EnhancedScanResult(
                     file_path="test.py",

@@ -312,11 +312,11 @@ class TestPathResolutionIntegration:
             AdversaryToolError
         ):  # Don't match exact message since it varies
             await self.server._handle_mark_false_positive(
-                {"finding_uuid": "test", "adversary_file_path": ""}
+                {"finding_uuid": "test", "path": ""}
             )
 
         with pytest.raises(AdversaryToolError):
-            await self.server._handle_list_false_positives({"adversary_file_path": ""})
+            await self.server._handle_list_false_positives({"path": ""})
 
     @pytest.mark.asyncio
     async def test_scan_methods_resolve_output_paths(self):
@@ -508,7 +508,7 @@ class TestWorkspaceRootEnvironmentVariable:
                     }
                     mock_scan.return_value = mock_result
 
-                    arguments = {"file_path": "test.py"}  # Relative path
+                    arguments = {"path": "test.py"}  # Relative path
                     await self.server._handle_scan_file(arguments)
 
                     # Verify that scan_engine.scan_file was called with the resolved path
@@ -532,7 +532,7 @@ class TestWorkspaceRootEnvironmentVariable:
                 ) as mock_scan:
                     mock_scan.return_value = []
 
-                    arguments = {"directory_path": "src"}  # Relative path
+                    arguments = {"path": "src"}  # Relative path
                     await self.server._handle_scan_directory(arguments)
 
                     # Verify that scan_engine.scan_directory was called with the resolved path

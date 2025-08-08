@@ -10,10 +10,7 @@ from rich.console import Console
 
 from adversary_mcp_server.monitoring.dashboard import MonitoringDashboard
 from adversary_mcp_server.monitoring.metrics_collector import MetricsCollector
-from adversary_mcp_server.monitoring.types import (
-    MetricType,
-    MonitoringConfig,
-)
+from adversary_mcp_server.monitoring.types import MetricType, MonitoringConfig
 
 
 @pytest.fixture

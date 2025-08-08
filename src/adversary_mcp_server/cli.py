@@ -14,8 +14,9 @@ from rich.table import Table
 
 from . import get_version
 from .benchmarks import BenchmarkRunner
-from .config import get_app_metrics_dir
-from .credentials import CredentialManager
+from .cache import CacheManager
+from .config import get_app_cache_dir, get_app_metrics_dir
+from .credentials import CredentialManager, get_credential_manager
 from .logger import get_logger
 from .monitoring import MetricsCollector
 from .monitoring.dashboard import MonitoringDashboard
@@ -29,6 +30,48 @@ logger = get_logger("cli")
 
 # Global shared metrics collector for CLI commands to persist metrics across invocations
 _shared_metrics_collector: MetricsCollector | None = None
+
+# Global shared cache manager for CLI commands to persist cache across invocations
+_shared_cache_manager = None
+
+
+def _initialize_cache_manager(enable_caching: bool = True) -> CacheManager | None:
+    """Initialize shared cache manager for CLI operations.
+
+    Uses a shared cache manager instance to persist cache across CLI commands.
+
+    Args:
+        enable_caching: Whether to enable caching
+
+    Returns:
+        CacheManager instance or None if disabled
+    """
+    global _shared_cache_manager
+
+    if not enable_caching:
+        return None
+
+    # Return existing shared cache manager if already initialized
+    if _shared_cache_manager is not None:
+        return _shared_cache_manager
+
+    try:
+        logger.debug("Initializing shared CLI cache manager...")
+        cache_dir = get_app_cache_dir()
+
+        # Initialize cache manager with reasonable defaults for CLI usage
+        _shared_cache_manager = CacheManager(
+            cache_dir=cache_dir,
+            max_size_mb=100,  # 100MB cache limit
+            max_age_hours=24,  # 24 hour cache expiry
+            enable_persistence=True,  # Persist across CLI invocations
+            metrics_collector=_shared_metrics_collector,  # Link to shared metrics
+        )
+        logger.debug(f"Shared CLI cache manager initialized at {cache_dir}")
+        return _shared_cache_manager
+    except Exception as e:
+        logger.warning(f"Failed to initialize CLI cache manager: {e}")
+        return None
 
 
 def _initialize_monitoring(enable_metrics: bool = True) -> MetricsCollector | None:
@@ -67,30 +110,34 @@ def _initialize_monitoring(enable_metrics: bool = True) -> MetricsCollector | No
 
 
 def _initialize_scan_components(
-    use_validation: bool = True, metrics_collector: MetricsCollector | None = None
+    use_validation: bool = True,
+    metrics_collector: MetricsCollector | None = None,
+    cache_manager: CacheManager | None = None,
 ) -> tuple[CredentialManager, ScanEngine]:
-    """Initialize scan components with centralized monitoring.
+    """Initialize scan components with centralized monitoring and caching.
 
     Args:
         use_validation: Whether to enable LLM validation
         metrics_collector: Optional metrics collector for monitoring
+        cache_manager: Optional cache manager for caching
 
     Returns:
         Tuple of (CredentialManager, ScanEngine)
     """
     logger.debug("Initializing scan components...")
-    credential_manager = CredentialManager()
+    credential_manager = get_credential_manager()
     config = credential_manager.load_config()
 
     scan_engine = ScanEngine(
         credential_manager=credential_manager,
+        cache_manager=cache_manager,
         metrics_collector=metrics_collector,
         enable_llm_validation=use_validation,
         enable_llm_analysis=config.enable_llm_analysis,
         enable_semgrep_analysis=config.enable_semgrep_scanning,
     )
 
-    logger.debug("Scan components initialized with monitoring support")
+    logger.debug("Scan components initialized with monitoring and caching support")
     return credential_manager, scan_engine
 
 
@@ -271,7 +318,7 @@ def configure(
     console.print("🔧 [bold]Adversary MCP Server Configuration[/bold]")
 
     try:
-        credential_manager = CredentialManager()
+        credential_manager = get_credential_manager()
         config = credential_manager.load_config()
 
         # Update configuration based on options
@@ -451,9 +498,11 @@ def status():
     try:
         logger.debug("Initializing components for status check...")
         metrics_collector = _initialize_monitoring()
+        cache_manager = _initialize_cache_manager()
         credential_manager, scan_engine = _initialize_scan_components(
             use_validation=True,  # Need to initialize validation to report its status
             metrics_collector=metrics_collector,
+            cache_manager=cache_manager,
         )
         config = credential_manager.load_config()
         logger.debug("Components initialized successfully")
@@ -545,7 +594,7 @@ def debug_config():
     """Debug configuration persistence by showing keyring state."""
     logger.info("=== Starting debug-config command ===")
     try:
-        credential_manager = CredentialManager()
+        credential_manager = get_credential_manager()
 
         console.print("🔧 [bold]Configuration Debug Information[/bold]")
 
@@ -666,7 +715,7 @@ def debug_config():
 
 
 @cli.command()
-@click.argument("target", required=False)
+@click.argument("path", required=False, default=".")
 @click.option(
     "--source-branch",
     help="Source branch for git diff scanning (e.g., feature-branch)",
@@ -687,48 +736,60 @@ def debug_config():
     type=click.Choice(["low", "medium", "high", "critical"]),
     help="Minimum severity threshold",
 )
-@click.option("--output", type=click.Path(), help="Output file for results (JSON)")
-@click.option("--include-exploits", is_flag=True, help="Include exploit examples")
 @click.option(
-    "--working-directory",
-    help="Working directory to use as project root (defaults to current directory)",
+    "--output-format",
+    type=click.Choice(["json", "markdown"]),
+    default="json",
+    help="Output format for results",
 )
+@click.option("--include-exploits", is_flag=True, help="Include exploit examples")
 @cli_command_monitor("scan")
 def scan(
-    target: str | None,
+    path: str,
     source_branch: str | None,
     target_branch: str | None,
     use_llm: bool,
     use_semgrep: bool,
     use_validation: bool,
     severity: str | None,
-    output: str | None,
+    output_format: str,
     include_exploits: bool,
-    working_directory: str | None,
 ):
     """Scan a file or directory for security vulnerabilities."""
     logger.info("=== Starting scan command ===")
     logger.debug(
-        f"Scan parameters - Target: {target}, Source: {source_branch}, "
+        f"Scan parameters - Path: {path}, Source: {source_branch}, "
         f"Target branch: {target_branch}, "
         f"LLM: {use_llm}, Semgrep: {use_semgrep}, Validation: {use_validation}, "
-        f"Severity: {severity}, Output: {output}, Include exploits: {include_exploits}"
+        f"Severity: {severity}, Format: {output_format}, Include exploits: {include_exploits}"
     )
 
     try:
         # Initialize scanner components
-        logger.debug("Initializing scan components with monitoring...")
+        logger.debug("Initializing scan components with monitoring and caching...")
         metrics_collector = _initialize_monitoring()
+        cache_manager = _initialize_cache_manager()
         credential_manager, scan_engine = _initialize_scan_components(
-            use_validation=use_validation, metrics_collector=metrics_collector
+            use_validation=use_validation,
+            metrics_collector=metrics_collector,
+            cache_manager=cache_manager,
         )
+
+        # Resolve the path
+        target_path = Path(path).resolve()
 
         # Git diff scanning mode
         if source_branch and target_branch:
             logger.info(f"Git diff mode: {source_branch} -> {target_branch}")
 
-            # Get working directory using helper function
-            project_root = _get_project_root(working_directory)
+            # Validate git repository
+            if not (target_path / ".git").exists():
+                console.print(
+                    f"❌ Path is not a git repository: {target_path}", style="red"
+                )
+                sys.exit(1)
+
+            project_root = target_path
 
             # Initialize git diff scanner with project root
             git_diff_scanner = GitDiffScanner(
@@ -774,15 +835,10 @@ def scan(
 
         # Traditional file/directory scanning mode
         else:
-            if not target:
-                logger.error("Target path is required for non-diff scanning")
-                console.print(
-                    "❌ Target path is required for non-diff scanning", style="red"
-                )
+            if not target_path.exists():
+                console.print(f"❌ Path does not exist: {target_path}", style="red")
                 sys.exit(1)
 
-            # Use helper function to resolve target path
-            target_path = _resolve_target_path(target, working_directory)
             target_path_abs = str(target_path)
             logger.info(f"Starting traditional scan of: {target_path_abs}")
 
@@ -830,40 +886,86 @@ def scan(
                 logger.info(f"Directory scan completed: {len(threats)} threats found")
 
             else:
-                logger.error(f"Invalid target type: {target}")
-                console.print(f"❌ Invalid target: {target}", style="red")
+                logger.error(f"Invalid target type: {target_path}")
+                console.print(f"❌ Invalid target: {target_path}", style="red")
                 sys.exit(1)
 
             # Display results for traditional scanning
-            _display_scan_results(threats, target)
+            _display_scan_results(threats, str(target_path))
 
-        # Save results to file if requested
-        project_root = _get_project_root(working_directory)
-        if output and source_branch and target_branch and "all_threats" in locals():
-            # For git diff scans, convert diff results to list of scan results
-            diff_scan_results = []
-            for file_path, file_scan_results in scan_results.items():
-                diff_scan_results.extend(file_scan_results)
-            _save_results_to_file(
-                diff_scan_results,
-                f"diff: {source_branch}...{target_branch}",
-                output,
-                str(project_root),
+        # Save results to file based on output format
+        from .scanner.result_formatter import ScanResultFormatter
+
+        # Determine output directory based on scan type
+        if source_branch and target_branch:
+            output_dir = project_root
+            scan_target = f"diff: {source_branch}...{target_branch}"
+        else:
+            if target_path.is_file():
+                output_dir = target_path.parent
+                scan_target = str(target_path)
+            else:
+                output_dir = target_path
+                scan_target = str(target_path)
+
+        # Determine output filename
+        if output_format == "json":
+            output_file = output_dir / ".adversary.json"
+        else:  # markdown
+            output_file = output_dir / ".adversary.md"
+
+        # Format and save results
+        formatter = ScanResultFormatter(str(output_dir))
+
+        if source_branch and target_branch and "scan_results" in locals():
+            # Git diff scan
+            diff_summary = git_diff_scanner.get_diff_summary_sync(
+                source_branch, target_branch
             )
-        elif (
-            output
-            and "scan_result" in locals()
-            and not isinstance(locals().get("scan_results"), list)
+            if output_format == "json":
+                result_content = formatter.format_diff_results_json(
+                    scan_results, diff_summary, scan_target
+                )
+            else:
+                result_content = formatter.format_diff_results_markdown(
+                    scan_results, diff_summary, scan_target
+                )
+        elif "scan_result" in locals() and not isinstance(
+            locals().get("scan_results"), list
         ):
             # Single file scan
-            _save_results_to_file(scan_result, target, output, str(project_root))
-        elif (
-            output
-            and "scan_results" in locals()
-            and isinstance(locals().get("scan_results"), list)
+            if output_format == "json":
+                result_content = formatter.format_single_file_results_json(
+                    scan_result, scan_target
+                )
+            else:
+                result_content = formatter.format_single_file_results_markdown(
+                    scan_result, scan_target
+                )
+        elif "scan_results" in locals() and isinstance(
+            locals().get("scan_results"), list
         ):
-            # Directory scan
-            _save_results_to_file(scan_results, target, output, str(project_root))
+            # Directory scan - scan_results is list[EnhancedScanResult]
+            from typing import cast
+
+            directory_scan_results = cast(list, scan_results)  # Type narrowing for mypy
+            if output_format == "json":
+                result_content = formatter.format_directory_results_json(
+                    directory_scan_results, scan_target, "directory"
+                )
+            else:
+                result_content = formatter.format_directory_results_markdown(
+                    directory_scan_results, scan_target, "directory"
+                )
+        else:
+            logger.warning("No scan results to save")
+            result_content = None
+
+        if result_content:
+            with open(output_file, "w", encoding="utf-8") as f:
+                f.write(result_content)
+            console.print(f"✅ Results saved to {output_file}", style="green")
+            logger.info(f"Scan results saved to {output_file}")
 
         # Export metrics to persist scan data for monitoring
         if metrics_collector:
@@ -873,6 +975,26 @@ def scan(
                     logger.debug(f"Scan metrics exported to: {metrics_file}")
             except Exception as e:
                 logger.warning(f"Failed to export scan metrics: {e}")
+
+        # Display cache statistics for performance verification
+        if cache_manager:
+            try:
+                cache_stats = cache_manager.get_stats()
+                total_requests = cache_stats.hit_count + cache_stats.miss_count
+                console.print("\n📊 [bold]Cache Performance[/bold]")
+                console.print(f"   Cache hits: {cache_stats.hit_count}")
+                console.print(f"   Cache misses: {cache_stats.miss_count}")
+                if total_requests > 0:
+                    hit_rate = (cache_stats.hit_count / total_requests) * 100
+                    console.print(f"   Hit rate: {hit_rate:.1f}%")
+                else:
+                    console.print("   Hit rate: N/A (no cache requests)")
+                logger.info(
+                    f"Cache performance - Hits: {cache_stats.hit_count}, Misses: {cache_stats.miss_count}"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to get cache statistics: {e}")
+                console.print(f"   ❌ Cache statistics unavailable: {e}", style="red")
 
         logger.info("=== Scan command completed successfully ===")
 
@@ -945,9 +1067,11 @@ const PASSWORD = "admin123";
         # Initialize scanner
         logger.debug("Initializing scanner components for demo...")
         metrics_collector = _initialize_monitoring()
+        cache_manager = _initialize_cache_manager()
         credential_manager, scan_engine = _initialize_scan_components(
             use_validation=False,  # Simple demo without validation
             metrics_collector=metrics_collector,
+            cache_manager=cache_manager,
         )
 
         all_threats = []
@@ -992,15 +1116,16 @@ const PASSWORD = "admin123";
 @click.option("--reason", type=str, help="Reason for marking as false positive")
 @click.option("--marked-by", type=str, help="Name of person marking as false positive")
 @click.option(
-    "--working-directory",
+    "--path",
     type=click.Path(exists=True),
-    help="Working directory to search for .adversary.json",
+    default=".",
+    help="Path to directory containing .adversary.json or direct path to .adversary.json file",
 )
 def mark_false_positive(
     finding_uuid: str,
     reason: str | None,
     marked_by: str | None,
-    working_directory: str | None,
+    path: str,
 ):
     """Mark a finding as a false positive by UUID."""
     logger.info(
@@ -1011,12 +1136,12 @@ def mark_false_positive(
         from .scanner.false_positive_manager import FalsePositiveManager
 
         # Use helper function to get adversary.json path
-        adversary_file_path = _get_adversary_json_path(working_directory)
+        adversary_file_path = _get_adversary_json_path(path)
 
         # Check if file exists, if not use the legacy search approach
         if not adversary_file_path.exists():
             # Fall back to legacy search in parent directories
-            project_root = working_directory or "."
+            project_root = path or "."
             current_dir = Path(project_root)
 
             logger.info(
@@ -1237,7 +1362,7 @@ def reset():
     if Confirm.ask("Are you sure you want to reset all configuration?"):
         try:
             logger.debug("User confirmed configuration reset")
-            credential_manager = CredentialManager()
+            credential_manager = get_credential_manager()
 
             # Delete main configuration
             credential_manager.delete_config()
@@ -1369,7 +1494,7 @@ def reset_semgrep_key():
     logger.info("=== Starting reset-semgrep-key command ===")
 
     try:
-        credential_manager = CredentialManager()
+        credential_manager = get_credential_manager()
         existing_key = credential_manager.get_semgrep_api_key()
 
         if not existing_key:
@@ -1419,7 +1544,7 @@ def benchmark(scenario: str | None, output: str | None):
 
     try:
         # Initialize benchmark runner
-        credential_manager = CredentialManager()
+        credential_manager = get_credential_manager()
         benchmark_runner = BenchmarkRunner(credential_manager)
 
         if scenario:

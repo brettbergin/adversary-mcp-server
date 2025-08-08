@@ -21,6 +21,44 @@ from .logger import get_logger
 
 logger = get_logger("credentials")
 
+# Module-level singleton instance to prevent repeated keychain access
+_credential_manager_instance = None
+
+
+def get_credential_manager(config_dir: Path | None = None) -> "CredentialManager":
+    """Get or create the singleton CredentialManager instance.
+
+    This function ensures only one CredentialManager instance exists per process,
+    preventing repeated keychain access prompts.
+
+    Args:
+        config_dir: Configuration directory (only used on first call)
+
+    Returns:
+        The singleton CredentialManager instance
+    """
+    global _credential_manager_instance
+    if _credential_manager_instance is None:
+        _credential_manager_instance = CredentialManager(config_dir)
+    return _credential_manager_instance
+
+
+def reset_credential_manager():
+    """Reset the singleton instance. Used primarily for testing.
+
+    WARNING: This will clear all cached credentials and force a reload
+    from keychain on next access.
+    """
+    global _credential_manager_instance
+    logger.warning("Resetting CredentialManager singleton instance")
+    if _credential_manager_instance is not None:
+        # Clear the instance's cache
+        _credential_manager_instance._config_cache = None
+        _credential_manager_instance._cache_loaded = False
+    _credential_manager_instance = None
+    CredentialManager._instance = None
+    CredentialManager._initialized = False
+
 
 class CredentialError(Exception):
     """Base exception for credential errors."""
@@ -47,7 +85,22 @@ class CredentialDecryptionError(CredentialError):
 
 
 class CredentialManager:
-    """Secure credential manager for Adversary MCP server configuration."""
+    """Secure credential manager for Adversary MCP server configuration.
+
+    Implements singleton pattern to prevent repeated keychain access.
+    """
+
+    _instance = None
+    _initialized = False
+
+    def __new__(cls, config_dir: Path | None = None):
+        """Create or return the singleton instance."""
+        if cls._instance is None:
+            logger.info("Creating new CredentialManager singleton instance")
+            cls._instance = super().__new__(cls)
+        else:
+            logger.debug("Returning existing CredentialManager singleton instance")
+        return cls._instance
 
     def __init__(self, config_dir: Path | None = None) -> None:
         """Initialize credential manager.
@@ -55,7 +108,13 @@ class CredentialManager:
         Args:
             config_dir: Configuration directory (default: ~/.local/share/adversary-mcp-server)
         """
-        logger.info("Initializing CredentialManager")
+        # Only initialize once to prevent repeated keychain access
+        if CredentialManager._initialized:
+            logger.debug("CredentialManager already initialized, skipping")
+            return
+
+        logger.info("Initializing CredentialManager for the first time")
+        CredentialManager._initialized = True
 
         if config_dir is None:
             config_dir = Path.home() / ".local" / "share" / "adversary-mcp-server"

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import psutil
 
-from ..credentials import CredentialManager
+from ..credentials import CredentialManager, get_credential_manager
 from ..logger import get_logger
 from ..scanner.llm_scanner import LLMScanner
 from .results import BenchmarkResult, BenchmarkSummary
@@ -27,7 +27,7 @@ class BenchmarkRunner:
         Args:
             credential_manager: Optional credential manager for LLM access
         """
-        self.credential_manager = credential_manager or CredentialManager()
+        self.credential_manager = credential_manager or get_credential_manager()
         self.process = psutil.Process()
         logger.info("BenchmarkRunner initialized")
 

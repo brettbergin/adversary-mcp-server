@@ -206,7 +206,7 @@ class TestCLICommands:
         """Setup test fixtures."""
         self.runner = CliRunner()
 
-    @patch("adversary_mcp_server.cli.CredentialManager")
+    @patch("adversary_mcp_server.cli.get_credential_manager")
     @patch("adversary_mcp_server.cli.console")
     @patch("adversary_mcp_server.cli.Confirm.ask")
     def test_configure_command_comprehensive(
@@ -231,7 +231,7 @@ class TestCLICommands:
 
         assert result.exit_code == 0
 
-    @patch("adversary_mcp_server.cli.CredentialManager")
+    @patch("adversary_mcp_server.cli.get_credential_manager")
     @patch("adversary_mcp_server.cli.console")
     def test_status_command_comprehensive(self, mock_console, mock_cred_manager):
         """Test status command with configuration."""

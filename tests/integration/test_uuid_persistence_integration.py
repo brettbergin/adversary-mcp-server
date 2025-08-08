@@ -110,7 +110,7 @@ def render_template(user_input):
             ):
                 # First scan - using relative path since we're mocking project root
                 arguments1 = {
-                    "file_path": "vulnerable.py",  # Relative to project root
+                    "path": "vulnerable.py",  # Relative to project root
                 }
 
                 result1 = await server._handle_scan_file(arguments1)
@@ -136,7 +136,7 @@ def render_template(user_input):
                 server, "_get_project_root", return_value=temp_project_dir
             ):
                 arguments2 = {
-                    "file_path": "vulnerable.py",  # Relative to project root
+                    "path": "vulnerable.py",  # Relative to project root
                 }
 
                 result2 = await server._handle_scan_file(arguments2)
@@ -185,7 +185,7 @@ def render_template(user_input):
                 # First scan
                 await server._handle_scan_file(
                     {
-                        "file_path": "vulnerable.py",
+                        "path": "vulnerable.py",
                     }
                 )
 
@@ -201,7 +201,7 @@ def render_template(user_input):
                     "finding_uuid": first_threat_uuid,
                     "reason": "This is test data, not a real secret",
                     "marked_by": "integration_test",
-                    "adversary_file_path": str(adversary_file),
+                    "path": str(temp_project_dir),
                 }
             )
 
@@ -224,7 +224,7 @@ def render_template(user_input):
             ):
                 await server._handle_scan_file(
                     {
-                        "file_path": "vulnerable.py",
+                        "path": "vulnerable.py",
                     }
                 )
 
@@ -277,7 +277,7 @@ def render_template(user_input):
             ):
                 await server._handle_scan_file(
                     {
-                        "file_path": "vulnerable.py",
+                        "path": "vulnerable.py",
                     }
                 )
 
@@ -311,7 +311,7 @@ def render_template(user_input):
             ):
                 await server._handle_scan_file(
                     {
-                        "file_path": "vulnerable.py",
+                        "path": "vulnerable.py",
                     }
                 )
 
