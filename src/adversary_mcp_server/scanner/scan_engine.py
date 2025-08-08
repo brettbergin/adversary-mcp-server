@@ -8,7 +8,7 @@ from typing import Any
 
 from ..cache import CacheKey, CacheManager, CacheType, SerializableThreatMatch
 from ..config import get_app_cache_dir
-from ..credentials import CredentialManager
+from ..credentials import CredentialManager, get_credential_manager
 from ..logger import get_logger
 from ..monitoring import MetricsCollector
 from ..resilience import ErrorHandler, ResilienceConfig
@@ -232,7 +232,7 @@ class ScanEngine:
             enable_llm_validation: Whether to enable LLM validation of findings
         """
         logger.info("=== Initializing ScanEngine ===")
-        self.credential_manager = credential_manager or CredentialManager()
+        self.credential_manager = credential_manager or get_credential_manager()
         self.cache_manager = cache_manager
         self.metrics_collector = metrics_collector
         logger.debug("Initialized core components")
@@ -240,13 +240,34 @@ class ScanEngine:
         # Load configuration
         config = self.credential_manager.load_config()
 
-        # Initialize cache manager if not provided
-        if cache_manager is None and config.enable_caching:
+        # Initialize cache manager if not provided (be robust to mocked configs)
+        try:
+            enable_caching_flag = bool(getattr(config, "enable_caching", True))
+        except Exception:
+            enable_caching_flag = True
+
+        if cache_manager is None and enable_caching_flag:
             cache_dir = get_app_cache_dir()
+            # Safely coerce cache sizing parameters
+            try:
+                max_size_mb_val = getattr(config, "cache_max_size_mb", 100)
+                max_size_mb_num = (
+                    int(max_size_mb_val) if max_size_mb_val is not None else 100
+                )
+            except Exception:
+                max_size_mb_num = 100
+            try:
+                max_age_hours_val = getattr(config, "cache_max_age_hours", 24)
+                max_age_hours_num = (
+                    int(max_age_hours_val) if max_age_hours_val is not None else 24
+                )
+            except Exception:
+                max_age_hours_num = 24
+
             self.cache_manager = CacheManager(
                 cache_dir=cache_dir,
-                max_size_mb=config.cache_max_size_mb,
-                max_age_hours=config.cache_max_age_hours,
+                max_size_mb=max_size_mb_num,
+                max_age_hours=max_age_hours_num,
                 metrics_collector=self.metrics_collector,
             )
             logger.info(f"Initialized cache manager for scan engine at {cache_dir}")
@@ -282,7 +303,7 @@ class ScanEngine:
         # Check if Semgrep scanning is available and enabled
         self.enable_semgrep_analysis = (
             self.enable_semgrep_analysis
-            and config.enable_semgrep_scanning
+            and bool(getattr(config, "enable_semgrep_scanning", True))
             and self.semgrep_scanner.is_available()
         )
         logger.info(f"Semgrep analysis enabled: {self.enable_semgrep_analysis}")
@@ -873,6 +894,49 @@ class ScanEngine:
         if self.metrics_collector:
             self.metrics_collector.record_scan_start("file", file_count=1)
 
+        # Check cache if available
+        cache_key = None
+        cached_result = None
+        if self.cache_manager:
+            # Read file content for hashing
+            try:
+                file_content = file_path.read_text(encoding="utf-8", errors="replace")
+                # Create cache key with scan parameters
+                content_hash = self.cache_manager.get_hasher().hash_content(
+                    file_content
+                )
+                metadata = {
+                    "use_llm": use_llm and self.enable_llm_analysis,
+                    "use_semgrep": use_semgrep and self.enable_semgrep_analysis,
+                    "use_validation": use_validation and self.enable_llm_validation,
+                    "severity_threshold": (
+                        str(severity_threshold) if severity_threshold else None
+                    ),
+                }
+                metadata_hash = self.cache_manager.get_hasher().hash_metadata(metadata)
+
+                from ..cache.types import CacheKey, CacheType
+
+                cache_key = CacheKey(
+                    cache_type=CacheType.FILE_ANALYSIS,
+                    content_hash=content_hash,
+                    metadata_hash=metadata_hash,
+                )
+
+                cached_result = self.cache_manager.get(cache_key)
+                if cached_result:
+                    logger.info(f"Cache hit for file scan: {file_path_abs}")
+                    # Add cache metadata to result
+                    cached_result.scan_metadata["cache_hit"] = True
+                    cached_result.scan_metadata["cache_key"] = str(cache_key)
+                    return cached_result
+                else:
+                    logger.debug(f"Cache miss for file scan: {file_path_abs}")
+
+            except Exception as e:
+                logger.warning(f"Cache check failed for {file_path_abs}: {e}")
+                cache_key = None
+
         # Auto-detect language from file extension
         logger.debug(f"Auto-detecting language for: {file_path_abs}")
         language = self._detect_language(file_path)
@@ -1105,6 +1169,18 @@ class ScanEngine:
                 "file", duration, success=True, findings_count=len(result.all_threats)
             )
 
+        # Store result in cache if available
+        if self.cache_manager and cache_key:
+            try:
+                # Add cache metadata to the result before storing
+                result.scan_metadata["cache_hit"] = False
+                result.scan_metadata["cache_key"] = str(cache_key)
+
+                self.cache_manager.put(cache_key, result)
+                logger.debug(f"Cached scan result for: {file_path_abs}")
+            except Exception as e:
+                logger.warning(f"Failed to cache scan result for {file_path_abs}: {e}")
+
         return result
 
     async def scan_directory(
@@ -1326,8 +1402,11 @@ class ScanEngine:
             return []
 
         # Create a semaphore to limit concurrent operations
-        cpu_count = os.cpu_count() or 4  # Default to 4 if cpu_count returns None
-        max_workers = min(32, cpu_count + 4, len(files_to_scan))
+        try:
+            cpu_count_val = os.cpu_count() or 4
+        except Exception:
+            cpu_count_val = 4
+        max_workers = min(32, int(cpu_count_val) + 4, len(files_to_scan))
         semaphore = asyncio.Semaphore(max_workers)
         logger.info(f"Using {max_workers} parallel workers")
 
@@ -1512,9 +1591,18 @@ class ScanEngine:
                     try:
                         # Use streaming for large files, regular read for small files
                         config = self.credential_manager.load_config()
-                        if is_file_too_large(
-                            file_path, max_size_mb=config.max_file_size_mb
-                        ):
+                        try:
+                            max_file_size_config = getattr(
+                                config, "max_file_size_mb", 10
+                            )
+                            max_file_size_num = (
+                                int(max_file_size_config)
+                                if max_file_size_config is not None
+                                else 10
+                            )
+                        except Exception:
+                            max_file_size_num = 10
+                        if is_file_too_large(file_path, max_size_mb=max_file_size_num):
                             logger.debug(
                                 f"Using streaming read for large file: {file_path}"
                             )
@@ -1660,8 +1748,11 @@ class ScanEngine:
         # directory-level pre-scanning and yield results as they complete
 
         # Create a semaphore to limit concurrent operations
-        cpu_count = os.cpu_count() or 4  # Default to 4 if cpu_count returns None
-        max_workers = min(32, cpu_count + 4, len(files_to_scan))
+        try:
+            cpu_count_val = os.cpu_count() or 4
+        except Exception:
+            cpu_count_val = 4
+        max_workers = min(32, int(cpu_count_val) + 4, len(files_to_scan))
         semaphore = asyncio.Semaphore(max_workers)
         logger.info(f"Using {max_workers} parallel workers for streaming scan")
 

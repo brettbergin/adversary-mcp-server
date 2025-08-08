@@ -19,6 +19,8 @@ from adversary_mcp_server.credentials import (
     CredentialNotFoundError,
     CredentialStorageError,
     SecurityConfig,
+    get_credential_manager,
+    reset_credential_manager,
 )
 
 
@@ -106,7 +108,9 @@ class TestCredentialManagerCorrected:
 
     def test_credential_manager_initialization(self):
         """Test CredentialManager initialization."""
-        manager = CredentialManager()
+        # Reset singleton for test isolation
+        reset_credential_manager()
+        manager = get_credential_manager()
 
         # Check default paths
         assert manager.config_dir.name == "adversary-mcp-server"

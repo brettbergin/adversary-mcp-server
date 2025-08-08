@@ -13,7 +13,7 @@ from adversary_mcp_server.benchmarks import (
     BenchmarkSummary,
     TestScenarios,
 )
-from adversary_mcp_server.credentials import CredentialManager
+from adversary_mcp_server.credentials import get_credential_manager
 
 
 class TestBenchmarkResult:
@@ -391,7 +391,7 @@ class TestBenchmarkRunner:
 
     def test_initialization(self):
         """Test benchmark runner initialization."""
-        credential_manager = CredentialManager()
+        credential_manager = get_credential_manager()
         runner = BenchmarkRunner(credential_manager)
 
         assert runner.credential_manager == credential_manager

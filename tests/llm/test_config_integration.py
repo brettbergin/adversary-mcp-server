@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from adversary_mcp_server.config import SecurityConfig
-from adversary_mcp_server.credentials import CredentialManager
+from adversary_mcp_server.credentials import get_credential_manager
 
 
 class TestSecurityConfigLLM:
@@ -144,7 +144,7 @@ class TestCredentialManagerLLM:
     def test_store_llm_api_key_openai(self):
         """Test storing OpenAI API key."""
         with patch("keyring.set_password") as mock_set:
-            manager = CredentialManager()
+            manager = get_credential_manager()
             manager.store_llm_api_key("openai", "sk-test-key")
 
             mock_set.assert_called_once_with(
@@ -154,7 +154,7 @@ class TestCredentialManagerLLM:
     def test_store_llm_api_key_anthropic(self):
         """Test storing Anthropic API key."""
         with patch("keyring.set_password") as mock_set:
-            manager = CredentialManager()
+            manager = get_credential_manager()
             manager.store_llm_api_key("anthropic", "anthropic-key")
 
             mock_set.assert_called_once_with(
@@ -163,7 +163,7 @@ class TestCredentialManagerLLM:
 
     def test_store_llm_api_key_invalid_provider(self):
         """Test storing API key with invalid provider."""
-        manager = CredentialManager()
+        manager = get_credential_manager()
 
         with pytest.raises(ValueError, match="Invalid LLM provider"):
             manager.store_llm_api_key("invalid", "key")
@@ -171,7 +171,7 @@ class TestCredentialManagerLLM:
     def test_get_llm_api_key_openai(self):
         """Test getting OpenAI API key."""
         with patch("keyring.get_password", return_value="sk-test-key") as mock_get:
-            manager = CredentialManager()
+            manager = get_credential_manager()
             key = manager.get_llm_api_key("openai")
 
             assert key == "sk-test-key"
@@ -182,14 +182,14 @@ class TestCredentialManagerLLM:
     def test_get_llm_api_key_not_found(self):
         """Test getting API key when not found."""
         with patch("keyring.get_password", return_value=None):
-            manager = CredentialManager()
+            manager = get_credential_manager()
             key = manager.get_llm_api_key("openai")
 
             assert key is None
 
     def test_get_llm_api_key_invalid_provider(self):
         """Test getting API key with invalid provider."""
-        manager = CredentialManager()
+        manager = get_credential_manager()
         key = manager.get_llm_api_key("invalid")
 
         assert key is None
@@ -197,7 +197,7 @@ class TestCredentialManagerLLM:
     def test_delete_llm_api_key_openai(self):
         """Test deleting OpenAI API key."""
         with patch("keyring.delete_password", return_value=None) as mock_delete:
-            manager = CredentialManager()
+            manager = get_credential_manager()
             result = manager.delete_llm_api_key("openai")
 
             assert result is True
@@ -207,7 +207,7 @@ class TestCredentialManagerLLM:
 
     def test_delete_llm_api_key_invalid_provider(self):
         """Test deleting API key with invalid provider."""
-        manager = CredentialManager()
+        manager = get_credential_manager()
         result = manager.delete_llm_api_key("invalid")
 
         assert result is False
@@ -217,7 +217,7 @@ class TestCredentialManagerLLM:
         mock_config = MagicMock()
         mock_config.llm_provider = "openai"
 
-        manager = CredentialManager()
+        manager = get_credential_manager()
         with patch.object(manager, "load_config", return_value=mock_config):
             provider = manager.get_configured_llm_provider()
 
@@ -230,7 +230,7 @@ class TestCredentialManagerLLM:
         mock_config.llm_api_key = "sk-test-key"
         mock_config.llm_model = "gpt-4"
 
-        manager = CredentialManager()
+        manager = get_credential_manager()
         with patch.object(manager, "load_config", return_value=mock_config):
             with patch.object(manager, "store_config") as mock_store:
                 with patch.object(manager, "delete_llm_api_key") as mock_delete:

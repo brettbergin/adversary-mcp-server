@@ -210,11 +210,11 @@ def process_payment(card_number, amount):
                 "confidence": 0.95,
             }
 
-        from adversary_mcp_server.credentials import CredentialManager
+        from adversary_mcp_server.credentials import get_credential_manager
 
         # Language enum removed - using strings directly
         # Initialize with credential manager
-        scanner = LLMScanner(CredentialManager())
+        scanner = LLMScanner(get_credential_manager())
 
         # Mock the analyze_code method to return realistic data for benchmarking
         def mock_analyze_code(source_code, file_path, language, max_findings=20):
