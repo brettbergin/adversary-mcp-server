@@ -52,37 +52,75 @@ class ScanResultFormatter:
         files_scanned = []
 
         for scan_result in scan_results:
-            # Safely access attributes that may be missing on mocks
-            file_path = getattr(scan_result, "file_path", "")
-            if not isinstance(file_path, str):
-                try:
-                    file_path = str(file_path)
-                except Exception:
-                    file_path = ""
-            language = getattr(scan_result, "language", "generic")
-            if not isinstance(language, str):
-                try:
-                    language = str(language)
-                except Exception:
-                    language = "generic"
+            # Check if this is a directory scan with file information
+            try:
+                if (
+                    hasattr(scan_result, "scan_metadata")
+                    and isinstance(scan_result.scan_metadata, dict)
+                    and scan_result.scan_metadata.get("directory_scan")
+                    and "directory_files_info" in scan_result.scan_metadata
+                ):
+
+                    # Use the pre-computed file information from directory scan
+                    files_info = scan_result.scan_metadata.get(
+                        "directory_files_info", []
+                    )
+                    if isinstance(files_info, list):
+                        files_scanned.extend(files_info)
+                    else:
+                        logger.warning(
+                            f"directory_files_info is not a list: {type(files_info)}"
+                        )
+                else:
+                    # Handle individual file scans (original logic)
+                    # Safely access attributes that may be missing on mocks
+                    file_path = getattr(scan_result, "file_path", "")
+                    if not isinstance(file_path, str):
+                        try:
+                            file_path = str(file_path)
+                        except Exception as e:
+                            logger.warning(
+                                f"Failed to convert file_path to string: {e}"
+                            )
+                            file_path = ""
+                    language = getattr(scan_result, "language", "generic")
+                    if not isinstance(language, str):
+                        try:
+                            language = str(language)
+                        except Exception as e:
+                            logger.warning(f"Failed to convert language to string: {e}")
+                            language = "generic"
+                    threats_list = []
+                    try:
+                        if hasattr(scan_result, "all_threats") and isinstance(
+                            scan_result.all_threats, list
+                        ):
+                            threats_list = scan_result.all_threats
+                    except AttributeError as e:
+                        logger.warning(f"Failed to access all_threats attribute: {e}")
+                        threats_list = []
+
+                    # Track files scanned for individual file scans
+                    files_scanned.append(
+                        {
+                            "file_path": file_path,
+                            "language": language,
+                            "threat_count": len(threats_list),
+                            "issues_identified": bool(threats_list),
+                        }
+                    )
+            except (AttributeError, TypeError) as e:
+                logger.debug(f"Error processing scan result metadata: {e}")
+
+            # Get threats list for processing
             threats_list = []
             try:
                 if hasattr(scan_result, "all_threats") and isinstance(
                     scan_result.all_threats, list
                 ):
                     threats_list = scan_result.all_threats
-            except Exception:
+            except AttributeError:
                 threats_list = []
-
-            # Track files scanned
-            files_scanned.append(
-                {
-                    "file_path": file_path,
-                    "language": language,
-                    "threat_count": len(threats_list),
-                    "issues_identified": bool(threats_list),
-                }
-            )
 
             # Process each threat with full metadata
             for threat in threats_list:
@@ -203,6 +241,9 @@ class ScanResultFormatter:
         # Add validation summary aggregation
         validation_summary = self._aggregate_validation_stats(scan_results)
 
+        # Add LLM usage summary aggregation
+        llm_usage_summary = self._aggregate_llm_usage_stats(scan_results)
+
         # Build comprehensive result structure
         result_data = {
             "scan_metadata": {
@@ -213,29 +254,10 @@ class ScanResultFormatter:
                 "files_scanned": len(files_scanned),
             },
             "validation_summary": validation_summary,
+            "llm_usage_summary": llm_usage_summary,
             "scanner_execution_summary": {
                 "semgrep_scanner": self._get_semgrep_summary(scan_results),
-                "llm_scanner": {
-                    "files_processed": len(
-                        [
-                            f
-                            for f in scan_results
-                            if f.scan_metadata.get("llm_scan_success", False)
-                        ]
-                    ),
-                    "files_failed": len(
-                        [
-                            f
-                            for f in scan_results
-                            if not f.scan_metadata.get("llm_scan_success", False)
-                            and f.scan_metadata.get("llm_scan_reason")
-                            not in ["disabled", "not_available"]
-                        ]
-                    ),
-                    "total_threats": sum(
-                        f.stats.get("llm_threats", 0) for f in scan_results
-                    ),
-                },
+                "llm_scanner": self._get_llm_summary(scan_results),
             },
             "statistics": {
                 "total_threats": len(all_threats),
@@ -409,57 +431,73 @@ class ScanResultFormatter:
             md_lines.append("## Detailed Findings")
             md_lines.append("")
 
-            # Group threats by file
-            threats_by_file = {}
+            # Collect all threats and sort globally by severity
+            all_threats_list = []
             for scan_result in scan_results:
                 if scan_result.all_threats:
-                    threats_by_file[scan_result.file_path] = scan_result.all_threats
+                    all_threats_list.extend(scan_result.all_threats)
 
-            for file_path, threats in threats_by_file.items():
-                md_lines.append(f"### File: `{file_path}`")
+            # Sort all threats globally by severity (Critical -> High -> Medium -> Low)
+            severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+            globally_sorted_threats = sorted(
+                all_threats_list,
+                key=lambda t: severity_order.get(
+                    str(getattr(t.severity, "value", t.severity)).lower(), 4
+                ),
+            )
+
+            # Group threats by file for display, but maintain severity order
+            current_file = None
+            for threat in globally_sorted_threats:
+                # Add file header when we encounter a new file
+                if current_file != threat.file_path:
+                    current_file = threat.file_path
+                    md_lines.append(f"### File: `{current_file}`")
+                    md_lines.append("")
+
+                # Threat header
+                sev_val = str(
+                    getattr(threat.severity, "value", threat.severity)
+                ).lower()
+                severity_emoji = {
+                    "critical": "🔴",
+                    "high": "🟠",
+                    "medium": "🟡",
+                    "low": "🔵",
+                }.get(sev_val, "⚪")
+
+                md_lines.append(
+                    f"#### {severity_emoji} {sev_val.upper()}: {threat.rule_name}"
+                )
+                md_lines.append("")
+                end_line = getattr(threat, "end_line_number", threat.line_number)
+                line_range = f"{threat.line_number}" + (
+                    f"-{end_line}" if end_line != threat.line_number else ""
+                )
+                md_lines.append(f"**Location:** `{threat.file_path}:{line_range}`")
+                md_lines.append("")
+                md_lines.append(f"**Description:** {threat.description}")
                 md_lines.append("")
 
-                for threat in threats:
-                    # Threat header
-                    sev_val = str(
-                        getattr(threat.severity, "value", threat.severity)
-                    ).lower()
-                    severity_emoji = {
-                        "critical": "🔴",
-                        "high": "🟠",
-                        "medium": "🟡",
-                        "low": "🔵",
-                    }.get(sev_val, "⚪")
-
-                    md_lines.append(
-                        f"#### {severity_emoji} {sev_val.upper()}: {threat.rule_name}"
-                    )
-                    md_lines.append("")
-                    end_line = getattr(threat, "end_line_number", threat.line_number)
-                    line_range = f"{threat.line_number}" + (
-                        f"-{end_line}" if end_line != threat.line_number else ""
-                    )
-                    md_lines.append(f"**Location:** `{file_path}:{line_range}`")
-                    md_lines.append(f"**Description:** {threat.description}")
+                # Code snippet if available
+                code_snippet = threat.code_snippet or getattr(
+                    threat, "matched_content", ""
+                )
+                if code_snippet:
+                    md_lines.append("**Vulnerable Code:**")
+                    md_lines.append("```")
+                    md_lines.append(str(code_snippet).strip())
+                    md_lines.append("```")
                     md_lines.append("")
 
-                    # Code snippet if available
-                    matched_content = getattr(threat, "matched_content", "")
-                    if matched_content:
-                        md_lines.append("**Vulnerable Code:**")
-                        md_lines.append("```")
-                        md_lines.append(str(matched_content).strip())
-                        md_lines.append("```")
-                        md_lines.append("")
-
-                    # Remediation if available
-                    if threat.remediation:
-                        md_lines.append("**Remediation:**")
-                        md_lines.append(threat.remediation)
-                        md_lines.append("")
-
-                    md_lines.append("---")
+                # Remediation if available
+                if threat.remediation:
+                    md_lines.append("**Remediation:**")
+                    md_lines.append(threat.remediation)
                     md_lines.append("")
+
+                md_lines.append("---")
+                md_lines.append("")
 
         else:
             md_lines.append("")
@@ -467,6 +505,59 @@ class ScanResultFormatter:
             md_lines.append("")
             md_lines.append(
                 "The scan completed successfully with no security vulnerabilities found."
+            )
+
+        # LLM usage summary if available
+        llm_usage_stats = self._aggregate_llm_usage_stats(scan_results)
+        if llm_usage_stats["enabled"]:
+            md_lines.append("")
+            md_lines.append("## LLM Usage Summary")
+            md_lines.append("")
+            md_lines.append(
+                f"- **Total Tokens Used:** {llm_usage_stats['total_tokens']:,}"
+            )
+            md_lines.append(
+                f"- **Total Estimated Cost:** ${llm_usage_stats['total_cost']:.6f} {llm_usage_stats['currency']}"
+            )
+            md_lines.append(
+                f"- **Total API Calls:** {llm_usage_stats['total_api_calls']}"
+            )
+            md_lines.append("")
+
+            # Analysis breakdown
+            analysis_stats = llm_usage_stats["analysis"]
+            if analysis_stats["api_calls"] > 0:
+                md_lines.append("### Analysis Usage")
+                md_lines.append(f"- **Tokens:** {analysis_stats['total_tokens']:,}")
+                md_lines.append(f"- **Cost:** ${analysis_stats['total_cost']:.6f}")
+                md_lines.append(f"- **API Calls:** {analysis_stats['api_calls']}")
+                md_lines.append("")
+
+            # Validation breakdown
+            validation_stats_usage = llm_usage_stats["validation"]
+            if validation_stats_usage["api_calls"] > 0:
+                md_lines.append("### Validation Usage")
+                md_lines.append(
+                    f"- **Tokens:** {validation_stats_usage['total_tokens']:,}"
+                )
+                md_lines.append(
+                    f"- **Cost:** ${validation_stats_usage['total_cost']:.6f}"
+                )
+                md_lines.append(
+                    f"- **API Calls:** {validation_stats_usage['api_calls']}"
+                )
+                md_lines.append("")
+
+            # Models and averages
+            if llm_usage_stats["models_used"]:
+                md_lines.append(
+                    f"- **Models Used:** {', '.join(llm_usage_stats['models_used'])}"
+                )
+            md_lines.append(
+                f"- **Average Cost per File:** ${llm_usage_stats['average_cost_per_file']:.6f}"
+            )
+            md_lines.append(
+                f"- **Average Tokens per File:** {llm_usage_stats['average_tokens_per_file']:.1f}"
             )
 
         # Validation summary if available
@@ -603,7 +694,7 @@ class ScanResultFormatter:
                 ):
                     any_validation_enabled = True
                     break
-            except Exception as e:
+            except (AttributeError, TypeError, KeyError) as e:
                 logger.debug(f"Error checking validation status for scan result: {e}")
                 continue
 
@@ -617,7 +708,8 @@ class ScanResultFormatter:
                         reasons.append(scan_md.get("llm_validation_reason", "unknown"))
                     else:
                         reasons.append("unknown")
-                except Exception:
+                except (AttributeError, TypeError) as e:
+                    logger.debug(f"Error extracting validation reason: {e}")
                     reasons.append("unknown")
             most_common_reason = (
                 max(set(reasons), key=reasons.count) if reasons else "unknown"
@@ -664,7 +756,8 @@ class ScanResultFormatter:
                 validation_errors += int(
                     result.scan_metadata.get("validation_errors", 0)
                 )
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Error counting validation errors: {e}")
                 pass
 
         avg_confidence = (
@@ -686,6 +779,138 @@ class ScanResultFormatter:
             "status": "completed",
         }
 
+    def _aggregate_llm_usage_stats(
+        self, scan_results: list[EnhancedScanResult]
+    ) -> dict[str, Any]:
+        """Aggregate LLM usage statistics across multiple scan results.
+
+        Args:
+            scan_results: List of enhanced scan results to aggregate
+
+        Returns:
+            Dictionary with aggregated LLM usage statistics
+        """
+        if not scan_results:
+            return {
+                "enabled": False,
+                "total_tokens": 0,
+                "total_cost": 0.0,
+                "currency": "USD",
+                "analysis": {"total_tokens": 0, "total_cost": 0.0, "api_calls": 0},
+                "validation": {"total_tokens": 0, "total_cost": 0.0, "api_calls": 0},
+                "models_used": [],
+                "status": "no_results",
+            }
+
+        # Initialize aggregation counters
+        total_analysis_tokens = 0
+        total_analysis_cost = 0.0
+        total_analysis_calls = 0
+        total_validation_tokens = 0
+        total_validation_cost = 0.0
+        total_validation_calls = 0
+        all_models_used = set()
+        has_usage_data = False
+
+        # Aggregate across all scan results
+        for result in scan_results:
+            try:
+                if hasattr(result, "llm_usage_stats") and result.llm_usage_stats:
+                    usage_stats = result.llm_usage_stats
+                    # Skip if it's a mock or doesn't have the expected structure
+                    if not isinstance(usage_stats, dict):
+                        continue
+
+                    has_usage_data = True
+
+                    # Analysis stats - safely handle potential mock objects
+                    analysis_stats = usage_stats.get("analysis", {})
+                    if isinstance(analysis_stats, dict):
+                        tokens = analysis_stats.get("total_tokens", 0)
+                        cost = analysis_stats.get("total_cost", 0.0)
+                        calls = analysis_stats.get("api_calls", 0)
+                        models = analysis_stats.get("models_used", [])
+
+                        # Only add if they're actually numbers (not mocks)
+                        if isinstance(tokens, int | float):
+                            total_analysis_tokens += tokens
+                        if isinstance(cost, int | float):
+                            total_analysis_cost += cost
+                        if isinstance(calls, int | float):
+                            total_analysis_calls += calls
+                        if isinstance(models, list):
+                            all_models_used.update(models)
+
+                    # Validation stats - safely handle potential mock objects
+                    validation_stats = usage_stats.get("validation", {})
+                    if isinstance(validation_stats, dict):
+                        tokens = validation_stats.get("total_tokens", 0)
+                        cost = validation_stats.get("total_cost", 0.0)
+                        calls = validation_stats.get("api_calls", 0)
+                        models = validation_stats.get("models_used", [])
+
+                        # Only add if they're actually numbers (not mocks)
+                        if isinstance(tokens, int | float):
+                            total_validation_tokens += tokens
+                        if isinstance(cost, int | float):
+                            total_validation_cost += cost
+                        if isinstance(calls, int | float):
+                            total_validation_calls += calls
+                        if isinstance(models, list):
+                            all_models_used.update(models)
+            except (AttributeError, TypeError) as e:
+                # Handle mocked objects gracefully
+                logger.debug(
+                    f"Skipping LLM usage stats aggregation for mocked object: {e}"
+                )
+                continue
+
+        if not has_usage_data:
+            return {
+                "enabled": False,
+                "total_tokens": 0,
+                "total_cost": 0.0,
+                "currency": "USD",
+                "analysis": {"total_tokens": 0, "total_cost": 0.0, "api_calls": 0},
+                "validation": {"total_tokens": 0, "total_cost": 0.0, "api_calls": 0},
+                "models_used": [],
+                "status": "no_usage_data",
+            }
+
+        total_cost = total_analysis_cost + total_validation_cost
+        total_tokens = total_analysis_tokens + total_validation_tokens
+        total_calls = total_analysis_calls + total_validation_calls
+
+        return {
+            "enabled": True,
+            "total_tokens": total_tokens,
+            "total_cost": round(total_cost, 6),
+            "currency": "USD",
+            "total_api_calls": total_calls,
+            "analysis": {
+                "total_tokens": total_analysis_tokens,
+                "total_cost": round(total_analysis_cost, 6),
+                "api_calls": total_analysis_calls,
+            },
+            "validation": {
+                "total_tokens": total_validation_tokens,
+                "total_cost": round(total_validation_cost, 6),
+                "api_calls": total_validation_calls,
+            },
+            "models_used": sorted(all_models_used),
+            "average_cost_per_file": (
+                round(total_cost / len(scan_results), 6)
+                if len(scan_results) > 0
+                else 0.0
+            ),
+            "average_tokens_per_file": (
+                round(total_tokens / len(scan_results), 1)
+                if len(scan_results) > 0
+                else 0.0
+            ),
+            "status": "completed",
+        }
+
     def _get_semgrep_summary(
         self, scan_results: list[EnhancedScanResult]
     ) -> dict[str, Any]:
@@ -697,28 +922,122 @@ class ScanResultFormatter:
         Returns:
             Dictionary with Semgrep execution summary
         """
-        files_processed = len(
-            [
-                f
-                for f in scan_results
-                if f.scan_metadata.get("semgrep_scan_success", False)
-            ]
-        )
+        # Check if this is a directory scan with file information
+        total_files_processed = 0
+        total_files_failed = 0
 
-        files_failed = len(
-            [
-                f
-                for f in scan_results
-                if not f.scan_metadata.get("semgrep_scan_success", False)
-                and f.scan_metadata.get("semgrep_scan_reason")
-                not in ["disabled", "not_available"]
-            ]
-        )
+        for scan_result in scan_results:
+            try:
+                if (
+                    hasattr(scan_result, "scan_metadata")
+                    and isinstance(scan_result.scan_metadata, dict)
+                    and scan_result.scan_metadata.get("directory_scan")
+                    and "directory_files_info" in scan_result.scan_metadata
+                ):
+
+                    # For directory scans, use the file count from directory_files_info
+                    files_info = scan_result.scan_metadata.get(
+                        "directory_files_info", []
+                    )
+                    if isinstance(files_info, list):
+                        if scan_result.scan_metadata.get("semgrep_scan_success", False):
+                            total_files_processed += len(files_info)
+                        else:
+                            total_files_failed += len(files_info)
+                    else:
+                        logger.debug(
+                            f"directory_files_info is not a list in semgrep summary: {type(files_info)}"
+                        )
+                else:
+                    # Handle individual file scans (original logic)
+                    if hasattr(scan_result, "scan_metadata") and isinstance(
+                        scan_result.scan_metadata, dict
+                    ):
+                        if scan_result.scan_metadata.get("semgrep_scan_success", False):
+                            total_files_processed += 1
+                        elif not scan_result.scan_metadata.get(
+                            "semgrep_scan_success", False
+                        ) and scan_result.scan_metadata.get(
+                            "semgrep_scan_reason"
+                        ) not in [
+                            "disabled",
+                            "not_available",
+                        ]:
+                            total_files_failed += 1
+            except (AttributeError, TypeError) as e:
+                logger.debug(f"Error processing semgrep summary for scan result: {e}")
 
         total_threats = sum(f.stats.get("semgrep_threats", 0) for f in scan_results)
 
         return {
-            "files_processed": files_processed,
-            "files_failed": files_failed,
+            "files_processed": total_files_processed,
+            "files_failed": total_files_failed,
+            "total_threats": total_threats,
+        }
+
+    def _get_llm_summary(
+        self, scan_results: list[EnhancedScanResult]
+    ) -> dict[str, Any]:
+        """Get LLM scanner execution summary from scan results.
+
+        Args:
+            scan_results: List of enhanced scan results
+
+        Returns:
+            Dictionary with LLM scanner execution summary
+        """
+        # Check if this is a directory scan with file information
+        total_files_processed = 0
+        total_files_failed = 0
+
+        for scan_result in scan_results:
+            try:
+                if (
+                    hasattr(scan_result, "scan_metadata")
+                    and isinstance(scan_result.scan_metadata, dict)
+                    and scan_result.scan_metadata.get("directory_scan")
+                    and "directory_files_info" in scan_result.scan_metadata
+                ):
+
+                    # For directory scans, use the file count from directory_files_info
+                    files_info = scan_result.scan_metadata.get(
+                        "directory_files_info", []
+                    )
+                    if isinstance(files_info, list):
+                        if scan_result.scan_metadata.get("llm_scan_success", False):
+                            total_files_processed += len(files_info)
+                        elif not scan_result.scan_metadata.get(
+                            "llm_scan_success", False
+                        ) and scan_result.scan_metadata.get("llm_scan_reason") not in [
+                            "disabled",
+                            "not_available",
+                        ]:
+                            total_files_failed += len(files_info)
+                    else:
+                        logger.debug(
+                            f"directory_files_info is not a list in llm summary: {type(files_info)}"
+                        )
+                else:
+                    # Handle individual file scans (original logic)
+                    if hasattr(scan_result, "scan_metadata") and isinstance(
+                        scan_result.scan_metadata, dict
+                    ):
+                        if scan_result.scan_metadata.get("llm_scan_success", False):
+                            total_files_processed += 1
+                        elif not scan_result.scan_metadata.get(
+                            "llm_scan_success", False
+                        ) and scan_result.scan_metadata.get("llm_scan_reason") not in [
+                            "disabled",
+                            "not_available",
+                        ]:
+                            total_files_failed += 1
+            except (AttributeError, TypeError) as e:
+                logger.debug(f"Error processing llm summary for scan result: {e}")
+
+        total_threats = sum(f.stats.get("llm_threats", 0) for f in scan_results)
+
+        return {
+            "files_processed": total_files_processed,
+            "files_failed": total_files_failed,
             "total_threats": total_threats,
         }

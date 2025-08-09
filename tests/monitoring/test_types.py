@@ -49,6 +49,84 @@ class TestMetricData:
         assert metric.labels == {"env": "test", "service": "scanner"}
         assert metric.unit == "seconds"
 
+    def test_metric_data_to_dict(self):
+        """Test converting metric data to dictionary."""
+        metric = MetricData(
+            name="test_metric",
+            metric_type=MetricType.HISTOGRAM,
+            value=100.5,
+            labels={"key": "value"},
+        )
+
+        metric_dict = metric.to_dict()
+
+        assert isinstance(metric_dict, dict)
+        assert metric_dict["name"] == "test_metric"
+        assert metric_dict["type"] == "histogram"
+        assert metric_dict["value"] == 100.5
+        assert "timestamp" in metric_dict
+        assert metric_dict["labels"] == {"key": "value"}
+
+    def test_metric_data_from_dict(self):
+        """Test creating metric data from dictionary."""
+        data = {
+            "name": "from_dict_metric",
+            "type": "timer",
+            "value": 25.0,
+            "timestamp": 1234567890.123,
+            "labels": {"test": "true"},
+        }
+
+        metric = MetricData.from_dict(data)
+
+        assert metric.name == "from_dict_metric"
+        assert metric.metric_type == MetricType.TIMER
+        assert metric.value == 25.0
+        assert metric.timestamp == 1234567890.123
+        assert metric.labels == {"test": "true"}
+
+    def test_performance_metrics_dict_conversion(self):
+        """Test PerformanceMetrics dict conversion methods."""
+        metrics = PerformanceMetrics(
+            cpu_usage_percent=75.5,
+            memory_usage_mb=512.0,
+            error_count=3,
+            critical_error_count=1,
+        )
+
+        # Test to_dict
+        metrics_dict = metrics.to_dict()
+        assert metrics_dict["cpu_usage_percent"] == 75.5
+        assert metrics_dict["memory_usage_mb"] == 512.0
+        assert metrics_dict["error_count"] == 3
+
+        # Test from_dict
+        reconstructed = PerformanceMetrics.from_dict(metrics_dict)
+        assert reconstructed.cpu_usage_percent == 75.5
+        assert reconstructed.memory_usage_mb == 512.0
+        assert reconstructed.error_count == 3
+
+    def test_scan_metrics_dict_conversion(self):
+        """Test ScanMetrics dict conversion methods."""
+        metrics = ScanMetrics(
+            files_scanned=10,
+            threats_found=2,
+            scan_duration_seconds=45.3,
+            lines_of_code=1500,
+        )
+
+        # Test to_dict
+        metrics_dict = metrics.to_dict()
+        assert metrics_dict["files_scanned"] == 10
+        assert metrics_dict["threats_found"] == 2
+        assert metrics_dict["scan_duration_seconds"] == 45.3
+
+        # Test from_dict
+        reconstructed = ScanMetrics.from_dict(metrics_dict)
+        assert reconstructed.files_scanned == 10
+        assert reconstructed.threats_found == 2
+        assert reconstructed.scan_duration_seconds == 45.3
+
 
 class TestScanMetrics:
     """Test ScanMetrics dataclass."""

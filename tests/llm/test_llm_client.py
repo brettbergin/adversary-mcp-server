@@ -368,3 +368,105 @@ class TestLLMResponse:
         )
 
         assert response.raw_response is None
+
+    def test_llm_response_with_cost_breakdown(self):
+        """Test LLM response with cost breakdown."""
+        cost_breakdown = {
+            "prompt_cost": 0.01,
+            "completion_cost": 0.02,
+            "total_cost": 0.03,
+            "currency": "USD",
+        }
+        response = LLMResponse(
+            content="test content",
+            model="test-model",
+            usage={"tokens": 100},
+            cost_breakdown=cost_breakdown,
+        )
+
+        assert response.cost_breakdown == cost_breakdown
+
+
+class TestLLMExceptionHandling:
+    """Test LLM exception classes."""
+
+    def test_llm_client_error(self):
+        """Test LLMClientError exception."""
+        error = LLMClientError("Test error")
+        assert str(error) == "Test error"
+
+    def test_llm_api_error(self):
+        """Test LLMAPIError exception."""
+        error = LLMAPIError("API error")
+        assert str(error) == "API error"
+
+    def test_llm_rate_limit_error(self):
+        """Test LLMRateLimitError exception."""
+        error = LLMRateLimitError("Rate limit exceeded")
+        assert str(error) == "Rate limit exceeded"
+
+
+class TestLLMClientEdgeCases:
+    """Test edge cases for LLM client functionality."""
+
+    def test_validate_json_response_empty_string(self):
+        """Test JSON validation with empty string."""
+        client = OpenAIClient("test-key")
+        with pytest.raises(LLMClientError, match="Invalid JSON response"):
+            client.validate_json_response("")
+
+    def test_validate_json_response_whitespace_only(self):
+        """Test JSON validation with whitespace only."""
+        client = OpenAIClient("test-key")
+        with pytest.raises(LLMClientError, match="Invalid JSON response"):
+            client.validate_json_response("   \n  \t  ")
+
+    def test_validate_json_response_code_block_only(self):
+        """Test JSON validation with code block only."""
+        client = OpenAIClient("test-key")
+        markdown_json = """```json
+{"test": "value"}
+```"""
+        result = client.validate_json_response(markdown_json)
+        assert result == {"test": "value"}
+
+    @pytest.mark.asyncio
+    async def test_complete_with_retry_api_error_retries(self):
+        """Test retry logic with API errors (does retry)."""
+        client = OpenAIClient("test-key")
+        with patch.object(client, "complete") as mock_complete:
+            mock_complete.side_effect = LLMAPIError("API error")
+
+            with patch("asyncio.sleep") as mock_sleep:
+                with pytest.raises(LLMAPIError):
+                    await client.complete_with_retry("System", "User", max_retries=3)
+
+                # Should retry for API errors
+                assert mock_complete.call_count == 3
+                # Should have exponential backoff delays
+                assert mock_sleep.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_complete_with_retry_zero_delay(self):
+        """Test retry logic with zero delay."""
+        mock_response = LLMResponse("content", "model", {"total_tokens": 30})
+
+        client = OpenAIClient("test-key")
+        with patch.object(client, "complete") as mock_complete:
+            mock_complete.side_effect = [
+                LLMRateLimitError("Rate limited"),
+                mock_response,
+            ]
+
+            with patch("asyncio.sleep") as mock_sleep:
+                result = await client.complete_with_retry(
+                    "System", "User", retry_delay=0.0
+                )
+
+                assert result == mock_response
+                mock_sleep.assert_called_once_with(0.0)
+
+    def test_create_client_with_none_provider(self):
+        """Test creating client with None provider."""
+        with pytest.raises(ValueError, match="Unsupported LLM provider"):
+            create_llm_client(None, "test-key")

@@ -8,6 +8,7 @@ from enum import Enum
 from typing import Any
 
 from ..logger import get_logger
+from .pricing_manager import PricingManager
 
 logger = get_logger("llm_client")
 
@@ -27,6 +28,7 @@ class LLMResponse:
     model: str
     usage: dict[str, int]  # tokens used, etc.
     raw_response: Any | None = None
+    cost_breakdown: dict[str, Any] | None = None  # cost information from PricingManager
 
 
 class LLMClientError(Exception):
@@ -59,7 +61,11 @@ class LLMClient(ABC):
         """
         self.api_key = api_key
         self.model = model or self.get_default_model()
+        self.pricing_manager = PricingManager()
         logger.info(f"Initializing {self.__class__.__name__} with model: {self.model}")
+        logger.debug(
+            f"Pricing manager initialized with {len(self.pricing_manager.get_supported_models())} supported models"
+        )
 
     @abstractmethod
     def get_default_model(self) -> str:
@@ -290,21 +296,24 @@ class OpenAIClient(LLMClient):
                 f"Response model: {response.model}, Content length: {len(content)} chars"
             )
 
-            # Log cost estimate (approximate)
-            prompt_cost = (
-                usage["prompt_tokens"] * 0.01 / 1000
-            )  # $0.01 per 1K tokens (GPT-4 pricing)
-            completion_cost = (
-                usage["completion_tokens"] * 0.03 / 1000
-            )  # $0.03 per 1K tokens
-            total_cost = prompt_cost + completion_cost
-            logger.debug(f"Estimated cost: ${total_cost:.4f}")
+            # Calculate cost using pricing manager
+            cost_breakdown = self.pricing_manager.calculate_cost(
+                model_name=response.model,
+                prompt_tokens=usage["prompt_tokens"],
+                completion_tokens=usage["completion_tokens"],
+            )
+            logger.debug(
+                f"Cost calculation: ${cost_breakdown['total_cost']:.6f} "
+                f"{cost_breakdown['currency']} "
+                f"(pricing: {cost_breakdown['pricing_source']})"
+            )
 
             return LLMResponse(
                 content=content,
                 model=response.model,
                 usage=usage,
                 raw_response=response,
+                cost_breakdown=cost_breakdown,
             )
 
         except openai.RateLimitError as e:
@@ -390,21 +399,24 @@ class AnthropicClient(LLMClient):
                 f"Response model: {response.model}, Content length: {len(content)} chars"
             )
 
-            # Log cost estimate (approximate)
-            input_cost = (
-                usage["prompt_tokens"] * 0.015 / 1000
-            )  # $0.015 per 1K tokens (Claude pricing)
-            output_cost = (
-                usage["completion_tokens"] * 0.075 / 1000
-            )  # $0.075 per 1K tokens
-            total_cost = input_cost + output_cost
-            logger.debug(f"Estimated cost: ${total_cost:.4f}")
+            # Calculate cost using pricing manager
+            cost_breakdown = self.pricing_manager.calculate_cost(
+                model_name=response.model,
+                prompt_tokens=usage["prompt_tokens"],
+                completion_tokens=usage["completion_tokens"],
+            )
+            logger.debug(
+                f"Cost calculation: ${cost_breakdown['total_cost']:.6f} "
+                f"{cost_breakdown['currency']} "
+                f"(pricing: {cost_breakdown['pricing_source']})"
+            )
 
             return LLMResponse(
                 content=content,
                 model=response.model,
                 usage=usage,
                 raw_response=response,
+                cost_breakdown=cost_breakdown,
             )
 
         except anthropic.RateLimitError as e:

@@ -120,34 +120,60 @@ class MonitoringDashboard:
             scanner_table.add_column("Operations", style="green")
             scanner_table.add_column("Avg Duration (s)", style="yellow")
             scanner_table.add_column("Threats Found", style="red")
+            scanner_table.add_column("Token Usage", style="blue")
+            scanner_table.add_column("Est. Cost", style="magenta")
 
-            # Semgrep metrics
-            semgrep_threats = self._get_recent_metric_sum("semgrep_findings_total")
+            # Semgrep metrics - try longer lookback window in case findings are older
+            semgrep_threats = self._get_recent_metric_sum(
+                "semgrep_findings_total", lookback_minutes=180
+            )
             scanner_table.add_row(
                 "Semgrep",
                 str(semgrep_metrics.get("total", 0)),
                 f"{semgrep_metrics.get('avg_duration', 0):.2f}",
                 str(semgrep_threats),
+                "N/A",  # Semgrep doesn't use tokens
+                "N/A",  # Semgrep doesn't have API costs
             )
 
-            # LLM Scanner metrics
-            llm_threats = self._get_recent_metric_sum("llm_findings_total")
+            # LLM Scanner metrics - try longer lookback window
+            llm_threats = self._get_recent_metric_sum(
+                "llm_findings_total", lookback_minutes=180
+            )
+            llm_tokens = self._get_llm_tokens_from_scan_metrics()
+            llm_cost = self._estimate_cost_from_tokens(llm_tokens)
             scanner_table.add_row(
                 "LLM Scanner",
                 str(llm_metrics.get("total", 0)),
                 f"{llm_metrics.get('avg_duration', 0):.2f}",
                 str(llm_threats),
+                f"{llm_tokens:,}" if llm_tokens > 0 else "0",
+                f"${llm_cost:.4f}" if llm_cost > 0 else "$0.00",
             )
 
-            # Validation metrics
+            # Validation metrics - also show total findings processed
             validation_fp = self._get_recent_metric_sum(
                 "llm_validation_false_positives_total"
             )
+            validation_findings = self._get_recent_metric_sum(
+                "llm_validation_findings_total"
+            )
+            # LLM Validator doesn't record separate token metrics
+            validation_tokens = 0
+            validation_cost = 0.0
+
+            # Show both total findings processed and FPs filtered
+            validation_status = (
+                f"{validation_findings} processed, {validation_fp} FP filtered"
+            )
+
             scanner_table.add_row(
                 "LLM Validator",
                 str(validation_metrics.get("total", 0)),
                 f"{validation_metrics.get('avg_duration', 0):.2f}",
-                f"{validation_fp} FP filtered",
+                validation_status,
+                f"{validation_tokens:,}" if validation_tokens > 0 else "0",
+                f"${validation_cost:.4f}" if validation_cost > 0 else "$0.00",
             )
 
             self.console.print(Panel(scanner_table, border_style="blue"))
@@ -395,8 +421,20 @@ class MonitoringDashboard:
             )
             cutoff_time = time.time() - (lookback_minutes * 60)
             recent_data = [d for d in recent_data if d.timestamp >= cutoff_time]
-            return int(sum(d.value for d in recent_data))
-        except Exception:
+            result = int(sum(d.value for d in recent_data))
+
+            # Debug logging for finding zero metrics
+            if metric_name.endswith("_findings_total") and result == 0:
+                total_data = self.metrics_collector.get_metric_history(
+                    metric_name, limit=10
+                )
+                logger.debug(
+                    f"Metric {metric_name}: {result} recent, {len(total_data)} total entries"
+                )
+
+            return result
+        except Exception as e:
+            logger.error(f"Error getting recent metric sum for {metric_name}: {e}")
             return 0
 
     def _get_recent_metric_avg(
@@ -455,6 +493,31 @@ class MonitoringDashboard:
             },
         }
 
+    def _get_llm_tokens_from_scan_metrics(self) -> int:
+        """Get LLM token usage from scan metrics."""
+        try:
+            scan_metrics = self.metrics_collector.get_scan_metrics()
+            return scan_metrics.llm_tokens_consumed
+        except Exception:
+            return 0
+
+    def _estimate_cost_from_tokens(self, total_tokens: int) -> float:
+        """Estimate cost from token usage using default pricing.
+
+        Args:
+            total_tokens: Total number of tokens consumed
+
+        Returns:
+            Estimated cost in USD
+        """
+        if total_tokens <= 0:
+            return 0.0
+
+        # Simple cost estimation - assumes mixed prompt/completion tokens
+        # Using GPT-4 pricing as default: ~$0.02 per 1K tokens (average)
+        estimated_cost_per_1k_tokens = 0.02
+        return (total_tokens * estimated_cost_per_1k_tokens) / 1000
+
     def _generate_error_analytics_data(self) -> dict[str, Any]:
         """Generate error analytics data for export."""
         return {
@@ -477,9 +540,7 @@ class MonitoringDashboard:
             ),
             "cache_hit_rate": self._calculate_cache_hit_rate(),
             "git_operations_total": self._get_recent_metric_sum("git_operations_total"),
-            "total_tokens_processed": self._get_recent_metric_sum(
-                "llm_tokens_processed_total"
-            ),
+            "total_tokens_processed": self._get_llm_tokens_from_scan_metrics(),
         }
 
     def _generate_detailed_metrics_data(self) -> dict[str, Any]:

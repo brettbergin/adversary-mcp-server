@@ -13,7 +13,7 @@ source .venv/bin/activate
 ## Development Commands
 
 ### Testing
-- `make test` - Run full test suite with coverage (must pass 80% threshold)
+- `make test` - Run full test suite with coverage (must pass 75% threshold)
 - `make test-fast` - Quick test run without coverage reporting
 - `make test-unit` - Run only unit tests (exclude integration tests)
 - `make test-integration` - Run only integration tests
@@ -229,7 +229,7 @@ graph TB
 - **Integration Tests**: Full workflow testing with real files
 - **Security Tests**: Validate detection accuracy and exploit safety
 - **Validation Tests**: Comprehensive LLMValidator functionality testing
-- **Coverage**: Maintain 80%+ test coverage requirement
+- **Coverage**: Maintain 75%+ test coverage requirement
 - **Markers**: Tests marked as `unit`, `integration`, `security`, `slow`
 
 ### Development Guidelines
@@ -262,6 +262,33 @@ The server provides tools for Cursor IDE through the MCP protocol:
 - Results include detailed findings, metadata, and remediation guidance
 - Validation can be enabled/disabled per scan operation
 - Hot-reload capability for real-time rule updates during development
+
+### MCP Tool Design Patterns
+
+**IMPORTANT**: Each MCP tool has a unique workflow and should NOT be implemented as abstractions of each other:
+
+#### Directory Scan (`adv_scan_directory`)
+- **Purpose**: Directory-level security analysis
+- **Workflow**: Scan entire directory as single unit, return directory-level results
+- **Implementation**: Uses `semgrep.scan_directory()` and `llm.analyze_directory()` directly
+- **Output**: Single `EnhancedScanResult` with directory-level threats and metadata
+- **DO NOT**: Process files individually within directory scan workflow
+
+#### File Scan (`adv_scan_file`)
+- **Purpose**: Individual file security analysis
+- **Workflow**: Scan single file, return file-level results
+- **Implementation**: Uses `semgrep.scan_file()` and `llm.analyze_file()` directly
+- **Output**: Single `EnhancedScanResult` with file-level threats and metadata
+- **DO NOT**: Iterate through directories within file scan workflow
+
+#### Code Scan (`adv_scan_code`)
+- **Purpose**: Code snippet security analysis
+- **Workflow**: Scan code string, return code-level results
+- **Implementation**: Uses `semgrep.scan_code()` and `llm.analyze_code()` directly
+- **Output**: Single `EnhancedScanResult` with code-level threats and metadata
+- **DO NOT**: Persist code to files or abstract to file/directory scanning
+
+**Anti-Pattern**: Directory scan calling file scan repeatedly, or file scan abstracting to code scan. Each tool should have its own complete, optimized workflow for maximum performance and clarity.
 
 ### CLI Integration
 

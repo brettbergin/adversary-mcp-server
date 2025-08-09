@@ -15,7 +15,8 @@ from ..batch import (
     Language,
 )
 from ..cache import CacheKey, CacheManager, CacheType
-from ..config import get_app_cache_dir
+from ..config import ValidationFallbackMode, get_app_cache_dir
+from ..config_manager import get_config_manager
 from ..credentials import CredentialManager
 from ..llm import LLMClient, LLMProvider, create_llm_client
 from ..logger import get_logger
@@ -104,6 +105,8 @@ class LLMValidator:
         logger.info("Initializing LLMValidator")
         self.credential_manager = credential_manager
         self.config = credential_manager.load_config()
+        self.config_manager = get_config_manager()
+        self.dynamic_limits = self.config_manager.dynamic_limits
         self.exploit_generator = ExploitGenerator(credential_manager)
         self.llm_client: LLMClient | None = None
         self.metrics_collector = metrics_collector
@@ -112,68 +115,62 @@ class LLMValidator:
         # Initialize cache manager if not provided (robust to mocked configs)
         try:
             enable_caching_flag = bool(getattr(self.config, "enable_caching", True))
-        except Exception:
+        except (AttributeError, TypeError) as e:
+            logger.debug(f"Error reading enable_caching config, using default: {e}")
             enable_caching_flag = True
 
         if cache_manager is None and enable_caching_flag:
             cache_dir = get_app_cache_dir()
-            try:
-                max_size_mb_val = getattr(self.config, "cache_max_size_mb", 100)
-                max_size_mb_num = (
-                    int(max_size_mb_val) if max_size_mb_val is not None else 100
-                )
-            except Exception:
-                max_size_mb_num = 100
-            try:
-                max_age_hours_val = getattr(self.config, "cache_max_age_hours", 24)
-                max_age_hours_num = (
-                    int(max_age_hours_val) if max_age_hours_val is not None else 24
-                )
-            except Exception:
-                max_age_hours_num = 24
+            # Use dynamic configuration for cache settings
             self.cache_manager = CacheManager(
                 cache_dir=cache_dir,
-                max_size_mb=max_size_mb_num,
-                max_age_hours=max_age_hours_num,
+                max_size_mb=self.dynamic_limits.cache_max_size_mb,
+                max_age_hours=self.dynamic_limits.cache_max_age_hours,
             )
-            logger.info(f"Initialized cache manager for validator at {cache_dir}")
-
-        # Initialize intelligent batch processor for validation
-        # Safely coerce config values that may be mocked
-        try:
-            llm_batch_size_val = getattr(self.config, "llm_batch_size", 5)
-            llm_batch_size_num = (
-                int(llm_batch_size_val) if llm_batch_size_val is not None else 5
+            logger.info(
+                f"Initialized cache manager for validator at {cache_dir} "
+                f"(size: {self.dynamic_limits.cache_max_size_mb}MB, "
+                f"age: {self.dynamic_limits.cache_max_age_hours}h)"
             )
-        except Exception:
-            llm_batch_size_num = 5
 
+        # Initialize intelligent batch processor for validation using dynamic config
         batch_config = BatchConfig(
             strategy=BatchStrategy.TOKEN_BASED,  # Token-based is best for validation
             min_batch_size=1,
             max_batch_size=min(
-                10, llm_batch_size_num
-            ),  # Smaller batches for validation
-            target_tokens_per_batch=50000,  # Smaller token limit for validation
-            max_tokens_per_batch=80000,
-            batch_timeout_seconds=180,  # 3 minutes for validation
-            max_concurrent_batches=2,  # Conservative concurrency for validation
+                self.dynamic_limits.llm_max_batch_size, 10
+            ),  # Use dynamic batch size with validation cap
+            target_tokens_per_batch=min(
+                self.dynamic_limits.llm_target_tokens, 50000
+            ),  # Smaller token limit for validation
+            max_tokens_per_batch=self.dynamic_limits.llm_max_tokens,
+            batch_timeout_seconds=self.dynamic_limits.batch_timeout_seconds,
+            max_concurrent_batches=self.dynamic_limits.max_concurrent_batches,
             group_by_language=False,  # Don't group by language for validation
             group_by_complexity=True,  # Group by complexity for better analysis
         )
         self.batch_processor = BatchProcessor(batch_config, self.metrics_collector)
         logger.info(
-            "Initialized BatchProcessor for validation with token-based strategy"
+            f"Initialized BatchProcessor for validation - "
+            f"Profile: {self.config_manager.profile.value}, "
+            f"Tier: {self.config_manager.resource_tier.value}, "
+            f"Max batch size: {batch_config.max_batch_size}, "
+            f"Timeout: {batch_config.batch_timeout_seconds}s"
         )
 
-        # Initialize ErrorHandler for validation resilience
+        # Initialize ErrorHandler for validation resilience using dynamic config
         resilience_config = ResilienceConfig(
             enable_circuit_breaker=True,
-            failure_threshold=2,  # Lower threshold for validation
-            recovery_timeout_seconds=90,  # Faster recovery for validation
+            failure_threshold=max(
+                2, self.dynamic_limits.circuit_breaker_failure_threshold // 2
+            ),  # Lower threshold for validation
+            recovery_timeout_seconds=self.dynamic_limits.recovery_timeout_seconds,
             enable_retry=True,
-            max_retry_attempts=2,  # Fewer retries for validation
-            base_delay_seconds=2.0,  # Longer base delay
+            max_retry_attempts=min(
+                2, self.dynamic_limits.max_retry_attempts
+            ),  # Conservative retries for validation
+            base_delay_seconds=self.dynamic_limits.retry_base_delay
+            * 2,  # Longer base delay for validation
             enable_graceful_degradation=True,
         )
         self.error_handler = ErrorHandler(resilience_config, self.metrics_collector)
@@ -231,7 +228,19 @@ class LLMValidator:
             return {}
 
         if not self.llm_client:
-            logger.warning("LLM client not initialized, returning unvalidated results")
+            logger.warning(
+                "LLM client not initialized - using security-first fallback for validation",
+                extra={
+                    "finding_count": len(findings),
+                    "finding_severities": [f.severity.value for f in findings],
+                    "fallback_mode": getattr(
+                        self.config, "validation_fallback_mode", "security_first"
+                    ),
+                    "security_impact": "medium",
+                    "component": "llm_validator",
+                    "action": "using_security_first_fallback",
+                },
+            )
             # Return default results when LLM not available
             return self._create_default_results(
                 findings, generate_exploits, source_code
@@ -605,18 +614,22 @@ class LLMValidator:
             return batch_results
 
         except Exception as e:
-            logger.error(f"Batch validation failed: {e}")
-            # Create default results for failed batch
-            default_results = {}
-            for finding in batch_findings:
-                default_results[finding.uuid] = ValidationResult(
-                    finding_uuid=finding.uuid,
-                    is_legitimate=True,  # Fail open - keep finding if validation fails
-                    confidence=0.5,
-                    reasoning="Validation failed, keeping finding as precaution",
-                    validation_error=str(e),
-                )
-            return default_results
+            logger.error(
+                "Batch validation failed - security impact: findings will default to legitimate",
+                extra={
+                    "error_type": type(e).__name__,
+                    "error_message": str(e),
+                    "batch_size": len(batch_findings),
+                    "finding_severities": [f.severity.value for f in batch_findings],
+                    "finding_categories": [f.category.value for f in batch_findings],
+                    "file_path": file_path,
+                    "security_impact": "high",
+                    "component": "llm_validator",
+                },
+            )
+            # Create default results for failed batch using security-first fallback
+            logger.warning("Using security-first fallback for failed validation batch")
+            return self._create_default_results(batch_findings, False, "")
 
     async def _generate_exploits_for_batch(
         self,
@@ -663,6 +676,9 @@ class LLMValidator:
     ) -> dict[str, ValidationResult]:
         """Create default validation results when LLM is not available.
 
+        Uses security-first approach based on configuration, considering finding severity
+        and confidence to make intelligent fallback decisions.
+
         Args:
             findings: List of findings
             generate_exploits: Whether to generate exploits
@@ -673,16 +689,44 @@ class LLMValidator:
         """
         validation_results = {}
 
+        # Get validation fallback configuration
+        fallback_mode = getattr(
+            self.config,
+            "validation_fallback_mode",
+            ValidationFallbackMode.SECURITY_FIRST,
+        )
+        confidence_threshold = getattr(
+            self.config, "fallback_confidence_threshold", 0.7
+        )
+        high_severity_always_suspicious = getattr(
+            self.config, "high_severity_always_suspicious", True
+        )
+
+        if isinstance(fallback_mode, str):
+            # Handle case where config is still a string
+            try:
+                fallback_mode = ValidationFallbackMode(fallback_mode)
+            except ValueError:
+                fallback_mode = ValidationFallbackMode.SECURITY_FIRST
+
         for finding in findings:
+            # Determine if finding should be considered legitimate based on fallback mode
+            is_legitimate, confidence, reasoning = self._determine_fallback_legitimacy(
+                finding,
+                fallback_mode,
+                confidence_threshold,
+                high_severity_always_suspicious,
+            )
+
             validation_results[finding.uuid] = ValidationResult(
                 finding_uuid=finding.uuid,
-                is_legitimate=True,  # Default to legitimate when no validation available
-                confidence=0.7,  # Medium-high confidence as default
-                reasoning="LLM validation not available, finding kept as precaution",
+                is_legitimate=is_legitimate,
+                confidence=confidence,
+                reasoning=reasoning,
                 validation_error="LLM client not initialized",
             )
 
-            # Still try to generate exploit POC if available
+            # Generate exploit POC if requested and available
             if generate_exploits and self.exploit_generator.is_llm_available():
                 try:
                     exploit_poc = self.exploit_generator.generate_exploits(
@@ -691,9 +735,101 @@ class LLMValidator:
                     if exploit_poc:
                         validation_results[finding.uuid].exploit_poc = exploit_poc
                 except Exception as e:
-                    logger.warning(f"Failed to generate exploit POC: {e}")
+                    logger.warning(
+                        f"Failed to generate exploit POC: {type(e).__name__}: {e}"
+                    )
 
         return validation_results
+
+    def _determine_fallback_legitimacy(
+        self,
+        finding: ThreatMatch,
+        fallback_mode: ValidationFallbackMode,
+        confidence_threshold: float,
+        high_severity_always_suspicious: bool,
+    ) -> tuple[bool, float, str]:
+        """Determine legitimacy, confidence, and reasoning for fallback validation.
+
+        Args:
+            finding: The security finding to evaluate
+            fallback_mode: Configured fallback behavior mode
+            confidence_threshold: Confidence threshold for decision making
+            high_severity_always_suspicious: Whether high severity findings are always suspicious
+
+        Returns:
+            Tuple of (is_legitimate, confidence, reasoning)
+        """
+        if fallback_mode == ValidationFallbackMode.SECURITY_FIRST:
+            # Security-first: default to suspicious, especially for high severity
+            if high_severity_always_suspicious and finding.severity in [
+                Severity.CRITICAL,
+                Severity.HIGH,
+            ]:
+                return (
+                    False,  # Not legitimate (suspicious)
+                    0.8,  # High confidence in being suspicious
+                    f"LLM validation unavailable. {finding.severity.value.upper()} severity finding "
+                    f"treated as suspicious for security (fallback mode: security-first)",
+                )
+            elif finding.confidence >= confidence_threshold:
+                return (
+                    False,  # Not legitimate (suspicious)
+                    min(0.9, finding.confidence + 0.1),
+                    f"LLM validation unavailable. High-confidence ({finding.confidence:.2f}) finding "
+                    f"treated as suspicious for security (fallback mode: security-first)",
+                )
+            else:
+                return (
+                    True,  # Legitimate (low confidence finding)
+                    max(0.3, finding.confidence - 0.2),
+                    f"LLM validation unavailable. Low-confidence ({finding.confidence:.2f}) finding "
+                    f"treated as likely legitimate (fallback mode: security-first)",
+                )
+
+        elif fallback_mode == ValidationFallbackMode.OPTIMISTIC:
+            # Optimistic: default to legitimate (original behavior)
+            return (
+                True,
+                confidence_threshold,
+                "LLM validation unavailable. Finding treated as legitimate "
+                "(fallback mode: optimistic)",
+            )
+
+        elif fallback_mode == ValidationFallbackMode.MIXED:
+            # Mixed: use severity and confidence to decide
+            severity_weight = {
+                Severity.CRITICAL: 0.9,
+                Severity.HIGH: 0.8,
+                Severity.MEDIUM: 0.6,
+                Severity.LOW: 0.4,
+            }.get(finding.severity, 0.5)
+
+            combined_score = (finding.confidence * 0.6) + (severity_weight * 0.4)
+
+            if combined_score >= confidence_threshold:
+                return (
+                    False,  # Suspicious
+                    combined_score,
+                    f"LLM validation unavailable. Combined severity ({finding.severity.value}) "
+                    f"and confidence ({finding.confidence:.2f}) score {combined_score:.2f} "
+                    f"exceeds threshold {confidence_threshold:.2f} (fallback mode: mixed)",
+                )
+            else:
+                return (
+                    True,  # Legitimate
+                    max(0.3, 1.0 - combined_score),
+                    f"LLM validation unavailable. Combined severity ({finding.severity.value}) "
+                    f"and confidence ({finding.confidence:.2f}) score {combined_score:.2f} "
+                    f"below threshold {confidence_threshold:.2f} (fallback mode: mixed)",
+                )
+
+        # Default fallback (should not reach here)
+        return (
+            False,  # Default to suspicious for security
+            0.5,
+            f"LLM validation unavailable. Using default security-first behavior "
+            f"(unknown fallback mode: {fallback_mode})",
+        )
 
     def create_validation_prompt(
         self, findings: list[ThreatMatch], source_code: str, file_path: str
@@ -741,9 +877,27 @@ class LLMValidator:
             logger.warning("Empty validation response")
             return {}
 
+        # Debug: Log the first 500 chars of response to understand format
+        logger.debug(
+            f"Raw validation response (first 500 chars): {response_text[:500]}"
+        )
+        logger.debug(
+            f"Raw validation response (last 100 chars): {response_text[-100:]}"
+        )
+        logger.debug(f"Response starts with: {repr(response_text[:20])}")
+
         try:
-            # Parse JSON response
-            data = json.loads(response_text)
+            # Parse JSON response using LLM client's validation method (handles markdown code blocks)
+            if self.llm_client:
+                data = self.llm_client.validate_json_response(response_text)
+            else:
+                # Fallback: Handle markdown code blocks manually if no LLM client
+                response_text_clean = response_text.strip()
+                if response_text_clean.startswith("```"):
+                    lines = response_text_clean.split("\n")
+                    if lines[0].startswith("```") and lines[-1] == "```":
+                        response_text_clean = "\n".join(lines[1:-1])
+                data = json.loads(response_text_clean)
             validations = data.get("validations", [])
 
             results = {}

@@ -8,6 +8,7 @@ from typing import Any
 
 from ..cache import CacheKey, CacheManager, CacheType, SerializableThreatMatch
 from ..config import get_app_cache_dir
+from ..config_manager import get_config_manager
 from ..credentials import CredentialManager, get_credential_manager
 from ..logger import get_logger
 from ..monitoring import MetricsCollector
@@ -32,6 +33,7 @@ class EnhancedScanResult:
         semgrep_threats: list[ThreatMatch],
         scan_metadata: dict[str, Any],
         validation_results: dict[str, Any] | None = None,
+        llm_usage_stats: dict[str, Any] | None = None,
     ):
         """Initialize enhanced scan result.
 
@@ -41,6 +43,7 @@ class EnhancedScanResult:
             semgrep_threats: Threats found by Semgrep analysis
             scan_metadata: Metadata about the scan
             validation_results: Optional validation results from LLM validator
+            llm_usage_stats: Optional LLM usage statistics (tokens, cost, etc.)
         """
         self.file_path = file_path
         # Auto-detect language from file path
@@ -49,12 +52,49 @@ class EnhancedScanResult:
         self.semgrep_threats = semgrep_threats
         self.scan_metadata = scan_metadata
         self.validation_results = validation_results or {}
+        self.llm_usage_stats = llm_usage_stats or self._create_default_usage_stats()
 
         # Combine and deduplicate threats
         self.all_threats = self._combine_threats()
 
         # Calculate statistics
         self.stats = self._calculate_stats()
+
+    def _create_default_usage_stats(self) -> dict[str, Any]:
+        """Create default LLM usage statistics structure.
+
+        Returns:
+            Dictionary with default usage statistics
+        """
+        return {
+            "analysis": {
+                "total_tokens": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_cost": 0.0,
+                "currency": "USD",
+                "api_calls": 0,
+                "models_used": [],
+            },
+            "validation": {
+                "total_tokens": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_cost": 0.0,
+                "currency": "USD",
+                "api_calls": 0,
+                "models_used": [],
+            },
+            "combined": {
+                "total_tokens": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_cost": 0.0,
+                "currency": "USD",
+                "api_calls": 0,
+                "models_used": [],
+            },
+        }
 
     def _detect_language_from_path(self, file_path: str) -> str:
         """Simple language detection for compatibility (not used for actual analysis).
@@ -156,6 +196,47 @@ class EnhancedScanResult:
         """
         return [t for t in self.all_threats if t.severity == Severity.CRITICAL]
 
+    def add_llm_usage(self, usage_type: str, cost_breakdown: dict[str, Any]) -> None:
+        """Add LLM usage data to statistics.
+
+        Args:
+            usage_type: Type of usage ('analysis' or 'validation')
+            cost_breakdown: Cost breakdown from PricingManager
+        """
+        if usage_type not in self.llm_usage_stats:
+            logger.warning(f"Unknown usage type: {usage_type}")
+            return
+
+        usage_section = self.llm_usage_stats[usage_type]
+        tokens = cost_breakdown.get("tokens", {})
+
+        # Add to specific section
+        usage_section["total_tokens"] += tokens.get("total_tokens", 0)
+        usage_section["prompt_tokens"] += tokens.get("prompt_tokens", 0)
+        usage_section["completion_tokens"] += tokens.get("completion_tokens", 0)
+        usage_section["total_cost"] += cost_breakdown.get("total_cost", 0.0)
+        usage_section["api_calls"] += 1
+
+        model = cost_breakdown.get("model")
+        if model and model not in usage_section["models_used"]:
+            usage_section["models_used"].append(model)
+
+        # Update combined totals
+        combined = self.llm_usage_stats["combined"]
+        combined["total_tokens"] += tokens.get("total_tokens", 0)
+        combined["prompt_tokens"] += tokens.get("prompt_tokens", 0)
+        combined["completion_tokens"] += tokens.get("completion_tokens", 0)
+        combined["total_cost"] += cost_breakdown.get("total_cost", 0.0)
+        combined["api_calls"] += 1
+
+        if model and model not in combined["models_used"]:
+            combined["models_used"].append(model)
+
+        logger.debug(
+            f"Added {usage_type} usage: {tokens.get('total_tokens', 0)} tokens, "
+            f"${cost_breakdown.get('total_cost', 0.0):.6f}"
+        )
+
     def get_validation_summary(self) -> dict[str, Any]:
         """Get validation summary for this scan result.
 
@@ -235,6 +316,7 @@ class ScanEngine:
         self.credential_manager = credential_manager or get_credential_manager()
         self.cache_manager = cache_manager
         self.metrics_collector = metrics_collector
+        self.config_manager = get_config_manager()
         logger.debug("Initialized core components")
 
         # Load configuration
@@ -248,21 +330,9 @@ class ScanEngine:
 
         if cache_manager is None and enable_caching_flag:
             cache_dir = get_app_cache_dir()
-            # Safely coerce cache sizing parameters
-            try:
-                max_size_mb_val = getattr(config, "cache_max_size_mb", 100)
-                max_size_mb_num = (
-                    int(max_size_mb_val) if max_size_mb_val is not None else 100
-                )
-            except Exception:
-                max_size_mb_num = 100
-            try:
-                max_age_hours_val = getattr(config, "cache_max_age_hours", 24)
-                max_age_hours_num = (
-                    int(max_age_hours_val) if max_age_hours_val is not None else 24
-                )
-            except Exception:
-                max_age_hours_num = 24
+            # Use dynamic limits for cache configuration
+            max_size_mb_num = self.config_manager.dynamic_limits.cache_max_size_mb
+            max_age_hours_num = self.config_manager.dynamic_limits.cache_max_age_hours
 
             self.cache_manager = CacheManager(
                 cache_dir=cache_dir,
@@ -275,11 +345,11 @@ class ScanEngine:
         # Initialize ErrorHandler for scan engine resilience
         resilience_config = ResilienceConfig(
             enable_circuit_breaker=True,
-            failure_threshold=5,  # Higher threshold for scan engine
-            recovery_timeout_seconds=120,  # 2 minutes for scan recovery
+            failure_threshold=self.config_manager.dynamic_limits.circuit_breaker_failure_threshold,
+            recovery_timeout_seconds=self.config_manager.dynamic_limits.recovery_timeout_seconds,
             enable_retry=True,
-            max_retry_attempts=2,  # Conservative retries for scanning
-            base_delay_seconds=3.0,
+            max_retry_attempts=self.config_manager.dynamic_limits.max_retry_attempts,
+            base_delay_seconds=self.config_manager.dynamic_limits.retry_base_delay,
             enable_graceful_degradation=True,
         )
         self.error_handler = ErrorHandler(resilience_config)
@@ -829,12 +899,14 @@ class ScanEngine:
                 logger.debug("Reason: self.llm_validator is None or falsy")
                 scan_metadata["llm_validation_reason"] = "not_available"
 
+        # Create enhanced scan result with LLM usage tracking
         result = EnhancedScanResult(
             file_path=file_path,
             llm_threats=llm_threats,
             semgrep_threats=semgrep_threats,
             scan_metadata=scan_metadata,
             validation_results=validation_results,
+            llm_usage_stats=None,  # Will be populated by LLM components
         )
 
         # Cache the scan result if caching is enabled
@@ -1155,6 +1227,7 @@ class ScanEngine:
             semgrep_threats=semgrep_threats,
             scan_metadata=scan_metadata,
             validation_results=validation_results,
+            llm_usage_stats=None,  # Will be populated by LLM components
         )
 
         logger.info(
@@ -1393,104 +1466,74 @@ class ScanEngine:
                 "llm_scan_reason": reason,
             }
 
-        # Process files in parallel with concurrency control
-        logger.info(f"Processing {len(files_to_scan)} files in parallel...")
-
-        # Handle case when no files to scan
-        if not files_to_scan:
-            logger.info("No files to scan after filtering")
-            return []
-
-        # Create a semaphore to limit concurrent operations
-        try:
-            cpu_count_val = os.cpu_count() or 4
-        except Exception:
-            cpu_count_val = 4
-        max_workers = min(32, int(cpu_count_val) + 4, len(files_to_scan))
-        semaphore = asyncio.Semaphore(max_workers)
-        logger.info(f"Using {max_workers} parallel workers")
-
-        # Create tasks for parallel processing
-        tasks = []
-        for file_path in files_to_scan:
-            task = self._process_single_file(
-                file_path=file_path,
-                directory_semgrep_threats=directory_semgrep_threats,
-                directory_llm_threats=directory_llm_threats,
-                semgrep_scan_metadata=semgrep_scan_metadata,
-                llm_scan_metadata=llm_scan_metadata,
-                semgrep_status=semgrep_status,
-                use_llm=use_llm,
-                use_semgrep=use_semgrep,
-                use_validation=use_validation,
-                severity_threshold=severity_threshold,
-                semaphore=semaphore,
-            )
-            tasks.append(task)
-
-        # Execute tasks in batches to avoid overwhelming memory
-        batch_size = min(max_workers * 2, 50)  # Process in batches
-        final_results: list[EnhancedScanResult] = []
-        successful_scans = 0
-        failed_scans = 0
-
-        logger.info(f"Processing {len(tasks)} tasks in batches of {batch_size}")
-
-        for i in range(0, len(tasks), batch_size):
-            batch_tasks = tasks[i : i + batch_size]
-            batch_files = files_to_scan[i : i + batch_size]
-
-            logger.debug(
-                f"Processing batch {i//batch_size + 1}: files {i+1}-{min(i+batch_size, len(tasks))}"
-            )
-
-            # Execute current batch
-            batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
-
-            # Process batch results
-            for j, result in enumerate(batch_results):
-                if isinstance(result, Exception):
-                    logger.error(f"Failed to process file {batch_files[j]}: {result}")
-                    failed_scans += 1
-                    # Create error result
-                    error_result = EnhancedScanResult(
-                        file_path=str(batch_files[j]),
-                        llm_threats=[],
-                        semgrep_threats=[],
-                        scan_metadata={
-                            "file_path": str(batch_files[j]),
-                            "error": str(result),
-                            "directory_scan": True,
-                            "parallel_processing": True,
-                            "batch_processing": True,
-                            **semgrep_scan_metadata,
-                            **llm_scan_metadata,
-                        },
-                    )
-                    final_results.append(error_result)
-                elif isinstance(result, EnhancedScanResult):
-                    successful_scans += 1
-                    final_results.append(result)
-                else:
-                    # This shouldn't happen, but handle it gracefully
-                    logger.warning(
-                        f"Unexpected result type for {batch_files[j]}: {type(result)}"
-                    )
-                    failed_scans += 1
-
-            # Log progress after each batch
-            logger.info(
-                f"Completed batch {i//batch_size + 1}/{(len(tasks) + batch_size - 1)//batch_size}"
-            )
-
-            # Optional: Yield results incrementally (for future streaming support)
-            # This could be expanded to yield batches to the caller
-
+        # Return directory-level scan results directly
         logger.info(
-            f"=== Parallel directory scan complete - Processed {len(final_results)} files "
-            f"(Success: {successful_scans}, Failed: {failed_scans}) in {(len(tasks) + batch_size - 1)//batch_size} batches ==="
+            "=== Directory scan complete - returning directory-level results ==="
         )
-        return final_results
+
+        # Combine all threats from directory scans
+        all_threats = []
+        all_threats.extend(
+            all_semgrep_threats if "all_semgrep_threats" in locals() else []
+        )
+        all_threats.extend(
+            all_llm_threats if "all_llm_threats" in locals() and use_llm else []
+        )
+
+        # Build file information for proper metrics
+        files_with_threats = set()
+        for threat in all_threats:
+            if hasattr(threat, "file_path"):
+                files_with_threats.add(threat.file_path)
+
+        # Create file information list for JSON metrics
+        files_info = []
+        for file_path in files_to_scan:
+            file_threat_count = sum(
+                1
+                for t in all_threats
+                if hasattr(t, "file_path") and t.file_path == str(file_path)
+            )
+            files_info.append(
+                {
+                    "file_path": str(file_path),
+                    "language": (
+                        self._detect_language(file_path)
+                        if file_path.exists()
+                        else "generic"
+                    ),
+                    "threat_count": file_threat_count,
+                    "issues_identified": file_threat_count > 0,
+                }
+            )
+
+        # Create single directory-level result
+        directory_result = EnhancedScanResult(
+            file_path=str(directory_path),
+            semgrep_threats=(
+                all_semgrep_threats if "all_semgrep_threats" in locals() else []
+            ),
+            llm_threats=(
+                all_llm_threats if "all_llm_threats" in locals() and use_llm else []
+            ),
+            scan_metadata={
+                "directory_path": str(directory_path),
+                "directory_scan": True,
+                "total_files_discovered": len(all_files),
+                "files_filtered_for_scan": len(files_to_scan),
+                "files_with_threats": len(files_with_threats),
+                "files_clean": len(files_to_scan) - len(files_with_threats),
+                "total_threats_found": len(all_threats),
+                "scan_type": "directory_level",
+                "directory_files_info": files_info,  # For proper JSON metrics
+                **semgrep_scan_metadata,
+                **llm_scan_metadata,
+            },
+            llm_usage_stats=None,  # TODO: Add LLM usage stats if needed
+        )
+
+        logger.info(f"Directory scan found {len(all_threats)} total threats")
+        return [directory_result]
 
     async def _process_single_file(
         self,
@@ -1664,6 +1707,7 @@ class ScanEngine:
                 semgrep_threats=file_semgrep_threats,
                 scan_metadata=scan_metadata,
                 validation_results=validation_results,
+                llm_usage_stats=None,  # Will be populated by LLM components
             )
 
             return result
@@ -1797,6 +1841,7 @@ class ScanEngine:
                             "streaming_scan": True,
                             "batch_processing": True,
                         },
+                        llm_usage_stats=None,
                     )
                     yield error_result
                 else:
@@ -1938,6 +1983,7 @@ class ScanEngine:
             "scan_metadata": result.scan_metadata,
             "validation_results": result.validation_results,
             "stats": result.stats,
+            "llm_usage_stats": result.llm_usage_stats,
         }
 
     def _deserialize_scan_result(self, cached_data: dict) -> EnhancedScanResult:
@@ -1959,6 +2005,7 @@ class ScanEngine:
             semgrep_threats=semgrep_threats,
             scan_metadata=cached_data.get("scan_metadata", {}),
             validation_results=cached_data.get("validation_results", {}),
+            llm_usage_stats=cached_data.get("llm_usage_stats"),
         )
 
         # Manually set computed properties that might not recompute correctly

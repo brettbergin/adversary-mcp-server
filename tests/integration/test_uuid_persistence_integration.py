@@ -43,7 +43,18 @@ def render_template(user_input):
     @pytest.fixture
     def server(self):
         """Create server instance with mocked scan engines."""
-        return AdversaryMCPServer()
+        with patch(
+            "adversary_mcp_server.scanner.semgrep_scanner.OptimizedSemgrepScanner.get_status"
+        ) as mock_status:
+            # Mock semgrep status to avoid subprocess calls
+            mock_status.return_value = {
+                "semgrep_installed": True,
+                "semgrep_version": "1.0.0",
+                "semgrep_path": "/mock/semgrep",
+                "config_status": "loaded",
+            }
+            server = AdversaryMCPServer()
+            yield server
 
     def create_mock_scan_results(self, file_path: str):
         """Create consistent mock scan results that would be found in the test file."""
@@ -391,6 +402,7 @@ query = f"SELECT * FROM users WHERE id = {user_id}"
                 await server._handle_scan_code(
                     {
                         "content": test_code,
+                        "path": str(temp_project_dir),
                     }
                 )
 
@@ -404,6 +416,7 @@ query = f"SELECT * FROM users WHERE id = {user_id}"
                 await server._handle_scan_code(
                     {
                         "content": test_code,
+                        "path": str(temp_project_dir),
                     }
                 )
 

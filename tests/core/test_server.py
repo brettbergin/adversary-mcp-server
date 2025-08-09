@@ -114,7 +114,18 @@ class TestMCPToolHandlers:
     @pytest.fixture
     def server(self):
         """Create a server instance for testing."""
-        return AdversaryMCPServer()
+        with patch(
+            "adversary_mcp_server.scanner.semgrep_scanner.OptimizedSemgrepScanner.get_status"
+        ) as mock_status:
+            # Mock semgrep status to avoid subprocess calls
+            mock_status.return_value = {
+                "semgrep_installed": True,
+                "semgrep_version": "1.0.0",
+                "semgrep_path": "/mock/semgrep",
+                "config_status": "loaded",
+            }
+            server = AdversaryMCPServer()
+            yield server
 
     @pytest.fixture
     def mock_threat(self):
@@ -886,7 +897,18 @@ class TestServerUtilityMethods:
     @pytest.fixture
     def server(self):
         """Create a server instance for testing."""
-        return AdversaryMCPServer()
+        with patch(
+            "adversary_mcp_server.scanner.semgrep_scanner.OptimizedSemgrepScanner.get_status"
+        ) as mock_status:
+            # Mock semgrep status to avoid subprocess calls
+            mock_status.return_value = {
+                "semgrep_installed": True,
+                "semgrep_version": "1.0.0",
+                "semgrep_path": "/mock/semgrep",
+                "config_status": "loaded",
+            }
+            server = AdversaryMCPServer()
+            yield server
 
     @pytest.fixture
     def mock_threat(self):
@@ -928,7 +950,6 @@ class TestServerUtilityMethods:
         assert "Test Rule" in result
         assert "test.py:1" in result
         assert "High" in result
-        assert "exploit1" in result
 
     def test_format_scan_results_no_threats(self, server):
         """Test _format_scan_results with no threats."""

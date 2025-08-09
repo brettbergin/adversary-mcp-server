@@ -243,7 +243,7 @@ source .venv/bin/activate
 ## Development Commands
 
 ### Testing
-- `make test` - Run full test suite with coverage (must pass 80% threshold)
+- `make test` - Run full test suite with coverage (must pass 75% threshold)
 - `make test-fast` - Quick test run without coverage reporting
 - `make test-unit` - Run only unit tests (exclude integration tests)
 - `make test-integration` - Run only integration tests

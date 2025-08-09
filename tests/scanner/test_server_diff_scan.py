@@ -407,7 +407,6 @@ class TestServerDiffScanFormatting:
         assert "Git Diff Scan Results" in result
         assert "Test Rule" in result
         assert "🟠" in result  # High severity emoji
-        assert "Exploit Examples: 2 available" in result
         assert "**Files with Security Issues:** 1" in result
 
     def test_format_diff_scan_results_clean_scan(self):

@@ -5,6 +5,7 @@ import re
 import time
 from pathlib import Path
 
+from ..config_manager import get_config_manager
 from ..logger import get_logger
 from ..resilience import ErrorHandler, ResilienceConfig
 from .scan_engine import EnhancedScanResult, ScanEngine
@@ -228,17 +229,20 @@ class GitDiffScanner:
         self.working_dir = working_dir or Path.cwd()
         self.parser = GitDiffParser()
         self.metrics_collector = metrics_collector
+        self.config_manager = get_config_manager()
 
         # Initialize ErrorHandler for git command resilience
         resilience_config = ResilienceConfig(
             enable_circuit_breaker=True,
-            failure_threshold=3,
-            recovery_timeout_seconds=30,
+            failure_threshold=self.config_manager.dynamic_limits.circuit_breaker_failure_threshold,
+            recovery_timeout_seconds=self.config_manager.dynamic_limits.circuit_breaker_recovery_timeout,
             enable_retry=True,
-            max_retry_attempts=2,
-            base_delay_seconds=1.0,
+            max_retry_attempts=self.config_manager.dynamic_limits.max_retry_attempts,
+            base_delay_seconds=self.config_manager.dynamic_limits.retry_base_delay,
             enable_graceful_degradation=True,
-            default_timeout_seconds=30.0,
+            default_timeout_seconds=float(
+                self.config_manager.dynamic_limits.scan_timeout_seconds
+            ),
         )
         self.error_handler = ErrorHandler(resilience_config, self.metrics_collector)
 
@@ -285,7 +289,10 @@ class GitDiffScanner:
             )
             try:
                 stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(), timeout=30.0
+                    proc.communicate(),
+                    timeout=float(
+                        self.config_manager.dynamic_limits.scan_timeout_seconds
+                    ),
                 )
                 if proc.returncode == 0:
                     return stdout.decode("utf-8")

@@ -176,6 +176,11 @@ class TestLLMValidator:
             )
         ]
 
+        # Set fallback mode to optimistic for this test
+        from adversary_mcp_server.config import ValidationFallbackMode
+
+        validator.config.validation_fallback_mode = ValidationFallbackMode.OPTIMISTIC
+
         # Mock exploit generator
         validator.exploit_generator.is_llm_available.return_value = True
         validator.exploit_generator.generate_exploits.return_value = ["test exploit"]
@@ -507,9 +512,12 @@ class TestLLMValidator:
     async def test_validate_findings_llm_unavailable(self, mock_credential_manager):
         """Test validate_findings when LLM client is not available."""
         # Create validator without LLM client
+        from adversary_mcp_server.config import ValidationFallbackMode
+
         mock_config = SecurityConfig(
             enable_llm_validation=False, llm_provider=None, llm_api_key=None
         )
+        mock_config.validation_fallback_mode = ValidationFallbackMode.OPTIMISTIC
         mock_credential_manager.load_config.return_value = mock_config
 
         with patch("adversary_mcp_server.scanner.llm_validator.ExploitGenerator"):
@@ -536,15 +544,22 @@ class TestLLMValidator:
             assert len(results) == 1
             assert "test-uuid-1" in results
             assert results["test-uuid-1"].is_legitimate is True
-            assert results["test-uuid-1"].confidence == 0.5  # Exception path confidence
             assert (
-                "Validation failed, keeping finding as precaution"
+                results["test-uuid-1"].confidence == 0.7
+            )  # Optimistic fallback confidence
+            assert (
+                "LLM validation unavailable. Finding treated as legitimate (fallback mode: optimistic)"
                 in results["test-uuid-1"].reasoning
             )
 
     @pytest.mark.asyncio
     async def test_validate_findings_api_error(self, validator):
         """Test validate_findings when LLM API call fails."""
+        # Set fallback mode to optimistic for this test
+        from adversary_mcp_server.config import ValidationFallbackMode
+
+        validator.config.validation_fallback_mode = ValidationFallbackMode.OPTIMISTIC
+
         findings = [
             ThreatMatch(
                 rule_id="test-rule",
@@ -573,9 +588,9 @@ class TestLLMValidator:
         assert len(results) == 1
         assert "test-uuid-1" in results
         assert results["test-uuid-1"].is_legitimate is True
-        assert results["test-uuid-1"].confidence == 0.5
+        assert results["test-uuid-1"].confidence == 0.7
         assert (
-            "Validation failed, keeping finding as precaution"
+            "LLM validation unavailable. Finding treated as legitimate (fallback mode: optimistic)"
             in results["test-uuid-1"].reasoning
         )
 
@@ -646,8 +661,11 @@ class TestLLMValidatorSyncWrapper:
     def test_validate_findings_no_llm_client_default_results(self):
         """Test validate_findings returns default results when LLM client not available."""
         mock_manager = Mock()
+        from adversary_mcp_server.config import ValidationFallbackMode
+
         mock_config = SecurityConfig()
         mock_config.llm_provider = None  # No LLM provider
+        mock_config.validation_fallback_mode = ValidationFallbackMode.OPTIMISTIC
         mock_manager.load_config.return_value = mock_config
 
         validator = LLMValidator(mock_manager)
@@ -670,7 +688,7 @@ class TestLLMValidatorSyncWrapper:
         assert "test-uuid" in result
         assert result["test-uuid"].is_legitimate is True
         assert result["test-uuid"].confidence == 0.7
-        assert "LLM validation not available" in result["test-uuid"].reasoning
+        assert "LLM validation unavailable" in result["test-uuid"].reasoning
 
     def test_validate_findings_empty_findings_list(self):
         """Test validate_findings with empty findings list."""
@@ -799,7 +817,10 @@ class TestLLMValidatorEdgeCases:
     def test_create_default_results_with_exploits(self):
         """Test _create_default_results with exploit generation enabled."""
         mock_manager = Mock()
+        from adversary_mcp_server.config import ValidationFallbackMode
+
         mock_config = SecurityConfig()
+        mock_config.validation_fallback_mode = ValidationFallbackMode.OPTIMISTIC
         mock_manager.load_config.return_value = mock_config
 
         validator = LLMValidator(mock_manager)
@@ -829,7 +850,7 @@ class TestLLMValidatorEdgeCases:
         validation_result = result["test-uuid"]
         assert validation_result.is_legitimate is True
         assert validation_result.confidence == 0.7
-        assert "LLM validation not available" in validation_result.reasoning
+        assert "LLM validation unavailable" in validation_result.reasoning
 
         # Should have exploit POC when exploit generation enabled and succeeds
         assert validation_result.exploit_poc == ["test exploit"]
@@ -839,7 +860,10 @@ class TestLLMValidatorEdgeCases:
     def test_create_default_results_without_exploits(self):
         """Test _create_default_results with exploit generation disabled."""
         mock_manager = Mock()
+        from adversary_mcp_server.config import ValidationFallbackMode
+
         mock_config = SecurityConfig()
+        mock_config.validation_fallback_mode = ValidationFallbackMode.OPTIMISTIC
         mock_manager.load_config.return_value = mock_config
 
         validator = LLMValidator(mock_manager)

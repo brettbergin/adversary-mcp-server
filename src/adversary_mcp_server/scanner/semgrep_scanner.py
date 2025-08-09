@@ -9,10 +9,13 @@ from pathlib import Path
 from typing import Any
 
 from ..cache import CacheKey, CacheManager, CacheType
+from ..cache.config_tracker import ConfigurationTracker
 from ..config import get_app_cache_dir
+from ..config_manager import get_config_manager
 from ..credentials import CredentialManager
 from ..logger import get_logger
 from ..resilience import ErrorHandler, ResilienceConfig
+from .language_mapping import LanguageMapper
 from .types import Category, Severity, ThreatMatch
 
 logger = get_logger("semgrep_scanner")
@@ -46,7 +49,8 @@ try:
         except (FileNotFoundError, subprocess.TimeoutExpired):
             continue
 
-except Exception:
+except (OSError, subprocess.SubprocessError, PermissionError) as e:
+    logger.debug(f"Error checking semgrep availability: {e}")
     _SEMGREP_AVAILABLE = False
 
 
@@ -80,6 +84,7 @@ class OptimizedSemgrepScanner:
         self.credential_manager = credential_manager
         self.cache_manager = cache_manager
         self.metrics_collector = metrics_collector
+        self.config_manager = get_config_manager()
 
         # Initialize advanced cache manager if not provided
         if cache_manager is None and self.credential_manager is not None:
@@ -89,28 +94,50 @@ class OptimizedSemgrepScanner:
                     cache_dir = get_app_cache_dir()
                     self.cache_manager = CacheManager(
                         cache_dir=cache_dir,
-                        max_size_mb=config_obj.cache_max_size_mb,
-                        max_age_hours=config_obj.cache_max_age_hours,
+                        max_size_mb=self.config_manager.dynamic_limits.cache_max_size_mb,
+                        max_age_hours=self.config_manager.dynamic_limits.cache_max_age_hours,
                     )
                     logger.info(
                         f"Initialized advanced cache manager for Semgrep at {cache_dir}"
                     )
-            except Exception as e:
-                logger.warning(f"Failed to initialize advanced cache manager: {e}")
+            except (OSError, ValueError, ImportError) as e:
+                logger.warning(
+                    "Failed to initialize advanced cache manager - caching disabled for semgrep",
+                    extra={
+                        "error_type": type(e).__name__,
+                        "error_message": str(e),
+                        "cache_dir": str(cache_dir),
+                        "performance_impact": "medium",
+                        "component": "semgrep_scanner",
+                    },
+                )
 
         # Initialize ErrorHandler for Semgrep resilience
         resilience_config = ResilienceConfig(
             enable_circuit_breaker=True,
-            failure_threshold=3,  # Lower threshold for Semgrep (faster failure detection)
-            recovery_timeout_seconds=60,  # Quick recovery for Semgrep
+            failure_threshold=self.config_manager.dynamic_limits.circuit_breaker_failure_threshold,
+            recovery_timeout_seconds=self.config_manager.dynamic_limits.circuit_breaker_recovery_timeout,
             enable_retry=True,
-            max_retry_attempts=2,  # Conservative retries for subprocess calls
-            base_delay_seconds=1.0,
+            max_retry_attempts=max(
+                1, self.config_manager.dynamic_limits.max_retry_attempts - 1
+            ),  # Conservative retries for subprocess calls
+            base_delay_seconds=self.config_manager.dynamic_limits.retry_base_delay,
             enable_graceful_degradation=True,
-            semgrep_timeout_seconds=300.0,  # 5 minute timeout for Semgrep
+            semgrep_timeout_seconds=float(
+                self.config_manager.dynamic_limits.scan_timeout_seconds
+            ),
         )
         self.error_handler = ErrorHandler(resilience_config)
         logger.info("Initialized ErrorHandler for Semgrep resilience")
+
+        # Initialize configuration tracker for cache invalidation
+        self.config_tracker = None
+        if self.cache_manager:
+            try:
+                self.config_tracker = ConfigurationTracker(self.cache_manager)
+                logger.info("Initialized configuration tracker for cache invalidation")
+            except Exception as e:
+                logger.warning(f"Failed to initialize configuration tracker: {e}")
 
     async def _find_semgrep(self) -> str:
         """Find semgrep executable path (cached)."""
@@ -225,7 +252,19 @@ class OptimizedSemgrepScanner:
         try:
             # Extract basic information
             rule_id = finding.get("check_id", "semgrep_unknown")
-            message = finding.get("message", "Semgrep security finding")
+
+            # Add debug logging to understand actual Semgrep JSON structure
+            logger.debug(
+                f"Processing Semgrep finding: rule_id={rule_id}, keys={list(finding.keys())}"
+            )
+
+            # Improve message extraction - try multiple possible locations
+            message = (
+                finding.get("message")
+                or finding.get("extra", {}).get("message")
+                or finding.get("metadata", {}).get("message")
+                or self._create_descriptive_message_from_rule_id(rule_id)
+            )
 
             # Extract location information
             start_info = finding.get("start", {})
@@ -246,6 +285,15 @@ class OptimizedSemgrepScanner:
             severity = self._map_semgrep_severity(semgrep_severity)
             category = self._map_semgrep_category(rule_id, message)
 
+            # Calculate dynamic confidence score
+            confidence = self._calculate_confidence_score(
+                rule_id=rule_id,
+                severity=severity,
+                category=category,
+                code_snippet=code_snippet,
+                file_path=file_path,
+            )
+
             # Create threat match
             threat = ThreatMatch(
                 rule_id=f"semgrep-{rule_id}",
@@ -257,7 +305,7 @@ class OptimizedSemgrepScanner:
                 line_number=line_number,
                 column_number=column_number,
                 code_snippet=code_snippet,
-                confidence=0.9,  # todo: improve confidence score
+                confidence=confidence,
                 source="semgrep",
             )
 
@@ -337,6 +385,17 @@ class OptimizedSemgrepScanner:
         Returns:
             List of ThreatMatch objects
         """
+        # Check for configuration changes and invalidate cache if needed
+        if self.config_tracker:
+            current_config = {
+                "semgrep_config": config or self.config,
+                "rules": rules,
+                "severity_threshold": (
+                    severity_threshold.value if severity_threshold else None
+                ),
+            }
+            self.config_tracker.check_and_invalidate_on_config_change(current_config)
+
         # Check cache first
         cached_threats = await self._get_cached_scan_result(
             source_code, file_path, language, config, rules, severity_threshold
@@ -359,7 +418,15 @@ class OptimizedSemgrepScanner:
         # Define fallback function for graceful degradation
         async def scan_fallback(*args, **kwargs):
             logger.warning(
-                f"Semgrep service degraded, returning empty results for {file_path}"
+                "Semgrep service degraded - static security analysis unavailable",
+                extra={
+                    "file_path": file_path,
+                    "file_size": len(source_code) if source_code else 0,
+                    "scan_type": "code_analysis",
+                    "fallback_action": "returning_empty_results",
+                    "security_impact": "high",
+                    "component": "semgrep_scanner",
+                },
             )
             return []
 
@@ -414,16 +481,21 @@ class OptimizedSemgrepScanner:
         if severity_threshold:
             threats = self._filter_by_severity(threats, severity_threshold)
 
-        # Cache the final processed results
-        await self._cache_scan_result(
-            threats,
-            source_code,
-            file_path,
-            language,
-            config,
-            rules,
-            severity_threshold,
-        )
+        # Cache the final processed results only if not from fallback
+        if not getattr(recovery_result, "fallback_used", False):
+            await self._cache_scan_result(
+                threats,
+                source_code,
+                file_path,
+                language,
+                config,
+                rules,
+                severity_threshold,
+            )
+        else:
+            logger.warning(
+                f"Scan used fallback for {file_path}, skipping cache to prevent corruption"
+            )
 
         return threats
 
@@ -449,6 +521,17 @@ class OptimizedSemgrepScanner:
         Returns:
             List of detected threats
         """
+        # Check for configuration changes and invalidate cache if needed
+        if self.config_tracker:
+            current_config = {
+                "semgrep_config": config or self.config,
+                "rules": rules,
+                "severity_threshold": (
+                    severity_threshold.value if severity_threshold else None
+                ),
+            }
+            self.config_tracker.check_and_invalidate_on_config_change(current_config)
+
         # Check if Semgrep is available first (return empty if not available)
         if not self.is_available():
             return []
@@ -542,16 +625,21 @@ class OptimizedSemgrepScanner:
         if severity_threshold:
             threats = self._filter_by_severity(threats, severity_threshold)
 
-        # Cache the final processed results
-        await self._cache_scan_result(
-            threats,
-            source_code,
-            file_path,
-            language,
-            config,
-            rules,
-            severity_threshold,
-        )
+        # Cache the final processed results only if not from fallback
+        if not getattr(recovery_result, "fallback_used", False):
+            await self._cache_scan_result(
+                threats,
+                source_code,
+                file_path,
+                language,
+                config,
+                rules,
+                severity_threshold,
+            )
+        else:
+            logger.warning(
+                f"Scan used fallback for {file_path}, skipping cache to prevent corruption"
+            )
 
         return threats
 
@@ -577,6 +665,17 @@ class OptimizedSemgrepScanner:
         Returns:
             List of detected threats across all files
         """
+        # Check for configuration changes and invalidate cache if needed
+        if self.config_tracker:
+            current_config = {
+                "semgrep_config": config or self.config,
+                "rules": rules,
+                "severity_threshold": (
+                    severity_threshold.value if severity_threshold else None
+                ),
+            }
+            self.config_tracker.check_and_invalidate_on_config_change(current_config)
+
         # Check if Semgrep is available first (return empty if not available)
         if not self.is_available():
             return []
@@ -587,7 +686,12 @@ class OptimizedSemgrepScanner:
 
         # Check cache first
         cached_threats = await self._get_cached_scan_result(
-            "", directory_path, "directory", config, rules, severity_threshold
+            directory_path,
+            directory_path,
+            "directory",
+            config,
+            rules,
+            severity_threshold,
         )
         if cached_threats is not None:
             logger.debug(f"Cache hit for directory {directory_path}")
@@ -650,16 +754,21 @@ class OptimizedSemgrepScanner:
             threats = self._filter_by_severity(threats, severity_threshold)
             logger.info(f"Severity filtering: {before_count} → {len(threats)} threats")
 
-        # Cache the final processed results
-        await self._cache_scan_result(
-            threats,
-            "",
-            directory_path,
-            "directory",
-            config,
-            rules,
-            severity_threshold,
-        )
+        # Cache the final processed results only if not from fallback
+        if not getattr(recovery_result, "fallback_used", False):
+            await self._cache_scan_result(
+                threats,
+                directory_path,
+                directory_path,
+                "directory",
+                config,
+                rules,
+                severity_threshold,
+            )
+        else:
+            logger.warning(
+                f"Scan used fallback for {directory_path}, skipping cache to prevent corruption"
+            )
 
         return threats
 
@@ -715,9 +824,11 @@ class OptimizedSemgrepScanner:
                 "--json",
                 "--quiet",
                 "--disable-version-check",
-                f"--lang={self._extension_to_language(extension)}",
                 "-",  # Read from stdin
             ]
+
+            # Only add --lang for pattern-based scanning, not config-based scanning
+            # Config-based scanning (like --config=auto) auto-detects language
 
             # Run scan with stdin
             proc = await asyncio.create_subprocess_exec(
@@ -911,31 +1022,106 @@ class OptimizedSemgrepScanner:
             return []
 
     def _get_extension_for_language(self, language: str | None) -> str:
-        """Get file extension for language."""
-        if not language:
-            return ".py"
+        """Get file extension for language using shared language mapper.
 
-        # Handle both string and object types (for backward compatibility)
-        if hasattr(language, "value"):
-            language_str = language.value
-        elif hasattr(language, "lower"):
-            language_str = language
-        else:
-            language_str = str(language)
+        Args:
+            language: Programming language identifier
 
-        ext_map = {
-            "python": ".py",
-            "javascript": ".js",
-            "typescript": ".ts",
-            "java": ".java",
-            "go": ".go",
-            "php": ".php",
-            "ruby": ".rb",
-            "c": ".c",
-            "cpp": ".cpp",
-            "csharp": ".cs",
+        Returns:
+            File extension for the language, or '.txt' for unknown languages
+        """
+        return LanguageMapper.get_extension_for_language(language)
+
+    def _calculate_confidence_score(
+        self,
+        rule_id: str,
+        severity: Severity,
+        category: Category,
+        code_snippet: str,
+        file_path: str,
+    ) -> float:
+        """Calculate dynamic confidence score for a Semgrep finding.
+
+        Args:
+            rule_id: Semgrep rule identifier
+            severity: Finding severity
+            code_snippet: Code snippet containing the finding
+            file_path: Path to the file with the finding
+
+        Returns:
+            Confidence score between 0.0 and 1.0
+        """
+        base_confidence = 0.7  # Start with reasonable base confidence
+
+        # Adjust based on rule quality indicators
+        if "experimental" in rule_id.lower():
+            base_confidence -= 0.2
+        elif "owasp" in rule_id.lower() or "cwe" in rule_id.lower():
+            base_confidence += 0.1
+        elif "security" in rule_id.lower():
+            base_confidence += 0.05
+
+        # Adjust based on severity (higher severity = higher confidence in rule quality)
+        severity_adjustments = {
+            Severity.CRITICAL: 0.15,
+            Severity.HIGH: 0.1,
+            Severity.MEDIUM: 0.05,
+            Severity.LOW: -0.05,
         }
-        return ext_map.get(language_str.lower(), ".py")
+        base_confidence += severity_adjustments.get(severity, 0.0)
+
+        # Adjust based on category reliability
+        high_confidence_categories = {
+            Category.INJECTION,
+            Category.AUTHENTICATION,
+            Category.CRYPTO,
+            Category.SECRETS,
+            Category.RCE,
+        }
+        if category in high_confidence_categories:
+            base_confidence += 0.1
+
+        # Context-based adjustments
+        if code_snippet:
+            # More confidence if we have actual code context
+            base_confidence += 0.05
+
+            # Higher confidence for common vulnerable patterns
+            vulnerable_patterns = [
+                "password",
+                "secret",
+                "key",
+                "token",
+                "sql",
+                "exec",
+                "eval",
+                "system",
+                "shell",
+                "md5",
+                "sha1",
+            ]
+            if any(pattern in code_snippet.lower() for pattern in vulnerable_patterns):
+                base_confidence += 0.05
+
+        # File context adjustments
+        if file_path:
+            # Higher confidence for security-critical file patterns
+            critical_paths = [
+                "auth",
+                "login",
+                "security",
+                "admin",
+                "config",
+                "password",
+                "key",
+                "secret",
+                "api",
+            ]
+            if any(pattern in file_path.lower() for pattern in critical_paths):
+                base_confidence += 0.05
+
+        # Ensure confidence stays within valid range
+        return max(0.1, min(0.95, base_confidence))
 
     def _get_clean_env(self) -> dict[str, str]:
         """Get clean environment for subprocess using credential manager."""
@@ -1048,39 +1234,15 @@ class OptimizedSemgrepScanner:
         return self._get_extension_for_language(language)
 
     def _extension_to_language(self, extension: str) -> str:
-        """Convert file extension to Semgrep language identifier.
+        """Convert file extension to Semgrep language identifier using shared mapper.
 
         Args:
             extension: File extension (e.g., '.py', '.js')
 
         Returns:
-            Semgrep language identifier
+            Semgrep language identifier, defaults to 'generic' for unknown extensions
         """
-        lang_map = {
-            ".py": "python",
-            ".js": "javascript",
-            ".ts": "typescript",
-            ".java": "java",
-            ".go": "go",
-            ".php": "php",
-            ".rb": "ruby",
-            ".c": "c",
-            ".cpp": "cpp",
-            ".cs": "csharp",
-            ".rs": "rust",
-            ".kt": "kotlin",
-            ".scala": "scala",
-            ".swift": "swift",
-            ".sh": "bash",
-            ".yaml": "yaml",
-            ".yml": "yaml",
-            ".json": "json",
-            ".xml": "xml",
-            ".html": "html",
-            ".css": "css",
-            ".sql": "sql",
-        }
-        return lang_map.get(extension.lower(), "generic")
+        return LanguageMapper.detect_language_from_extension(extension)
 
     async def _get_cached_scan_result(
         self,
@@ -1154,6 +1316,57 @@ class OptimizedSemgrepScanner:
             logger.warning(f"Failed to retrieve cached Semgrep result: {e}")
 
         return None
+
+    def _create_descriptive_message_from_rule_id(self, rule_id: str) -> str:
+        """Create a descriptive message from the Semgrep rule ID when message is missing.
+
+        Args:
+            rule_id: The Semgrep rule identifier
+
+        Returns:
+            A human-readable description based on the rule ID
+        """
+        if not rule_id or rule_id == "semgrep_unknown":
+            return "Semgrep security finding"
+
+        # Try to extract meaningful parts from the rule ID
+        rule_parts = rule_id.split(".")
+
+        # Look for common security patterns in rule ID
+        if "dangerous-eval" in rule_id:
+            return "Dangerous use of eval() function detected"
+        elif "sql-injection" in rule_id or "sqli" in rule_id:
+            return "Potential SQL injection vulnerability detected"
+        elif "xss" in rule_id or "cross-site" in rule_id:
+            return "Potential cross-site scripting (XSS) vulnerability detected"
+        elif "hardcoded" in rule_id and (
+            "password" in rule_id or "secret" in rule_id or "key" in rule_id
+        ):
+            return "Hardcoded secret or credential detected"
+        elif "command-injection" in rule_id or "code-injection" in rule_id:
+            return "Potential command/code injection vulnerability detected"
+        elif "path-traversal" in rule_id or "directory-traversal" in rule_id:
+            return "Potential path traversal vulnerability detected"
+        elif "crypto" in rule_id and "weak" in rule_id:
+            return "Weak cryptographic implementation detected"
+        elif "auth" in rule_id or "authentication" in rule_id:
+            return "Authentication security issue detected"
+        elif "csrf" in rule_id:
+            return "Potential CSRF vulnerability detected"
+        elif "ssrf" in rule_id:
+            return "Potential SSRF vulnerability detected"
+        elif "deserialization" in rule_id or "pickle" in rule_id:
+            return "Insecure deserialization detected"
+        elif "regex" in rule_id and ("dos" in rule_id or "redos" in rule_id):
+            return "Regular expression denial of service (ReDoS) detected"
+        else:
+            # Generic fallback based on rule structure
+            if len(rule_parts) >= 2:
+                # Extract the last meaningful part of the rule name
+                rule_name = rule_parts[-1].replace("-", " ").replace("_", " ").title()
+                return f"Security issue detected: {rule_name}"
+            else:
+                return f"Security issue detected by rule: {rule_id}"
 
     async def _cache_scan_result(
         self,

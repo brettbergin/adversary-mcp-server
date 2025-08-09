@@ -592,7 +592,6 @@ class MetricsCollector:
                         self._metrics[metric_name].append(metric)
 
                 loaded_count += 1
-                logger.debug(f"Loaded metrics from: {metrics_file.name}")
 
             except Exception as e:
                 logger.warning(f"Failed to load metrics from {metrics_file}: {e}")

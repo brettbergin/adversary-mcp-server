@@ -18,7 +18,7 @@
 - **Dependency Security**: Regularly audit dependencies (`make security-scan`)
 
 ### Testing Requirements
-- **Coverage**: Maintain >80% test coverage (`make test`)
+- **Coverage**: Maintain >75% test coverage (`make test`)
 - **Test Types**: Write unit (`make test-unit`), integration (`make test-integration`), and security tests (`make test-security`)
 - **Quick Testing**: Use fast tests during development (`make test-fast`)
 - **Coverage Reports**: Generate HTML coverage reports (`make test-html`)

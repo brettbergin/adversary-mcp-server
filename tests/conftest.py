@@ -44,6 +44,18 @@ def reset_credential_singleton():
 
 
 @pytest.fixture(autouse=True)
+def reset_config_manager_singleton():
+    """Reset config manager singleton before each test for isolation."""
+    # Import here to avoid circular imports
+    from adversary_mcp_server.config_manager import reset_config_manager
+
+    reset_config_manager()
+    yield
+    # Reset again after test to clean up
+    reset_config_manager()
+
+
+@pytest.fixture(autouse=True)
 def mute_logs():
     logging.getLogger().setLevel(logging.WARNING)
 
