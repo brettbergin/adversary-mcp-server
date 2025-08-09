@@ -3,7 +3,7 @@
 import asyncio
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -17,10 +17,12 @@ from ..batch import (
 )
 from ..cache import CacheKey, CacheManager, CacheType
 from ..config import get_app_cache_dir
+from ..config_manager import get_config_manager
 from ..credentials import CredentialManager
 from ..llm import LLMClient, LLMProvider, create_llm_client
 from ..logger import get_logger
 from ..resilience import ErrorHandler, ResilienceConfig
+from .language_mapping import LanguageMapper
 from .types import Category, Severity, ThreatMatch
 
 logger = get_logger("llm_scanner")
@@ -165,7 +167,9 @@ class LLMAnalysisPrompt:
     system_prompt: str
     user_prompt: str
     file_path: str
-    max_findings: int = 20
+    max_findings: int = field(
+        default_factory=lambda: get_config_manager().dynamic_limits.llm_max_findings
+    )
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -202,6 +206,8 @@ class LLMScanner:
         self.llm_client: LLMClient | None = None
         self.cache_manager = cache_manager
         self.metrics_collector = metrics_collector
+        self.config_manager = get_config_manager()
+        self.dynamic_limits = self.config_manager.dynamic_limits
 
         try:
             self.config = credential_manager.load_config()
@@ -219,20 +225,23 @@ class LLMScanner:
                 )
                 logger.info(f"Initialized cache manager at {cache_dir}")
 
-            # Initialize intelligent batch processor with provider-specific settings
-            # Use smaller batches for Anthropic to avoid rate limiting
+            # Initialize intelligent batch processor with dynamic configuration
+            # Provider-specific scaling with resource-aware limits
+            base_batch_size = self.config_manager.dynamic_limits.llm_max_batch_size
+            target_tokens = self.config_manager.dynamic_limits.llm_target_tokens
+            max_tokens = self.config_manager.dynamic_limits.llm_max_tokens
+
             if self.config.llm_provider == "anthropic":
-                max_batch_size = 3  # Smaller batches for Anthropic
-                target_tokens = 40000  # Lower token target
-                max_tokens = 60000  # Lower max tokens
+                # Scale down for Anthropic rate limiting
+                max_batch_size = max(1, base_batch_size // 2)
+                target_tokens = int(target_tokens * 0.5)
+                max_tokens = int(max_tokens * 0.6)
             elif self.config.llm_provider == "openai":
-                max_batch_size = 8  # Moderate batches for OpenAI
-                target_tokens = 80000
-                max_tokens = 100000
+                # Use standard limits for OpenAI
+                max_batch_size = base_batch_size
             else:
-                max_batch_size = getattr(self.config, "llm_batch_size", 20)
-                target_tokens = 80000
-                max_tokens = 100000
+                # Use configuration batch size for other providers
+                max_batch_size = getattr(self.config, "llm_batch_size", base_batch_size)
 
             batch_config = BatchConfig(
                 strategy=BatchStrategy.DYNAMIC_SIZE,
@@ -240,8 +249,8 @@ class LLMScanner:
                 max_batch_size=max_batch_size,
                 target_tokens_per_batch=target_tokens,
                 max_tokens_per_batch=max_tokens,
-                batch_timeout_seconds=300,
-                max_concurrent_batches=4,
+                batch_timeout_seconds=self.config_manager.dynamic_limits.batch_timeout_seconds,
+                max_concurrent_batches=self.config_manager.dynamic_limits.max_concurrent_batches,
                 group_by_language=True,
                 group_by_complexity=True,
             )
@@ -256,14 +265,20 @@ class LLMScanner:
             enable_retry = self.config.llm_provider != "anthropic"
             resilience_config = ResilienceConfig(
                 enable_circuit_breaker=True,
-                failure_threshold=3,  # Open circuit after 3 failures
-                recovery_timeout_seconds=60,  # Try recovery after 1 minute
+                failure_threshold=self.config_manager.dynamic_limits.circuit_breaker_failure_threshold,
+                recovery_timeout_seconds=self.config_manager.dynamic_limits.circuit_breaker_recovery_timeout,
                 enable_retry=enable_retry,
-                max_retry_attempts=3 if enable_retry else 0,
-                base_delay_seconds=1.0,
-                max_delay_seconds=30.0,
+                max_retry_attempts=(
+                    self.config_manager.dynamic_limits.max_retry_attempts
+                    if enable_retry
+                    else 0
+                ),
+                base_delay_seconds=self.config_manager.dynamic_limits.retry_base_delay,
+                max_delay_seconds=self.config_manager.dynamic_limits.retry_max_delay,
                 enable_graceful_degradation=True,
-                llm_timeout_seconds=120.0,  # 2 minute timeout for LLM calls
+                llm_timeout_seconds=float(
+                    self.config_manager.dynamic_limits.llm_request_timeout_seconds
+                ),
             )
             self.error_handler = ErrorHandler(resilience_config)
             logger.info("Initialized ErrorHandler with circuit breaker and retry logic")
@@ -281,11 +296,29 @@ class LLMScanner:
                 logger.info("LLM client initialized successfully")
             else:
                 logger.warning(
-                    "LLM provider not configured, scanner will not be functional"
+                    "LLM provider not configured - advanced security analysis will be unavailable",
+                    extra={
+                        "llm_provider": getattr(self.config, "llm_provider", None),
+                        "has_api_key": bool(getattr(self.config, "llm_api_key", None)),
+                        "security_impact": "high",
+                        "component": "llm_scanner",
+                        "action": "falling_back_to_static_analysis",
+                    },
                 )
 
-        except Exception as e:
-            logger.error(f"Failed to initialize LLMScanner: {e}")
+        except (ValueError, TypeError, ImportError, RuntimeError) as e:
+            logger.error(
+                "Failed to initialize LLMScanner - security analysis will be unavailable",
+                extra={
+                    "error_type": type(e).__name__,
+                    "error_message": str(e),
+                    "llm_provider": getattr(self.config, "llm_provider", "unknown"),
+                    "llm_model": getattr(self.config, "llm_model", "unknown"),
+                    "has_api_key": bool(getattr(self.config, "llm_api_key", None)),
+                    "security_impact": "critical",
+                    "component": "llm_scanner",
+                },
+            )
             raise
 
     def get_circuit_breaker_stats(self) -> dict:
@@ -1441,49 +1474,15 @@ Response format:
         return file_path.suffix.lower() in analyzable_extensions
 
     def _detect_language(self, file_path: Path) -> str:
-        """Detect programming language from file extension.
+        """Detect programming language from file extension using shared mapper.
 
         Args:
             file_path: File path
 
         Returns:
-            Language name
+            Language name, defaults to 'generic' for unknown extensions
         """
-        extension_map = {
-            ".py": "python",
-            ".js": "javascript",
-            ".ts": "typescript",
-            ".jsx": "javascript",
-            ".tsx": "typescript",
-            ".java": "java",
-            ".c": "c",
-            ".cpp": "cpp",
-            ".cc": "cpp",
-            ".h": "c",
-            ".hpp": "cpp",
-            ".cs": "csharp",
-            ".go": "go",
-            ".rs": "rust",
-            ".php": "php",
-            ".rb": "ruby",
-            ".swift": "swift",
-            ".kt": "kotlin",
-            ".scala": "scala",
-            ".r": "r",
-            ".m": "objc",
-            ".mm": "objc",
-            ".sh": "shell",
-            ".bash": "shell",
-            ".zsh": "shell",
-            ".ps1": "powershell",
-            ".pl": "perl",
-            ".lua": "lua",
-            ".dart": "dart",
-            ".vue": "vue",
-            ".svelte": "svelte",
-        }
-
-        return extension_map.get(file_path.suffix.lower(), "generic")
+        return LanguageMapper.detect_language_from_extension(file_path)
 
     def _create_batch_user_prompt(
         self, batch_content: list[dict[str, str]], max_findings_per_file: int

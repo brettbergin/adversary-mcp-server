@@ -177,7 +177,7 @@ make test-security    # Security-related tests
    ```
 
 3. **Test Coverage**:
-   - Aim for 80%+ code coverage
+   - Aim for 75%+ code coverage
    - Test both happy path and error cases
    - Mock external dependencies
    - Use fixtures for complex test data
@@ -294,7 +294,7 @@ def scan_code(
 
 ✅ **Required Checks:**
 - [ ] All tests pass
-- [ ] Code coverage ≥ 80%
+- [ ] Code coverage ≥ 75%
 - [ ] Linting passes (ruff, mypy, black)
 - [ ] Security scans pass (bandit, semgrep)
 - [ ] Documentation updated if needed

@@ -951,7 +951,7 @@ class TestLLMScanner:
             (Path("script.rb"), "ruby"),
             (Path("app.swift"), "swift"),
             (Path("main.kt"), "kotlin"),
-            (Path("script.sh"), "shell"),
+            (Path("script.sh"), "bash"),
             (Path("unknown.xyz"), "generic"),
         ]
 

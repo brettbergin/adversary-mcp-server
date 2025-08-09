@@ -187,8 +187,8 @@ jobs:
     - name: Run Semgrep security scanner
       run: |
         source .venv/bin/activate
-        python -m semgrep --config=auto src/ --json --output=semgrep-report.json
-        python -m semgrep --config=auto src/ --severity=WARNING
+        python -m semgrep scan --config=auto src/ --json --output=semgrep-report.json
+        python -m semgrep scan --config=auto src/ --severity=WARNING
       continue-on-error: true
 
     - name: Check for known security vulnerabilities in dependencies

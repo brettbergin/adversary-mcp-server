@@ -192,7 +192,8 @@ class TestScanResultFormatter:
         self, formatter, mock_scan_result, mock_threat
     ):
         """Test markdown formatting with threats."""
-        # Add matched_content to trigger vulnerable code section (lines 415-419)
+        # Clear code_snippet and add matched_content to test fallback behavior
+        mock_threat.code_snippet = ""
         mock_threat.matched_content = "vulnerable_code_snippet"
 
         result_md = formatter.format_directory_results_markdown(

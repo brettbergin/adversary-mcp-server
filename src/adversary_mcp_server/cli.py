@@ -390,78 +390,143 @@ def configure(
                 )
                 credential_manager.clear_llm_configuration()
 
-            # Get API key
-            console.print(f"\n📝 Enter your {llm_provider.title()} API key:")
-            if llm_provider == "openai":
+            # Check if API key already exists
+            existing_api_key = credential_manager.get_llm_api_key(llm_provider)
+
+            if existing_api_key:
                 console.print(
-                    "   • Get your API key from: https://platform.openai.com/api-keys"
+                    f"✅ {llm_provider.title()} API key already configured",
+                    style="green",
                 )
-            else:  # anthropic
-                console.print(
-                    "   • Get your API key from: https://console.anthropic.com/settings/keys"
-                )
-
-            api_key = Prompt.ask(f"{llm_provider.upper()}_API_KEY", password=True)
-
-            if api_key.strip():
-                try:
-                    # Store API key in keyring
-                    credential_manager.store_llm_api_key(llm_provider, api_key.strip())
-
-                    # Update configuration
-                    config.llm_provider = llm_provider
-                    # Don't store the actual API key in config - it's already in keyring
-
-                    # Ask for model selection
-                    if llm_provider == "openai":
-                        default_model = "gpt-4-turbo-preview"
-                        model_choices = [
-                            "gpt-4-turbo-preview",
-                            "gpt-4",
-                            "gpt-3.5-turbo",
-                        ]
-                        console.print(
-                            f"\n🎯 Select OpenAI model (default: {default_model}):"
-                        )
-                    else:  # anthropic
-                        default_model = "claude-3-5-sonnet-20241022"
-                        model_choices = [
-                            "claude-3-5-sonnet-20241022",
-                            "claude-3-5-haiku-20241022",
-                            "claude-3-opus-latest",
-                            "claude-3-sonnet-20240229",
-                            "claude-3-haiku-20240307",
-                        ]
-                        console.print(
-                            f"\n🎯 Select Anthropic model (default: {default_model}):"
-                        )
-
-                    for i, model in enumerate(model_choices, 1):
-                        console.print(f"   {i}. {model}")
-
-                    model_input = Prompt.ask("Model", default=default_model)
-                    config.llm_model = (
-                        model_input if model_input in model_choices else default_model
-                    )
-
-                    config_updated = True
-                    console.print(
-                        f"✅ {llm_provider.title()} configuration complete!",
-                        style="green",
-                    )
-                    logger.info(
-                        f"{llm_provider} LLM configured successfully with model: {config.llm_model}"
-                    )
-
-                except Exception as e:
-                    console.print(
-                        f"❌ Failed to configure {llm_provider}: {e}", style="red"
-                    )
-                    logger.error(f"Failed to configure {llm_provider}: {e}")
+                # Update the config to use this provider
+                config.llm_provider = llm_provider
+                config_updated = True
             else:
-                console.print(
-                    f"⏭️  Skipped {llm_provider} configuration", style="yellow"
+                # Get API key
+                console.print(f"\n📝 Enter your {llm_provider.title()} API key:")
+                if llm_provider == "openai":
+                    console.print(
+                        "   • Get your API key from: https://platform.openai.com/api-keys"
+                    )
+                else:  # anthropic
+                    console.print(
+                        "   • Get your API key from: https://console.anthropic.com/settings/keys"
+                    )
+
+                api_key = Prompt.ask(f"{llm_provider.upper()}_API_KEY", password=True)
+
+                if api_key.strip():
+                    try:
+                        # Store API key in keyring
+                        credential_manager.store_llm_api_key(
+                            llm_provider, api_key.strip()
+                        )
+                        console.print(
+                            f"✅ {llm_provider.title()} API key stored!", style="green"
+                        )
+
+                        # Update configuration
+                        config.llm_provider = llm_provider
+                        config_updated = True
+
+                    except Exception as e:
+                        console.print(
+                            f"❌ Failed to store {llm_provider} API key: {e}",
+                            style="red",
+                        )
+                        logger.error(f"Failed to store {llm_provider} API key: {e}")
+                        return
+                else:
+                    console.print(
+                        f"⏭️  Skipped {llm_provider} configuration", style="yellow"
+                    )
+                    return
+
+            # Always do model selection when configuring a provider
+            try:
+                from .llm.model_catalog import ModelCatalogService
+                from .llm.model_types import ModelProvider
+
+                provider_enum = (
+                    ModelProvider.OPENAI
+                    if llm_provider == "openai"
+                    else ModelProvider.ANTHROPIC
                 )
+
+                # Use simple synchronous model selection for now
+                console.print(f"\n🤖 [bold]Select {llm_provider.title()} Model[/bold]")
+
+                # Get available models synchronously
+                catalog = ModelCatalogService()
+
+                # Import Prompt for model selection
+                from rich.prompt import Prompt as ModelPrompt
+
+                # Get models from pricing config (synchronous fallback)
+                fallback_models = catalog._load_fallback_models()
+                provider_models = [
+                    m for m in fallback_models if m.provider == provider_enum
+                ]
+
+                if provider_models:
+                    console.print("\n📋 Available models:")
+
+                    # Group by category for display
+                    categorized = catalog.get_categorized_models(provider_models)
+
+                    choices = []
+                    choice_map = {}
+                    index = 1
+
+                    for category, models in categorized.items():
+                        console.print(
+                            f"\n{category.value.title()} Models:", style="bold"
+                        )
+                        for model in models[:5]:  # Limit to top 5 per category
+                            choice_text = f"{index}. {model.display_name} - {model.cost_description}"
+                            console.print(f"   {choice_text}")
+                            choices.append(str(index))
+                            choice_map[str(index)] = model
+                            index += 1
+
+                    # Get user selection
+                    selection = ModelPrompt.ask(
+                        f"Select model (1-{index-1})",
+                        choices=choices,
+                        default="1",
+                    )
+
+                    selected_model = choice_map.get(selection)
+                    if selected_model:
+                        config.llm_model = selected_model.id
+                        console.print(
+                            f"✅ Selected model: {selected_model.display_name}",
+                            style="green",
+                        )
+                    else:
+                        raise ValueError("Invalid selection")
+                else:
+                    raise ValueError("No models available")
+
+            except Exception as e:
+                logger.warning(f"Model selection failed, using fallback: {e}")
+                # Fallback to default models - now using Claude Sonnet 4 as default
+                default_model = (
+                    "gpt-4o" if llm_provider == "openai" else "claude-sonnet-4-20250514"
+                )
+                config.llm_model = default_model
+                console.print(
+                    f"⏭️  Using default model: {default_model}", style="yellow"
+                )
+
+            config_updated = True
+            console.print(
+                f"✅ {llm_provider.title()} configuration complete!",
+                style="green",
+            )
+            logger.info(
+                f"{llm_provider} LLM configured successfully with model: {config.llm_model}"
+            )
         else:
             # Show current LLM status if not configuring
             if config.llm_provider:
@@ -538,12 +603,30 @@ def status():
             llm_status = "Not configured"
 
         config_table.add_row("LLM Provider", llm_status)
-        config_table.add_row(
-            "LLM Analysis", "Enabled" if config.enable_llm_analysis else "Disabled"
-        )
-        config_table.add_row(
-            "LLM Validation", "Enabled" if config.enable_llm_validation else "Disabled"
-        )
+
+        # Show LLM Analysis status based on actual availability
+        if config.llm_provider and is_llm_valid:
+            llm_analysis_status = (
+                "Available" if config.enable_llm_analysis else "Disabled"
+            )
+        elif config.enable_llm_analysis and not config.llm_provider:
+            llm_analysis_status = "Inactive (Provider Missing)"
+        else:
+            llm_analysis_status = "Disabled"
+
+        config_table.add_row("LLM Analysis", llm_analysis_status)
+
+        # Show LLM Validation status based on actual availability
+        if config.llm_provider and is_llm_valid:
+            llm_validation_status = (
+                "Available" if config.enable_llm_validation else "Disabled"
+            )
+        elif config.enable_llm_validation and not config.llm_provider:
+            llm_validation_status = "Inactive (Provider Missing)"
+        else:
+            llm_validation_status = "Disabled"
+
+        config_table.add_row("LLM Validation", llm_validation_status)
 
         console.print(config_table)
 
@@ -1433,8 +1516,8 @@ def _display_scan_results(threats, target):
             f"[{severity_color}]{threat.severity.value.upper()}[/{severity_color}]",
             threat.rule_name,
             (
-                threat.description[:40] + "..."
-                if len(threat.description) > 40
+                threat.description[:80] + "..."
+                if len(threat.description) > 80
                 else threat.description
             ),
         )
@@ -1671,9 +1754,9 @@ def monitoring(export_format: str, output_path: str | None, show_dashboard: bool
                 while True:
                     dashboard.display_real_time_dashboard()
                     console.print(
-                        "\n⏱️  [dim]Refreshing in 5 seconds... (Press Ctrl+C to exit)[/dim]"
+                        "\n⏱️  [dim]Refreshing in 4 seconds... (Press Ctrl+C to exit)[/dim]"
                     )
-                    time.sleep(5)
+                    time.sleep(4)
 
             except KeyboardInterrupt:
                 console.print("\n👋 [yellow]Dashboard monitoring stopped[/yellow]")

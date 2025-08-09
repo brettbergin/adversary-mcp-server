@@ -258,7 +258,8 @@ class TestSemgrepScanner:
         assert threat.file_path == "test.py"
         assert threat.line_number == 15
         assert threat.code_snippet == "eval(user_input)"
-        assert threat.confidence == 0.9
+        # Confidence should be dynamic and higher than base due to security rule + severity
+        assert 0.8 <= threat.confidence <= 0.95
         assert threat.cwe_id == "CWE-95"
         assert threat.owasp_category == "A03:2021"
         assert threat.references == ["https://example.com/eval-security"]
@@ -1086,10 +1087,10 @@ class TestSemgrepScannerEdgeCases:
         scanner = SemgrepScanner()
 
         # Test None language
-        assert scanner._get_extension_for_language(None) == ".py"
+        assert scanner._get_extension_for_language(None) == ".txt"
 
         # Test unknown language
-        assert scanner._get_extension_for_language("unknown") == ".py"
+        assert scanner._get_extension_for_language("unknown") == ".txt"
 
         # Test case sensitivity
         assert scanner._get_extension_for_language("PYTHON") == ".py"
@@ -1340,7 +1341,7 @@ class TestSemgrepScannerAdvancedCoverage:
         with patch(
             "adversary_mcp_server.scanner.semgrep_scanner.CacheManager"
         ) as mock_cache_manager:
-            mock_cache_manager.side_effect = Exception("Cache initialization failed")
+            mock_cache_manager.side_effect = ValueError("Cache initialization failed")
 
             with patch(
                 "adversary_mcp_server.scanner.semgrep_scanner.get_app_cache_dir",
@@ -1473,7 +1474,7 @@ class TestSemgrepScannerAdvancedCoverage:
 
         # Test None language input
         result = scanner._get_extension_for_language(None)
-        assert result == ".py"  # Default fallback
+        assert result == ".txt"  # Generic fallback instead of Python-centric
 
     def test_get_extension_for_language_with_object_having_value_attribute(self):
         """Test _get_extension_for_language with object having value attribute."""

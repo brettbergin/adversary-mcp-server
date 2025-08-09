@@ -157,6 +157,11 @@ class AdversaryMCPServer:
                                 "description": "Whether to include Semgrep analysis",
                                 "default": True,
                             },
+                            "use_validation": {
+                                "type": "boolean",
+                                "description": "Whether to use LLM validation to filter false positives",
+                                "default": True,
+                            },
                             "output_format": {
                                 "type": "string",
                                 "description": "Output format for results (json or markdown)",
@@ -196,6 +201,11 @@ class AdversaryMCPServer:
                             "use_semgrep": {
                                 "type": "boolean",
                                 "description": "Whether to include Semgrep analysis",
+                                "default": True,
+                            },
+                            "use_validation": {
+                                "type": "boolean",
+                                "description": "Whether to use LLM validation to filter false positives",
                                 "default": True,
                             },
                             "output_format": {
@@ -243,6 +253,11 @@ class AdversaryMCPServer:
                             "use_semgrep": {
                                 "type": "boolean",
                                 "description": "Whether to include Semgrep analysis",
+                                "default": True,
+                            },
+                            "use_validation": {
+                                "type": "boolean",
+                                "description": "Whether to use LLM validation to filter false positives",
                                 "default": True,
                             },
                             "output_format": {
@@ -293,6 +308,11 @@ class AdversaryMCPServer:
                             "use_semgrep": {
                                 "type": "boolean",
                                 "description": "Whether to include Semgrep analysis",
+                                "default": True,
+                            },
+                            "use_validation": {
+                                "type": "boolean",
+                                "description": "Whether to use LLM validation to filter false positives",
                                 "default": True,
                             },
                             "output_format": {
@@ -513,13 +533,27 @@ class AdversaryMCPServer:
         try:
             logger.info("Starting code scan")
 
-            content = arguments["content"]
-            path = arguments.get("path", ".")
-            severity_threshold = arguments.get("severity_threshold", "medium")
-            include_exploits = arguments.get("include_exploits", True)
-            use_llm = arguments.get("use_llm", False)
-            use_semgrep = arguments.get("use_semgrep", True)
-            output_format = arguments.get("output_format", "json")
+            # Validate and sanitize input parameters
+            content = self._validate_content(arguments.get("content"))
+            path = self._validate_path_parameter(arguments.get("path", "."))
+            severity_threshold = self._validate_severity_threshold(
+                arguments.get("severity_threshold", "medium")
+            )
+            include_exploits = self._validate_boolean_parameter(
+                arguments.get("include_exploits", True), "include_exploits"
+            )
+            use_llm = self._validate_boolean_parameter(
+                arguments.get("use_llm", False), "use_llm"
+            )
+            use_semgrep = self._validate_boolean_parameter(
+                arguments.get("use_semgrep", True), "use_semgrep"
+            )
+            use_validation = self._validate_boolean_parameter(
+                arguments.get("use_validation", True), "use_validation"
+            )
+            output_format = self._validate_output_format(
+                arguments.get("output_format", "json")
+            )
 
             # Validate and resolve the output directory path
             output_dir = self._validate_directory_path(path)
@@ -528,7 +562,7 @@ class AdversaryMCPServer:
             logger.debug(
                 f"Code scan parameters - Language: auto-detect, "
                 f"Severity: {severity_threshold}, LLM: {use_llm}, "
-                f"Semgrep: {use_semgrep}, Format: {output_format}"
+                f"Semgrep: {use_semgrep}, Validation: {use_validation}, Format: {output_format}"
             )
 
             severity_enum = Severity(severity_threshold)
@@ -544,6 +578,7 @@ class AdversaryMCPServer:
                 file_path="input.code",
                 use_llm=use_llm,
                 use_semgrep=use_semgrep,
+                use_validation=use_validation,
                 severity_threshold=severity_enum,
             )
             logger.info(
@@ -633,11 +668,12 @@ class AdversaryMCPServer:
             include_exploits = arguments.get("include_exploits", True)
             use_llm = arguments.get("use_llm", False)
             use_semgrep = arguments.get("use_semgrep", True)
+            use_validation = arguments.get("use_validation", True)
             output_format = arguments.get("output_format", "json")
 
             logger.debug(
                 f"File scan parameters - Severity: {severity_threshold}, "
-                f"LLM: {use_llm}, Semgrep: {use_semgrep}, Format: {output_format}"
+                f"LLM: {use_llm}, Semgrep: {use_semgrep}, Validation: {use_validation}, Format: {output_format}"
             )
 
             # Convert severity threshold to enum
@@ -649,6 +685,7 @@ class AdversaryMCPServer:
                 file_path=file_path,
                 use_llm=use_llm,
                 use_semgrep=use_semgrep,
+                use_validation=use_validation,
                 severity_threshold=severity_enum,
             )
             logger.info(
@@ -750,12 +787,13 @@ class AdversaryMCPServer:
             include_exploits = arguments.get("include_exploits", True)
             use_llm = arguments.get("use_llm", False)
             use_semgrep = arguments.get("use_semgrep", True)
+            use_validation = arguments.get("use_validation", True)
             output_format = arguments.get("output_format", "json")
 
             logger.debug(
                 f"Directory scan parameters - Recursive: {recursive}, "
                 f"Severity: {severity_threshold}, LLM: {use_llm}, "
-                f"Semgrep: {use_semgrep}, Format: {output_format}"
+                f"Semgrep: {use_semgrep}, Validation: {use_validation}, Format: {output_format}"
             )
 
             # Convert severity threshold to enum
@@ -768,6 +806,7 @@ class AdversaryMCPServer:
                 recursive=recursive,
                 use_llm=use_llm,
                 use_semgrep=use_semgrep,
+                use_validation=use_validation,
                 severity_threshold=severity_enum,
             )
 
@@ -872,6 +911,7 @@ class AdversaryMCPServer:
             include_exploits = arguments.get("include_exploits", True)
             use_llm = arguments.get("use_llm", False)
             use_semgrep = arguments.get("use_semgrep", True)
+            use_validation = arguments.get("use_validation", True)
             output_format = arguments.get("output_format", "json")
 
             # Convert severity threshold to enum
@@ -895,6 +935,7 @@ class AdversaryMCPServer:
                 working_dir=working_directory,
                 use_llm=use_llm,
                 use_semgrep=use_semgrep,
+                use_validation=use_validation,
                 severity_threshold=severity_enum,
             )
 
@@ -1499,12 +1540,6 @@ class AdversaryMCPServer:
                 result += "**Code Context:**\n"
                 result += f"```\n{threat.code_snippet}\n```\n\n"
 
-            if threat.exploit_examples:
-                result += "**Exploit Examples:**\n"
-                for j, exploit in enumerate(threat.exploit_examples, 1):
-                    result += f"*Example {j}:*\n"
-                    result += f"```\n{exploit}\n```\n\n"
-
             if threat.remediation:
                 result += f"**Remediation:** {threat.remediation}\n\n"
 
@@ -1594,12 +1629,6 @@ class AdversaryMCPServer:
             if threat.code_snippet:
                 result += "**Code Context:**\n"
                 result += f"```\n{threat.code_snippet}\n```\n\n"
-
-            if threat.exploit_examples:
-                result += "**Exploit Examples:**\n"
-                for j, exploit in enumerate(threat.exploit_examples, 1):
-                    result += f"*Example {j}:*\n"
-                    result += f"```\n{exploit}\n```\n\n"
 
             if threat.remediation:
                 result += f"**Remediation:** {threat.remediation}\n\n"
@@ -1809,9 +1838,6 @@ class AdversaryMCPServer:
 
                         if threat.code_snippet:
                             result += f"  Code: `{threat.code_snippet.strip()}`\n"
-
-                        if threat.exploit_examples:
-                            result += f"  Exploit Examples: {len(threat.exploit_examples)} available\n"
 
                         result += "\n"
 
@@ -2965,6 +2991,83 @@ class AdversaryMCPServer:
         ]
 
         return any((path / indicator).exists() for indicator in project_indicators)
+
+    def _validate_content(self, content: Any) -> str:
+        """Validate and sanitize content parameter."""
+        if content is None:
+            raise AdversaryToolError("content", "Content parameter is required")
+
+        if not isinstance(content, str):
+            raise AdversaryToolError("content", "Content must be a string")
+
+        # Check for reasonable size limits (10MB max)
+        max_size = 10 * 1024 * 1024
+        if len(content.encode("utf-8")) > max_size:
+            raise AdversaryToolError(
+                "content", f"Content exceeds maximum size of {max_size} bytes"
+            )
+
+        return content
+
+    def _validate_path_parameter(self, path: Any) -> str:
+        """Validate path parameter."""
+        if not isinstance(path, str):
+            raise AdversaryToolError("path", "Path must be a string")
+
+        # Sanitize path to prevent directory traversal
+        path = str(Path(path).resolve())
+
+        # Check for suspicious path patterns
+        suspicious_patterns = ["../", "..\\", "/etc/", "/var/", "/tmp/", "~"]
+        if any(pattern in path.lower() for pattern in suspicious_patterns):
+            logger.warning(f"Suspicious path detected: {path}")
+
+        return path
+
+    def _validate_severity_threshold(self, threshold: Any) -> str:
+        """Validate severity threshold parameter."""
+        if not isinstance(threshold, str):
+            raise AdversaryToolError(
+                "severity_threshold", "Severity threshold must be a string"
+            )
+
+        valid_thresholds = ["low", "medium", "high", "critical"]
+        if threshold.lower() not in valid_thresholds:
+            raise AdversaryToolError(
+                "severity_threshold",
+                f"Severity threshold must be one of: {', '.join(valid_thresholds)}",
+            )
+
+        return threshold.lower()
+
+    def _validate_boolean_parameter(self, value: Any, param_name: str) -> bool:
+        """Validate boolean parameter."""
+        if isinstance(value, bool):
+            return value
+
+        if isinstance(value, str):
+            if value.lower() in ["true", "1", "yes", "on"]:
+                return True
+            elif value.lower() in ["false", "0", "no", "off"]:
+                return False
+
+        raise AdversaryToolError(
+            param_name, f"Parameter {param_name} must be a boolean value"
+        )
+
+    def _validate_output_format(self, format_val: Any) -> str:
+        """Validate output format parameter."""
+        if not isinstance(format_val, str):
+            raise AdversaryToolError("output_format", "Output format must be a string")
+
+        valid_formats = ["json", "markdown", "text", "csv", "sarif"]
+        if format_val.lower() not in valid_formats:
+            raise AdversaryToolError(
+                "output_format",
+                f"Output format must be one of: {', '.join(valid_formats)}",
+            )
+
+        return format_val.lower()
 
     async def run(self) -> None:
         """Run the MCP server."""
