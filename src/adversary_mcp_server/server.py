@@ -659,17 +659,33 @@ class AdversaryMCPServer:
         try:
             logger.info("Starting file scan")
 
+            # Debug: Log ALL arguments to see what MCP is actually passing
+            logger.info(f"MCP ARGUMENTS DEBUG: {arguments}")
+
             # Validate file path and ensure it's a file, not a directory
             path = arguments["path"]
             file_path = self._validate_file_path(path)
             logger.info(f"Scanning file: {file_path}")
 
             severity_threshold = arguments.get("severity_threshold", "medium")
-            include_exploits = arguments.get("include_exploits", True)
-            use_llm = arguments.get("use_llm", False)
-            use_semgrep = arguments.get("use_semgrep", True)
-            use_validation = arguments.get("use_validation", True)
+            include_exploits = self._validate_boolean_parameter(
+                arguments.get("include_exploits", True), "include_exploits"
+            )
+            use_llm = self._validate_boolean_parameter(
+                arguments.get("use_llm", False), "use_llm"
+            )
+            use_semgrep = self._validate_boolean_parameter(
+                arguments.get("use_semgrep", True), "use_semgrep"
+            )
+            use_validation = self._validate_boolean_parameter(
+                arguments.get("use_validation", True), "use_validation"
+            )
             output_format = arguments.get("output_format", "json")
+
+            # Debug: Specific validation parameter logging
+            logger.info(
+                f"VALIDATION DEBUG: Raw={arguments.get('use_validation')}, Processed={use_validation}, Type={type(use_validation)}"
+            )
 
             logger.debug(
                 f"File scan parameters - Severity: {severity_threshold}, "
@@ -782,12 +798,22 @@ class AdversaryMCPServer:
             directory_path = self._validate_directory_path(path)
             logger.info(f"Scanning directory: {directory_path}")
 
-            recursive = arguments.get("recursive", True)
+            recursive = self._validate_boolean_parameter(
+                arguments.get("recursive", True), "recursive"
+            )
             severity_threshold = arguments.get("severity_threshold", "medium")
-            include_exploits = arguments.get("include_exploits", True)
-            use_llm = arguments.get("use_llm", False)
-            use_semgrep = arguments.get("use_semgrep", True)
-            use_validation = arguments.get("use_validation", True)
+            include_exploits = self._validate_boolean_parameter(
+                arguments.get("include_exploits", True), "include_exploits"
+            )
+            use_llm = self._validate_boolean_parameter(
+                arguments.get("use_llm", False), "use_llm"
+            )
+            use_semgrep = self._validate_boolean_parameter(
+                arguments.get("use_semgrep", True), "use_semgrep"
+            )
+            use_validation = self._validate_boolean_parameter(
+                arguments.get("use_validation", True), "use_validation"
+            )
             output_format = arguments.get("output_format", "json")
 
             logger.debug(
@@ -908,10 +934,18 @@ class AdversaryMCPServer:
             logger.info(f"Diff scan - working_directory: {working_directory}")
 
             severity_threshold = arguments.get("severity_threshold", "medium")
-            include_exploits = arguments.get("include_exploits", True)
-            use_llm = arguments.get("use_llm", False)
-            use_semgrep = arguments.get("use_semgrep", True)
-            use_validation = arguments.get("use_validation", True)
+            include_exploits = self._validate_boolean_parameter(
+                arguments.get("include_exploits", True), "include_exploits"
+            )
+            use_llm = self._validate_boolean_parameter(
+                arguments.get("use_llm", False), "use_llm"
+            )
+            use_semgrep = self._validate_boolean_parameter(
+                arguments.get("use_semgrep", True), "use_semgrep"
+            )
+            use_validation = self._validate_boolean_parameter(
+                arguments.get("use_validation", True), "use_validation"
+            )
             output_format = arguments.get("output_format", "json")
 
             # Convert severity threshold to enum
