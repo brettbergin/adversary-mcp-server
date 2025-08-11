@@ -3,10 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="{{ security.csp_header }}">
     <title>Adversary MCP Server Dashboard</title>
-    <link rel="stylesheet" href="static/dashboard.css">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.js" integrity="sha384-iU8HYtnGQ8Cy4zl7gbNMOhsDTTKX02BTXptVP/vqAWIaTfM7isw76iyZCsjL2eVi" crossorigin="anonymous"></script>
+    <style>
+        {{ css_content }}
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
     <div class="dashboard-container">
@@ -47,7 +48,7 @@
                 <div class="health-metrics">
                     <div class="metric">
                         <span class="label">Database Size:</span>
-                        <span class="value">{{ scan_engine.total_scans | format_size }}B</span>
+                        <span class="value">{{ metadata.db_size_bytes | format_size }}</span>
                     </div>
                     <div class="metric">
                         <span class="label">Total Scans:</span>
@@ -193,7 +194,9 @@
         </section>
     </div>
 
-    <script src="static/dashboard.js"></script>
+    <script>
+        {{ js_content }}
+    </script>
     <script>
         // Initialize charts with data
         const scanData = {

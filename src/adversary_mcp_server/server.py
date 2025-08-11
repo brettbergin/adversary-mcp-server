@@ -2281,7 +2281,7 @@ class AdversaryMCPServer:
                         "llm_validation_success", False
                     ),
                     "reason": scan_result.scan_metadata.get(
-                        "llm_validation_reason", "unknown"
+                        "llm_validation_reason", "disabled"
                     ),
                     "error": scan_result.scan_metadata.get(
                         "llm_validation_error", None

@@ -1095,6 +1095,50 @@ class ScanEngine:
         if self.metrics_collector:
             self.metrics_collector.record_scan_start("file", file_count=1)
 
+        # Use telemetry context manager for comprehensive tracking
+        if self.metrics_orchestrator:
+            with self.metrics_orchestrator.track_scan_execution(
+                trigger_source="scan_engine",
+                scan_type="file",
+                target_path=file_path_abs,
+                semgrep_enabled=use_semgrep,
+                llm_enabled=use_llm,
+                validation_enabled=use_validation,
+                file_count=1,
+            ) as scan_context:
+                return await self._scan_file_with_context(
+                    scan_context,
+                    file_path,
+                    file_path_abs,
+                    use_llm,
+                    use_semgrep,
+                    use_validation,
+                    severity_threshold,
+                )
+        else:
+            # Fallback without telemetry tracking
+            return await self._scan_file_with_context(
+                None,
+                file_path,
+                file_path_abs,
+                use_llm,
+                use_semgrep,
+                use_validation,
+                severity_threshold,
+            )
+
+    async def _scan_file_with_context(
+        self,
+        scan_context,
+        file_path: Path,
+        file_path_abs: str,
+        use_llm: bool,
+        use_semgrep: bool,
+        use_validation: bool,
+        severity_threshold: Severity | None,
+    ) -> EnhancedScanResult:
+        """Internal scan file implementation with telemetry context."""
+        scan_start_time = time.time()
         # Check cache if available
         cache_key = None
         cached_result = None
@@ -1370,6 +1414,37 @@ class ScanEngine:
             self.metrics_collector.record_scan_completion(
                 "file", duration, success=True, findings_count=len(result.all_threats)
             )
+
+        # Update telemetry context with scan results
+        if scan_context:
+            # Extract timing from metadata (if available)
+            if result.scan_metadata.get("semgrep_duration_ms"):
+                scan_context.semgrep_duration = result.scan_metadata[
+                    "semgrep_duration_ms"
+                ]
+            if result.scan_metadata.get("llm_duration_ms"):
+                scan_context.llm_duration = result.scan_metadata["llm_duration_ms"]
+            if result.scan_metadata.get("validation_duration_ms"):
+                scan_context.validation_duration = result.scan_metadata[
+                    "validation_duration_ms"
+                ]
+            if result.scan_metadata.get("cache_lookup_ms"):
+                scan_context.cache_lookup_duration = result.scan_metadata[
+                    "cache_lookup_ms"
+                ]
+
+            # Update result counts
+            scan_context.threats_found = len(result.all_threats)
+            scan_context.threats_validated = sum(
+                1 for t in result.all_threats if hasattr(t, "validated") and t.validated
+            )
+            scan_context.false_positives_filtered = result.scan_metadata.get(
+                "false_positives_filtered", 0
+            )
+
+            # Mark cache hit if applicable
+            if result.scan_metadata.get("cache_hit", False):
+                scan_context.mark_cache_hit()
 
         # Store result in cache if available
         if self.cache_manager and cache_key:

@@ -108,8 +108,8 @@ class LLMClient(ABC):
                 self.metrics_collector.record_llm_request(
                     provider=provider,
                     model=model,
-                    tokens=total_tokens,
-                    duration=duration,
+                    tokens_used=total_tokens,
+                    duration_ms=duration,
                     success=success,
                 )
                 logger.debug(

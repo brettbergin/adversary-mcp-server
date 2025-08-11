@@ -38,7 +38,7 @@ class PerformanceTester:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.db.close()
 
-    def time_function(self, func: Callable, runs: int = 5) -> dict[str, float]:
+    def time_function(self, func: Callable, runs: int = 5) -> dict[str, Any]:
         """Time a function execution multiple times and return statistics."""
         times = []
         for _ in range(runs):
@@ -65,9 +65,11 @@ class PerformanceTester:
         # Test different time ranges
         time_ranges = [1, 24, 168, 720]  # 1h, 1d, 1w, 1m
         for hours in time_ranges:
-            stats = self.time_function(
-                lambda: self.service.get_dashboard_data(hours), runs=3
-            )
+
+            def get_dashboard_data_for_hours(h=hours):
+                return self.service.get_dashboard_data(h)
+
+            stats = self.time_function(get_dashboard_data_for_hours, runs=3)
             results[f"dashboard_{hours}h"] = stats
             print(f"  Dashboard data ({hours}h): {stats['avg']:.4f}s avg")
 
@@ -114,44 +116,51 @@ class PerformanceTester:
 
         with self.service.get_repository() as repo:
             # MCP tool aggregation
-            mcp_agg = lambda: (
-                repo.session.query(
-                    MCPToolExecution.tool_name,
-                    func.count(MCPToolExecution.id).label("executions"),
-                    func.sum(MCPToolExecution.findings_count).label("total_findings"),
-                    func.avg(MCPToolExecution.execution_start).label("avg_start_time"),
+            def mcp_agg():
+                return (
+                    repo.session.query(
+                        MCPToolExecution.tool_name,
+                        func.count(MCPToolExecution.id).label("executions"),
+                        func.sum(MCPToolExecution.findings_count).label(
+                            "total_findings"
+                        ),
+                        func.avg(MCPToolExecution.execution_start).label(
+                            "avg_start_time"
+                        ),
+                    )
+                    .group_by(MCPToolExecution.tool_name)
+                    .all()
                 )
-                .group_by(MCPToolExecution.tool_name)
-                .all()
-            )
 
             # CLI command aggregation
-            cli_agg = lambda: (
-                repo.session.query(
-                    CLICommandExecution.command_name,
-                    func.count(CLICommandExecution.id).label("executions"),
-                    func.sum(CLICommandExecution.findings_count).label(
-                        "total_findings"
-                    ),
-                    func.avg(CLICommandExecution.exit_code).label("avg_exit_code"),
+            def cli_agg():
+                return (
+                    repo.session.query(
+                        CLICommandExecution.command_name,
+                        func.count(CLICommandExecution.id).label("executions"),
+                        func.sum(CLICommandExecution.findings_count).label(
+                            "total_findings"
+                        ),
+                        func.avg(CLICommandExecution.exit_code).label("avg_exit_code"),
+                    )
+                    .group_by(CLICommandExecution.command_name)
+                    .all()
                 )
-                .group_by(CLICommandExecution.command_name)
-                .all()
-            )
 
             # Cache performance aggregation
-            cache_agg = lambda: (
-                repo.session.query(
-                    CacheOperationMetric.cache_name,
-                    func.count(CacheOperationMetric.id).label("operations"),
-                    func.avg(CacheOperationMetric.access_time_ms).label(
-                        "avg_access_time"
-                    ),
-                    func.sum(CacheOperationMetric.size_bytes).label("total_size"),
+            def cache_agg():
+                return (
+                    repo.session.query(
+                        CacheOperationMetric.cache_name,
+                        func.count(CacheOperationMetric.id).label("operations"),
+                        func.avg(CacheOperationMetric.access_time_ms).label(
+                            "avg_access_time"
+                        ),
+                        func.sum(CacheOperationMetric.size_bytes).label("total_size"),
+                    )
+                    .group_by(CacheOperationMetric.cache_name)
+                    .all()
                 )
-                .group_by(CacheOperationMetric.cache_name)
-                .all()
-            )
 
             aggregations = {
                 "mcp_tool_aggregation": mcp_agg,

@@ -52,11 +52,16 @@ class ComprehensiveHTMLDashboard:
         dashboard_data = self.telemetry.get_dashboard_data(hours)
 
         # Add metadata
+        db_size_bytes = 0
+        if self.db.db_path.exists():
+            db_size_bytes = self.db.db_path.stat().st_size
+
         dashboard_data["metadata"] = {
             "generated_at": time.time(),
             "hours_covered": hours,
             "database_path": str(self.db.db_path),
             "dashboard_version": "1.0.0",
+            "db_size_bytes": db_size_bytes,
         }
 
         # Generate HTML from template
@@ -64,8 +69,17 @@ class ComprehensiveHTMLDashboard:
 
         # Add security headers to template data
         dashboard_data["security"] = {
-            "csp_header": "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data:;"
+            "csp_header": "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdn.jsdelivr.net/npm/chart.js; style-src 'self' 'unsafe-inline'; img-src 'self' data:;"
         }
+
+        # Inline CSS and JS content
+        css_file = self.static_dir / "dashboard.css"
+        js_file = self.static_dir / "dashboard.js"
+
+        dashboard_data["css_content"] = (
+            css_file.read_text() if css_file.exists() else ""
+        )
+        dashboard_data["js_content"] = js_file.read_text() if js_file.exists() else ""
 
         # Secure template rendering - validate data types and sanitize
         safe_dashboard_data = self._sanitize_dashboard_data(dashboard_data)
@@ -304,7 +318,7 @@ class DashboardAssetManager:
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Adversary MCP Server Dashboard</title>
     <link rel="stylesheet" href="static/dashboard.css">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.js" integrity="sha384-iU8HYtnGQ8Cy4zl7gbNMOhsDTTKX02BTXptVP/vqAWIaTfM7isw76iyZCsjL2eVi" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
     <div class="dashboard-container">

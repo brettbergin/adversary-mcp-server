@@ -398,6 +398,33 @@ class LLMScanner:
             logger.error(f"Failed to create analysis prompt for {file_path_abs}: {e}")
             raise
 
+    def _strip_markdown_code_blocks(self, response_text: str) -> str:
+        """Strip markdown code blocks from JSON responses.
+
+        LLMs often wrap JSON responses in ```json ... ``` blocks,
+        but our parser expects raw JSON.
+
+        Args:
+            response_text: Raw response that may contain markdown
+
+        Returns:
+            Clean JSON string
+        """
+        # Remove common markdown code block patterns
+        response_text = response_text.strip()
+
+        # Handle ```json ... ``` pattern
+        if response_text.startswith("```json"):
+            response_text = response_text[7:]  # Remove ```json
+        elif response_text.startswith("```"):
+            response_text = response_text[3:]  # Remove ```
+
+        # Remove trailing ```
+        if response_text.endswith("```"):
+            response_text = response_text[:-3]
+
+        return response_text.strip()
+
     def parse_analysis_response(
         self, response_text: str, file_path: str
     ) -> list[LLMSecurityFinding]:
@@ -419,9 +446,10 @@ class LLMScanner:
             return []
 
         try:
-            # Try to parse as JSON first
+            # Strip markdown code blocks first
+            clean_response = self._strip_markdown_code_blocks(response_text)
             logger.debug("Attempting to parse response as JSON")
-            data = json.loads(response_text)
+            data = json.loads(clean_response)
             logger.debug(
                 f"Successfully parsed JSON, data keys: {list(data.keys()) if isinstance(data, dict) else type(data)}"
             )
@@ -1518,7 +1546,9 @@ Response format:
             List of security findings
         """
         try:
-            data = json.loads(response_text)
+            # Strip markdown code blocks first
+            clean_response = self._strip_markdown_code_blocks(response_text)
+            data = json.loads(clean_response)
             findings = []
 
             for finding_data in data.get("findings", []):
@@ -1712,7 +1742,9 @@ Provide up to {total_findings_limit} security findings total (max {max_findings_
             List of security findings
         """
         try:
-            data = json.loads(response_text)
+            # Strip markdown code blocks first
+            clean_response = self._strip_markdown_code_blocks(response_text)
+            data = json.loads(clean_response)
             findings = []
 
             # Extract summary information if available

@@ -1120,7 +1120,9 @@ def scan(
         # Export metrics to persist scan data for monitoring
         if metrics_collector:
             try:
-                metrics_file = metrics_collector.export_metrics()
+                import asyncio
+
+                metrics_file = asyncio.run(metrics_collector.export_metrics())
                 if metrics_file:
                     logger.debug(f"Scan metrics exported to: {metrics_file}")
             except Exception as e:

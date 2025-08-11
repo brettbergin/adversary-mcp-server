@@ -414,19 +414,56 @@ class ScanResultFormatter:
         )
         md_lines.append("")
 
-        # Collect all threats
+        # Collect all threats and calculate correct file counts
         all_threats = []
         files_with_issues = 0
+        total_files_scanned = 0
 
         for scan_result in scan_results:
             if scan_result.all_threats:
-                files_with_issues += 1
                 all_threats.extend(scan_result.all_threats)
+
+            # Calculate correct file count for directory scans
+            try:
+                if (
+                    hasattr(scan_result, "scan_metadata")
+                    and isinstance(scan_result.scan_metadata, dict)
+                    and scan_result.scan_metadata.get("directory_scan")
+                    and "directory_files_info" in scan_result.scan_metadata
+                ):
+                    # Use the pre-computed file information from directory scan
+                    files_info = scan_result.scan_metadata.get(
+                        "directory_files_info", []
+                    )
+                    if isinstance(files_info, list):
+                        total_files_scanned += len(files_info)
+                        files_with_issues += len(
+                            [f for f in files_info if f.get("issues_identified", False)]
+                        )
+                    else:
+                        logger.warning(
+                            f"directory_files_info is not a list in markdown formatter: {type(files_info)}"
+                        )
+                        total_files_scanned += 1
+                        if scan_result.all_threats:
+                            files_with_issues += 1
+                else:
+                    # Handle individual file scans (original logic)
+                    total_files_scanned += 1
+                    if scan_result.all_threats:
+                        files_with_issues += 1
+            except (AttributeError, TypeError) as e:
+                logger.debug(
+                    f"Error calculating file counts in markdown formatter: {e}"
+                )
+                total_files_scanned += 1
+                if scan_result.all_threats:
+                    files_with_issues += 1
 
         # Summary statistics
         md_lines.append("## Summary")
         md_lines.append("")
-        md_lines.append(f"- **Files Scanned:** {len(scan_results)}")
+        md_lines.append(f"- **Files Scanned:** {total_files_scanned}")
         md_lines.append(f"- **Files with Issues:** {files_with_issues}")
         md_lines.append(f"- **Total Threats Found:** {len(all_threats)}")
 
