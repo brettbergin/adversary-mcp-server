@@ -103,9 +103,6 @@ Create `.cursor/mcp.json` in your project:
     "adversary": {
       "command": "uv",
       "args": ["run", "adversary-mcp-server"],
-      "env": {
-        "ADVERSARY_WORKSPACE_ROOT": "${workspaceFolder}"
-      }
     }
   }
 }
@@ -121,9 +118,6 @@ Create `.cursor/mcp.json` in your project:
     "adversary": {
       "command": "python",
       "args": ["-m", "adversary_mcp_server.server"],
-      "env": {
-        "ADVERSARY_WORKSPACE_ROOT": "${workspaceFolder}"
-      }
     }
   }
 }
