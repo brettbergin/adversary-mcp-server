@@ -298,3 +298,9 @@ Full command-line interface with validation support:
 - Status command shows validation availability and configuration
 - Git diff scanning fully supported with validation
 - JSON output includes validation statistics and metadata
+
+- I want to define something called a symmetry test. I want the symmetry test, when I ask for it, to test both the MCP tool as well as the scan tool and ensure that both of the scan results with the same configuration come back symmetrical. This way we know that the CLI interface and the MCP tool interface are both getting the same results back to the user. I want to do this for the file tool and the scan file logic in the CLI, and I want to do it for the folder tool and the scan subcommand in the CLI pointing to that folder. Can you help remember so that when I say symmetry test, you know to perform these things?
+- Make sure that when I call for a symmetry test, we target the examples/ subfolder in the project. Pick any file within that folder for your file testing.
+- use your Bash and my MCP tools as part of the testing when I call for a symmetry test.
+
+- Please do not use any inline import statement. All imports should go at the top of the file and be ordered with pythonic order.

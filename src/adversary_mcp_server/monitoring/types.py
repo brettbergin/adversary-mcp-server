@@ -93,6 +93,26 @@ class ScanMetrics:
     average_batch_size: float = 0.0
     batch_success_rate: float = 0.0
 
+    def increment_scans(self) -> None:
+        """Increment total scan count."""
+        self.total_scans += 1
+
+    def increment_successful_scans(self) -> None:
+        """Increment successful scan count."""
+        self.successful_scans += 1
+
+    def increment_failed_scans(self) -> None:
+        """Increment failed scan count."""
+        self.failed_scans += 1
+
+    def add_scan_time(self, duration: float) -> None:
+        """Add scan duration to total."""
+        self.total_scan_time += duration
+
+    def add_findings(self, count: int) -> None:
+        """Add findings count."""
+        self.total_findings += count
+
     def calculate_derived_metrics(self) -> None:
         """Calculate derived metrics from base metrics."""
         if self.total_scans > 0:

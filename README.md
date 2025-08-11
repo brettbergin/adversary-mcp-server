@@ -24,9 +24,10 @@
 - 🤖 **AI-Powered Analysis** - OpenAI/Anthropic LLM integration for intelligent vulnerability detection.
 - 🎯 **Smart Validation** - Reduces false positives with LLM validation
 - 🔍 **Multi-Engine Scanning** - Combines Semgrep static analysis & AI analysis
-- 📊 **Real-Time Dashboard** - Monitor scans with live metrics and progress tracking
+- 📊 **Interactive Dashboard** - Rich web-based telemetry with Chart.js visualizations and comprehensive analytics
 - 🚀 **Git Diff Scanning** - Analyze only changed code for faster CI/CD integration
 - 📦 **Monorepo Ready** - Optimized for large codebases with batch processing
+- 📈 **Performance Telemetry** - Automatic tracking of all operations with SQLAlchemy backend
 
 ## Installation
 
@@ -163,6 +164,9 @@ adversary-mcp-cli status
 # Scan files or directories
 adversary-mcp-cli scan <path> [options]
 
+# Launch comprehensive telemetry dashboard
+adversary-mcp-cli dashboard
+
 # Manage false positives
 adversary-mcp-cli mark-false-positive <finding-id>
 adversary-mcp-cli unmark-false-positive <finding-id>
@@ -185,6 +189,22 @@ adversary-mcp-cli scan ./src --json --output results.json
 
 # Scan with specific severity threshold
 adversary-mcp-cli scan ./src --min-severity high
+```
+
+### Dashboard Commands
+
+```bash
+# Launch comprehensive telemetry dashboard
+adversary-mcp-cli dashboard
+
+# Dashboard for specific time period
+adversary-mcp-cli dashboard --hours 72
+
+# Generate dashboard without auto-launch
+adversary-mcp-cli dashboard --no-launch
+
+# Check telemetry system status
+adversary-mcp-cli status
 ```
 
 ### Advanced Options
@@ -229,32 +249,32 @@ adversary-mcp-cli scan ./src --min-severity high
 
 ```
 
-## Dashboard & Monitoring
+## Dashboard & Telemetry
 
-### Real-Time Scan Dashboard
+### Comprehensive HTML Dashboard
 
-The scanner includes a live dashboard for monitoring long-running scans:
+The scanner includes a rich web-based dashboard for comprehensive telemetry analysis:
 
 ```bash
-# Scan with dashboard enabled
-adversary-mcp-cli scan ./large-repo --use-llm --use-validation
+# Launch interactive dashboard
+adversary-mcp-cli dashboard
 
-# Dashboard shows:
-# ┌─────────────────────────────────────┐
-# │ 📊 Security Scan Progress           │
-# │                                     │
-# │ Files: ████████░░ 156/200 (78%)    │
-# │ Time: 00:02:34                     │
-# │ Speed: 1.2 files/sec               │
-# │                                     │
-# │ Findings by Severity:              │
-# │ 🔴 Critical: 2                     │
-# │ 🟠 High: 5                         │
-# │ 🟡 Medium: 12                      │
-# │                                     │
-# │ Status: Analyzing authentication... │
-# └─────────────────────────────────────┘
+# Open dashboard for specific time period
+adversary-mcp-cli dashboard --hours 48
+
+# Generate dashboard without auto-launch
+adversary-mcp-cli dashboard --no-launch
 ```
+
+**Dashboard Features:**
+- 📊 **Interactive Charts** - Real-time performance metrics with Chart.js visualizations
+- 🔍 **MCP Tool Analytics** - Track tool usage, success rates, and performance across Cursor IDE
+- ⚡ **Scan Engine Metrics** - Monitor Semgrep, LLM, and validation performance
+- 💾 **Cache Performance** - Analyze cache hit rates and efficiency
+- 🎯 **Threat Analysis** - Categorize findings by severity and confidence
+- 🏥 **System Health** - CPU, memory, and database performance monitoring
+- 📈 **Language Performance** - Track scanning efficiency by programming language
+- 🕒 **Recent Activity** - Timeline view of recent scans and operations
 
 ### Performance Metrics
 
@@ -276,6 +296,17 @@ Include `--include-stats` to see detailed metrics:
 }
 ```
 
+### Telemetry System
+
+Adversary MCP Server includes comprehensive telemetry tracking:
+
+- **Automatic Collection** - All MCP tools, CLI commands, and scan operations are automatically tracked
+- **SQLAlchemy Backend** - Production-quality database with rich query capabilities
+- **Zero Configuration** - Telemetry works out-of-the-box with no setup required
+- **Privacy First** - All data stored locally, never transmitted to external services
+- **Performance Insights** - Identify bottlenecks and optimize scanning workflows
+- **Usage Analytics** - Understand tool usage patterns and effectiveness
+
 ## Architecture
 
 <div align="center">
@@ -285,51 +316,69 @@ graph TB
     subgraph "Client Layer"
         A[Cursor IDE]
         B[CLI Interface]
+        C[Web Dashboard]
     end
 
     subgraph "MCP Server"
-        C[Protocol Handler]
-        D[Tool Registry]
+        D[Protocol Handler]
+        E[Tool Registry]
     end
 
     subgraph "Scan Engine"
-        E[Orchestrator]
-        F[Semgrep Scanner]
-        G[LLM Scanner]
-        H[Git Diff Scanner]
+        F[Orchestrator]
+        G[Semgrep Scanner]
+        H[LLM Scanner]
+        I[Git Diff Scanner]
     end
 
     subgraph "AI Validation"
-        I[LLM Validator]
-        J[False Positive Filter]
+        J[LLM Validator]
+        K[False Positive Filter]
+    end
+
+    subgraph "Telemetry System"
+        L[Metrics Orchestrator]
+        M[Telemetry Service]
+        N[SQLAlchemy Database]
+        O[HTML Dashboard Generator]
     end
 
     subgraph "Results"
-        K[Finding Aggregator]
-        L[Report Generator]
+        P[Finding Aggregator]
+        Q[Report Generator]
     end
 
-    A -->|MCP Protocol| C
-    B -->|Direct Call| E
-    C --> D
+    A -->|MCP Protocol| D
+    B -->|Direct Call| F
+    C -->|Web Interface| O
     D --> E
-
     E --> F
-    E --> G
-    E --> H
 
-    F --> K
-    G --> K
-    H --> K
+    F --> G
+    F --> H
+    F --> I
+    F -.->|Track Performance| L
 
-    K --> I
-    I --> J
-    J --> L
+    G --> P
+    H --> P
+    I --> P
 
-    style E fill:#e1f5fe
-    style I fill:#f3e5f5
-    style F fill:#e8f5e8
-    style G fill:#fff3e0
+    P --> J
+    J --> K
+    K --> Q
+
+    L --> M
+    M --> N
+    M --> O
+    D -.->|Track MCP Tools| L
+    B -.->|Track CLI Commands| L
+
+    style F fill:#e1f5fe
+    style J fill:#f3e5f5
+    style G fill:#e8f5e8
+    style H fill:#fff3e0
+    style L fill:#fff8e1
+    style O fill:#f1f8e9
 ```
 
 </div>
@@ -340,7 +389,9 @@ graph TB
 2. **Intelligent Validation**: LLM validator reduces false positives
 3. **Batch Processing**: Optimizes API calls for large codebases
 4. **Git Integration**: Focuses on changed code for faster CI/CD
-5. **Real-Time Feedback**: Live dashboard for long-running scans
+5. **Comprehensive Telemetry**: Automatic performance tracking with SQLAlchemy backend
+6. **Interactive Dashboard**: Rich web-based analytics with Chart.js visualizations
+7. **Zero-Config Monitoring**: Telemetry works out-of-the-box with automatic migration
 
 ## Configuration
 
@@ -369,8 +420,25 @@ Settings are stored in `~/.adversary/config.json`:
   "llm_provider": "openai",
   "enable_validation": true,
   "severity_threshold": "medium",
-  "enable_caching": true
+  "enable_caching": true,
+  "telemetry_enabled": true,
+  "dashboard_auto_launch": true
 }
+```
+
+### Dashboard Configuration
+
+The telemetry system creates a unified SQLAlchemy database at:
+- **Location**: `~/.local/share/adversary-mcp-server/cache/adversary.db`
+- **Migration**: Existing JSON metrics automatically migrated on first dashboard use
+- **Retention**: Data retained indefinitely for historical analysis (configurable)
+
+```bash
+# Check telemetry status
+adversary-mcp-cli status
+
+# Manually run migration (if needed)
+python -m adversary_mcp_server.migration.database_migration
 ```
 
 ## CI/CD Integration
@@ -433,14 +501,22 @@ make dev
 ### Running Tests
 
 ```bash
-# Full test suite
+# Full test suite (includes telemetry and dashboard tests)
 make test
 
 # Quick tests (no coverage)
 make test-fast
 
-# Specific test file
+# Specific test modules
 pytest tests/test_scanner.py -v
+pytest tests/test_telemetry_system.py -v
+pytest tests/test_dashboard_system.py -v
+
+# Run only integration tests
+make test-integration
+
+# Run security-specific tests
+make test-security
 ```
 
 ## Support

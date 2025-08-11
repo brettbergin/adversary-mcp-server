@@ -10,148 +10,18 @@ except ImportError:
     pathspec = None
 
 from ..logger import get_logger
+from .language_mapping import (
+    BINARY_EXTENSIONS,
+    DEFAULT_EXCLUDE_DIRS,
+    DEFAULT_EXCLUDE_PATTERNS,
+    VENV_INDICATORS,
+)
 
 logger = get_logger("file_filter")
 
 
 class FileFilter:
     """File filtering utilities for smart file discovery and exclusion."""
-
-    # Common binary file extensions to skip
-    BINARY_EXTENSIONS = {
-        ".exe",
-        ".dll",
-        ".so",
-        ".dylib",
-        ".bin",
-        ".jar",
-        ".war",
-        ".ear",
-        ".zip",
-        ".tar",
-        ".gz",
-        ".bz2",
-        ".xz",
-        ".7z",
-        ".rar",
-        ".pdf",
-        ".doc",
-        ".docx",
-        ".xls",
-        ".xlsx",
-        ".ppt",
-        ".pptx",
-        ".png",
-        ".jpg",
-        ".jpeg",
-        ".gif",
-        ".bmp",
-        ".svg",
-        ".ico",
-        ".tiff",
-        ".webp",
-        ".mp3",
-        ".mp4",
-        ".avi",
-        ".mov",
-        ".wmv",
-        ".flv",
-        ".wav",
-        ".ogg",
-        ".woff",
-        ".woff2",
-        ".ttf",
-        ".eot",
-        ".otf",
-    }
-
-    # Common directories to exclude by default
-    DEFAULT_EXCLUDE_DIRS = {
-        ".git",
-        ".svn",
-        ".hg",
-        ".bzr",
-        "__pycache__",
-        ".pytest_cache",
-        ".mypy_cache",
-        ".ruff_cache",
-        "node_modules",
-        ".npm",
-        ".yarn",
-        "build",
-        "dist",
-        "target",
-        ".target",
-        "coverage",
-        "htmlcov",
-        ".coverage",
-        ".tox",
-        ".venv",
-        "venv",
-        "env",
-        ".env",
-        "virtualenv",
-        ".virtualenv",
-        "pyenv",
-        ".pyenv",
-        # Additional virtual environment patterns
-        "venv3",
-        "venv2",
-        ".python-version",
-        "site-packages",
-        "lib/python3.9",
-        "lib/python3.10",
-        "lib/python3.11",
-        "lib/python3.12",
-        "pyvenv.cfg",
-        "vendor",
-        "Pods",
-        ".gradle",
-        ".idea",
-        ".vscode",
-        ".DS_Store",
-        "Thumbs.db",
-    }
-
-    # Common file patterns to exclude
-    DEFAULT_EXCLUDE_PATTERNS = {
-        "*.log",
-        "*.tmp",
-        "*.temp",
-        "*.cache",
-        "*.lock",
-        ".gitignore",
-        ".gitattributes",
-        ".editorconfig",
-        "*.pid",
-        "*.swp",
-        "*.swo",
-        "*~",
-        "*.orig",
-        "*.rej",
-        ".DS_Store",
-        "Thumbs.db",
-        "*.min.js",
-        "*.min.css",
-        "package-lock.json",
-        "yarn.lock",
-        "Cargo.lock",
-        "Pipfile.lock",
-        "poetry.lock",
-        "*.generated.*",
-        "*.gen.*",
-        "*_pb2.py",
-        "*_pb2_grpc.py",
-        # Virtual environment files
-        "pyvenv.cfg",
-        "*.pth",
-        "RECORD",
-        "INSTALLER",
-        "METADATA",
-        "WHEEL",
-        "*.dist-info/*",
-        "*.egg-info/*",
-    }
 
     def __init__(
         self,
@@ -217,7 +87,7 @@ class FileFilter:
     def _is_binary_file(self, file_path: Path) -> bool:
         """Check if file is likely binary."""
         # Check by extension first (fast)
-        if file_path.suffix.lower() in self.BINARY_EXTENSIONS:
+        if file_path.suffix.lower() in BINARY_EXTENSIONS:
             return True
 
         # Check by MIME type
@@ -283,19 +153,7 @@ class FileFilter:
         path_parts = [part.lower() for part in file_path.parts]
 
         # Check for common virtual environment indicators in path
-        venv_indicators = [
-            ".venv",
-            "venv",
-            "env",
-            ".env",
-            "virtualenv",
-            ".virtualenv",
-            "site-packages",
-            "lib/python",
-            "pyvenv.cfg",
-        ]
-
-        for indicator in venv_indicators:
+        for indicator in VENV_INDICATORS:
             if indicator in path_str:
                 logger.debug(
                     f"File {file_path} excluded: virtual environment indicator '{indicator}'"
@@ -329,13 +187,13 @@ class FileFilter:
         """Check if file matches default exclude patterns."""
         # Check directory exclusions
         for part in file_path.parts:
-            if part in self.DEFAULT_EXCLUDE_DIRS:
+            if part in DEFAULT_EXCLUDE_DIRS:
                 return True
 
         # Check file pattern exclusions
         if pathspec:
             default_spec = pathspec.PathSpec.from_lines(
-                "gitwildmatch", self.DEFAULT_EXCLUDE_PATTERNS
+                "gitwildmatch", DEFAULT_EXCLUDE_PATTERNS
             )
             try:
                 resolved_file_path = file_path.resolve()

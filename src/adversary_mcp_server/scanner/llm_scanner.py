@@ -22,7 +22,7 @@ from ..credentials import CredentialManager
 from ..llm import LLMClient, LLMProvider, create_llm_client
 from ..logger import get_logger
 from ..resilience import ErrorHandler, ResilienceConfig
-from .language_mapping import LanguageMapper
+from .language_mapping import ANALYZABLE_SOURCE_EXTENSIONS, LanguageMapper
 from .types import Category, Severity, ThreatMatch
 
 logger = get_logger("llm_scanner")
@@ -292,6 +292,7 @@ class LLMScanner:
                     provider=LLMProvider(self.config.llm_provider),
                     api_key=self.config.llm_api_key,
                     model=self.config.llm_model,
+                    metrics_collector=self.metrics_collector,
                 )
                 logger.info("LLM client initialized successfully")
             else:
@@ -397,6 +398,33 @@ class LLMScanner:
             logger.error(f"Failed to create analysis prompt for {file_path_abs}: {e}")
             raise
 
+    def _strip_markdown_code_blocks(self, response_text: str) -> str:
+        """Strip markdown code blocks from JSON responses.
+
+        LLMs often wrap JSON responses in ```json ... ``` blocks,
+        but our parser expects raw JSON.
+
+        Args:
+            response_text: Raw response that may contain markdown
+
+        Returns:
+            Clean JSON string
+        """
+        # Remove common markdown code block patterns
+        response_text = response_text.strip()
+
+        # Handle ```json ... ``` pattern
+        if response_text.startswith("```json"):
+            response_text = response_text[7:]  # Remove ```json
+        elif response_text.startswith("```"):
+            response_text = response_text[3:]  # Remove ```
+
+        # Remove trailing ```
+        if response_text.endswith("```"):
+            response_text = response_text[:-3]
+
+        return response_text.strip()
+
     def parse_analysis_response(
         self, response_text: str, file_path: str
     ) -> list[LLMSecurityFinding]:
@@ -418,9 +446,10 @@ class LLMScanner:
             return []
 
         try:
-            # Try to parse as JSON first
+            # Strip markdown code blocks first
+            clean_response = self._strip_markdown_code_blocks(response_text)
             logger.debug("Attempting to parse response as JSON")
-            data = json.loads(response_text)
+            data = json.loads(clean_response)
             logger.debug(
                 f"Successfully parsed JSON, data keys: {list(data.keys()) if isinstance(data, dict) else type(data)}"
             )
@@ -1436,42 +1465,7 @@ Response format:
         Returns:
             True if file should be analyzed
         """
-        # Common source code extensions
-        analyzable_extensions = {
-            ".py",
-            ".js",
-            ".ts",
-            ".jsx",
-            ".tsx",
-            ".java",
-            ".c",
-            ".cpp",
-            ".cc",
-            ".h",
-            ".hpp",
-            ".cs",
-            ".go",
-            ".rs",
-            ".php",
-            ".rb",
-            ".swift",
-            ".kt",
-            ".scala",
-            ".r",
-            ".m",
-            ".mm",
-            ".sh",
-            ".bash",
-            ".zsh",
-            ".ps1",
-            ".pl",
-            ".lua",
-            ".dart",
-            ".vue",
-            ".svelte",
-        }
-
-        return file_path.suffix.lower() in analyzable_extensions
+        return file_path.suffix.lower() in ANALYZABLE_SOURCE_EXTENSIONS
 
     def _detect_language(self, file_path: Path) -> str:
         """Detect programming language from file extension using shared mapper.
@@ -1552,7 +1546,9 @@ Response format:
             List of security findings
         """
         try:
-            data = json.loads(response_text)
+            # Strip markdown code blocks first
+            clean_response = self._strip_markdown_code_blocks(response_text)
+            data = json.loads(clean_response)
             findings = []
 
             for finding_data in data.get("findings", []):
@@ -1746,7 +1742,9 @@ Provide up to {total_findings_limit} security findings total (max {max_findings_
             List of security findings
         """
         try:
-            data = json.loads(response_text)
+            # Strip markdown code blocks first
+            clean_response = self._strip_markdown_code_blocks(response_text)
+            data = json.loads(clean_response)
             findings = []
 
             # Extract summary information if available

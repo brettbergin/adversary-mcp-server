@@ -190,6 +190,7 @@ class LLMValidator:
                 provider=LLMProvider(provider_val),
                 api_key=api_key_val,
                 model=getattr(self.config, "llm_model", None),
+                metrics_collector=self.metrics_collector,
             )
             logger.info("LLM client initialized successfully for validator")
         else:

@@ -65,12 +65,25 @@ def prevent_network_calls():
     """Global fixture to prevent accidental network calls in tests."""
     # Mock subprocess calls that could make network requests
     mock_subprocess = Mock()
-    mock_subprocess.run = Mock(
-        side_effect=RuntimeError(
+
+    def smart_subprocess_run(args, **kwargs):
+        """Smart subprocess.run mock that allows semgrep version checks."""
+        # Allow semgrep version checks
+        if isinstance(args, list) and len(args) >= 2 and args[1] == "--version":
+            # Mock a successful semgrep version check
+            mock_result = Mock()
+            mock_result.returncode = 0
+            mock_result.stdout = b"semgrep 1.0.0"
+            mock_result.stderr = b""
+            return mock_result
+
+        # Block other subprocess calls
+        raise RuntimeError(
             "Real subprocess.run() calls are not allowed in tests! "
             "Please mock this call to prevent accidental network requests."
         )
-    )
+
+    mock_subprocess.run = smart_subprocess_run
     mock_subprocess.call = Mock(
         side_effect=RuntimeError(
             "Real subprocess.call() calls are not allowed in tests! "

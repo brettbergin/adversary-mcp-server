@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Adversary MCP Server Dashboard</title>
+    <style>
+        {{ css_content }}
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="dashboard-container">
+        <!-- Header -->
+        <header class="dashboard-header">
+            <h1>🛡️ Adversary MCP Server Dashboard</h1>
+            <div class="header-controls">
+                <div class="header-meta">
+                    <span class="generated-time">Generated: {{ metadata.generated_at | timestamp_to_datetime }}</span>
+                    <span class="coverage">Coverage: {{ metadata.hours_covered }} hours</span>
+                </div>
+                <div class="auto-refresh-controls">
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="autoRefreshToggle">
+                        <span class="toggle-slider"></span>
+                    </label>
+                    <span class="auto-refresh-label">Auto-refresh</span>
+                    <select id="refreshInterval" class="refresh-interval-dropdown" disabled>
+                        <option value="5000">5 seconds</option>
+                        <option value="10000">10 seconds</option>
+                        <option value="15000">15 seconds</option>
+                        <option value="30000" selected>30 seconds</option>
+                        <option value="60000">1 minute</option>
+                        <option value="120000">2 minutes</option>
+                        <option value="300000">5 minutes</option>
+                        <option value="600000">10 minutes</option>
+                        <option value="900000">15 minutes</option>
+                        <option value="1800000">30 minutes</option>
+                    </select>
+                </div>
+            </div>
+        </header>
+
+        <!-- System Status -->
+        <section class="status-overview">
+            <div class="status-card system-health">
+                <h2>System Health</h2>
+                <div class="health-metrics">
+                    <div class="metric">
+                        <span class="label">Database Size:</span>
+                        <span class="value">{{ metadata.db_size_bytes | format_size }}</span>
+                    </div>
+                    <div class="metric">
+                        <span class="label">Total Scans:</span>
+                        <span class="value">{{ scan_engine.total_scans }}</span>
+                    </div>
+                    <div class="metric">
+                        <span class="label">Cache Hit Rate:</span>
+                        <span class="value">{{ scan_engine.cache_hit_rate | percentage }}</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- MCP Tools Performance -->
+        <section class="mcp-tools-section">
+            <h2>MCP Tools Performance</h2>
+            <div class="tools-grid">
+                {% for tool in mcp_tools %}
+                <div class="tool-card">
+                    <h3>{{ tool.tool_name }}</h3>
+                    <div class="tool-stats">
+                        <div class="stat">
+                            <span class="label">Executions:</span>
+                            <span class="value">{{ tool.executions }}</span>
+                        </div>
+                        <div class="stat">
+                            <span class="label">Success Rate:</span>
+                            <span class="value">{{ tool.success_rate | percentage }}</span>
+                        </div>
+                        <div class="stat">
+                            <span class="label">Avg Duration:</span>
+                            <span class="value">{{ tool.avg_duration_ms | format_duration }}</span>
+                        </div>
+                        <div class="stat">
+                            <span class="label">Findings:</span>
+                            <span class="value">{{ tool.total_findings }}</span>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </section>
+
+        <!-- CLI Commands Performance -->
+        <section class="cli-commands-section">
+            <h2>CLI Commands Performance</h2>
+            <div class="commands-grid">
+                {% for cmd in cli_commands %}
+                <div class="command-card">
+                    <h3>{{ cmd.command_name }}</h3>
+                    <div class="command-stats">
+                        <div class="stat">
+                            <span class="label">Executions:</span>
+                            <span class="value">{{ cmd.executions }}</span>
+                        </div>
+                        <div class="stat">
+                            <span class="label">Success Rate:</span>
+                            <span class="value">{{ cmd.success_rate | percentage }}</span>
+                        </div>
+                        <div class="stat">
+                            <span class="label">Avg Duration:</span>
+                            <span class="value">{{ cmd.avg_duration_ms | format_duration }}</span>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </section>
+
+        <!-- Scan Engine Analytics -->
+        <section class="scan-analytics-section">
+            <h2>Scan Engine Analytics</h2>
+            <div class="analytics-grid">
+                <div class="analytics-card">
+                    <h3>Performance Breakdown</h3>
+                    <canvas id="scanPerformanceChart"></canvas>
+                </div>
+                <div class="analytics-card">
+                    <h3>Threat Categories</h3>
+                    <div class="threat-categories">
+                        {% for threat in threat_categories %}
+                        <div class="threat-category">
+                            <span class="category">{{ threat.category }}</span>
+                            <span class="severity severity-{{ threat.severity }}">{{ threat.severity }}</span>
+                            <span class="count">{{ threat.count }}</span>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Cache Performance -->
+        <section class="cache-section">
+            <h2>Cache Performance</h2>
+            <div class="cache-grid">
+                {% for cache in cache_performance %}
+                <div class="cache-card">
+                    <h3>{{ cache.cache_name }}</h3>
+                    <div class="cache-stats">
+                        <div class="stat">
+                            <span class="label">Hit Rate:</span>
+                            <span class="value">{{ cache.hit_rate | percentage }}</span>
+                        </div>
+                        <div class="stat">
+                            <span class="label">Size:</span>
+                            <span class="value">{{ cache.total_size_mb | format_size }}</span>
+                        </div>
+                        <div class="stat">
+                            <span class="label">Avg Access:</span>
+                            <span class="value">{{ cache.avg_access_time_ms | format_duration }}</span>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </section>
+
+        <!-- Language Performance -->
+        <section class="language-section">
+            <h2>Language Performance</h2>
+            <div class="language-grid">
+                {% for lang in language_performance %}
+                <div class="language-card">
+                    <h3>{{ lang.language }}</h3>
+                    <div class="language-stats">
+                        <div class="stat">
+                            <span class="label">Scans:</span>
+                            <span class="value">{{ lang.scans }}</span>
+                        </div>
+                        <div class="stat">
+                            <span class="label">Avg Duration:</span>
+                            <span class="value">{{ lang.avg_duration_ms | format_duration }}</span>
+                        </div>
+                        <div class="stat">
+                            <span class="label">Threats Found:</span>
+                            <span class="value">{{ lang.threats_found }}</span>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </section>
+    </div>
+
+    <script>
+        {{ js_content }}
+    </script>
+    <script>
+        // Initialize charts with data
+        const scanData = {
+            semgrep: {{ scan_engine.avg_semgrep_duration_ms }},
+            llm: {{ scan_engine.avg_llm_duration_ms }},
+            validation: {{ scan_engine.avg_validation_duration_ms }}
+        };
+        initializeScanPerformanceChart(scanData);
+    </script>
+</body>
+</html>

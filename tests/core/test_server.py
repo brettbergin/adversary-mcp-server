@@ -1476,3 +1476,97 @@ class TestServerUtilityMethods:
             "No false positives" in result[0].text
             or "0 false positives" in result[0].text
         )
+
+    def test_security_validation_integration(self):
+        """Test that security validation is properly integrated into server."""
+        from adversary_mcp_server.security import InputValidator
+
+        server = AdversaryMCPServer()
+
+        # Test that InputValidator is accessible and working
+        dangerous_args = {"path": "../../../etc/passwd", "severity_threshold": "medium"}
+
+        with pytest.raises(Exception):  # Should raise SecurityError or ValidationError
+            InputValidator.validate_mcp_arguments(dangerous_args)
+
+    def test_telemetry_collection_integration(self):
+        """Test that telemetry collection is properly integrated."""
+        server = AdversaryMCPServer()
+
+        # Verify telemetry components are initialized
+        assert hasattr(server, "telemetry_service")
+        assert hasattr(server, "metrics_orchestrator")
+        assert hasattr(server, "metrics_collector")
+
+        # Verify telemetry can be accessed
+        assert server.telemetry_service is not None
+        assert server.metrics_orchestrator is not None
+
+    def test_log_sanitization_integration(self):
+        """Test that log sanitization is working in server context."""
+        from adversary_mcp_server.security import sanitize_for_logging
+
+        # Test that sanitization is available and working
+        sensitive_data = {
+            "api_key": "sk-secret123",
+            "file_path": "/safe/path/test.py",
+            "password": "dangerous_password",
+        }
+
+        sanitized = sanitize_for_logging(sensitive_data)
+
+        # Verify sensitive data is redacted
+        assert "sk-secret123" not in sanitized
+        assert "dangerous_password" not in sanitized
+        assert "[REDACTED]" in sanitized
+
+        # Verify safe data is preserved
+        assert "/safe/path/test.py" in sanitized
+
+    @pytest.mark.asyncio
+    async def test_server_initialization_with_new_components(self):
+        """Test that server initializes correctly with all new Phase II and III components."""
+        with (
+            patch("adversary_mcp_server.server.get_credential_manager"),
+            patch("adversary_mcp_server.server.AdversaryDatabase"),
+            patch("adversary_mcp_server.server.TelemetryService"),
+            patch("adversary_mcp_server.server.MetricsCollectionOrchestrator"),
+            patch("adversary_mcp_server.server.ScanEngine"),
+            patch("adversary_mcp_server.server.ExploitGenerator"),
+            patch("adversary_mcp_server.server.FalsePositiveManager"),
+            patch("adversary_mcp_server.server.GitDiffScanner"),
+        ):
+
+            # Should initialize without errors
+            server = AdversaryMCPServer()
+
+            # Verify key components are set
+            assert hasattr(server, "db")
+            assert hasattr(server, "telemetry_service")
+            assert hasattr(server, "metrics_orchestrator")
+            assert hasattr(server, "scan_engine")
+            assert hasattr(server, "exploit_generator")
+            assert hasattr(server, "false_positive_manager")
+
+    def test_metrics_collection_availability(self):
+        """Test that metrics collection is available and configured."""
+        server = AdversaryMCPServer()
+
+        # Test metrics collector has required methods
+        assert hasattr(server.metrics_collector, "record_metric")
+
+        # Test metrics orchestrator has required methods
+        if hasattr(server, "metrics_orchestrator"):
+            assert hasattr(server.metrics_orchestrator, "track_cache_operation")
+
+    def test_security_error_handling_integration(self):
+        """Test that security errors are properly handled."""
+        from adversary_mcp_server.security import SecurityError
+
+        # Test SecurityError can be raised and caught
+        with pytest.raises(SecurityError):
+            raise SecurityError("Test security error")
+
+        # Test error has proper message
+        error = SecurityError("Custom message")
+        assert str(error) == "Custom message"

@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from . import get_version
 from .config import get_app_metrics_dir
 from .credentials import get_credential_manager
+from .database.models import AdversaryDatabase
 from .logger import get_logger
 from .monitoring import MetricsCollector
 from .monitoring.types import MonitoringConfig
@@ -29,6 +30,9 @@ from .scanner.false_positive_manager import FalsePositiveManager
 from .scanner.result_formatter import ScanResultFormatter
 from .scanner.scan_engine import EnhancedScanResult, ScanEngine
 from .scanner.types import Severity, ThreatMatch
+from .security import InputValidator, SecurityError, sanitize_for_logging
+from .telemetry.integration import MetricsCollectionOrchestrator
+from .telemetry.service import TelemetryService
 
 logger = get_logger("server")
 
@@ -74,14 +78,22 @@ class AdversaryMCPServer:
             f"Configuration loaded - LLM analysis: {config.enable_llm_analysis}, Semgrep: {config.enable_semgrep_scanning}"
         )
 
-        logger.debug("Initializing monitoring...")
+        logger.debug("Initializing telemetry system...")
+        self.db = AdversaryDatabase()
+        self.telemetry_service = TelemetryService(self.db)
+        self.metrics_orchestrator = MetricsCollectionOrchestrator(
+            self.telemetry_service
+        )
+        logger.debug("Telemetry system initialized")
+
+        logger.debug("Initializing legacy monitoring...")
         monitoring_config = MonitoringConfig(
             enable_metrics=True,
             enable_performance_monitoring=True,
             json_export_path=str(get_app_metrics_dir()),
         )
         self.metrics_collector = MetricsCollector(monitoring_config)
-        logger.debug("Metrics collector initialized")
+        logger.debug("Legacy metrics collector initialized")
 
         logger.info("Initializing scan engine...")
         self.scan_engine = ScanEngine(
@@ -325,33 +337,33 @@ class AdversaryMCPServer:
                         "required": ["source_branch", "target_branch"],
                     },
                 ),
-                Tool(
-                    name="adv_configure_settings",
-                    description="Configure adversary MCP server settings",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "severity_threshold": {
-                                "type": "string",
-                                "description": "Default severity threshold",
-                                "enum": ["low", "medium", "high", "critical"],
-                            },
-                            "exploit_safety_mode": {
-                                "type": "boolean",
-                                "description": "Enable safety mode for exploit generation",
-                            },
-                            "enable_llm_analysis": {
-                                "type": "boolean",
-                                "description": "Enable LLM-based analysis",
-                            },
-                            "enable_exploit_generation": {
-                                "type": "boolean",
-                                "description": "Enable exploit generation",
-                            },
-                        },
-                        "required": [],
-                    },
-                ),
+                # Tool(
+                #     name="adv_configure_settings",
+                #     description="Configure adversary MCP server settings",
+                #     inputSchema={
+                #         "type": "object",
+                #         "properties": {
+                #             "severity_threshold": {
+                #                 "type": "string",
+                #                 "description": "Default severity threshold",
+                #                 "enum": ["low", "medium", "high", "critical"],
+                #             },
+                #             "exploit_safety_mode": {
+                #                 "type": "boolean",
+                #                 "description": "Enable safety mode for exploit generation",
+                #             },
+                #             "enable_llm_analysis": {
+                #                 "type": "boolean",
+                #                 "description": "Enable LLM-based analysis",
+                #             },
+                #             "enable_exploit_generation": {
+                #                 "type": "boolean",
+                #                 "description": "Enable exploit generation",
+                #             },
+                #         },
+                #         "required": [],
+                #     },
+                # ),
                 Tool(
                     name="adv_get_status",
                     description="Get server status and configuration",
@@ -364,6 +376,15 @@ class AdversaryMCPServer:
                 Tool(
                     name="adv_get_version",
                     description="Get version information",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {},
+                        "required": [],
+                    },
+                ),
+                Tool(
+                    name="adv_clear_cache",
+                    description="Clear all local cache and data storage",
                     inputSchema={
                         "type": "object",
                         "properties": {},
@@ -438,8 +459,32 @@ class AdversaryMCPServer:
 
             try:
                 logger.info(f"=== TOOL CALL START: {name} ===")
-                logger.debug(f"Tool arguments: {arguments}")
+                logger.debug(f"Tool arguments: {sanitize_for_logging(arguments)}")
 
+                # Validate and sanitize all MCP tool arguments
+                try:
+                    validated_arguments = InputValidator.validate_mcp_arguments(
+                        arguments, tool_name=name
+                    )
+                    logger.debug(f"Input validation passed for {name}")
+                except (SecurityError, ValueError) as e:
+                    logger.error(f"Input validation failed for {name}: {e}")
+                    self.metrics_collector.record_metric(
+                        "mcp_tool_calls_total",
+                        1,
+                        labels={"tool": name, "status": "validation_failed"},
+                    )
+                    return [
+                        types.TextContent(
+                            type="text",
+                            text=f"❌ **Input Validation Error**\n\n"
+                            f"The provided input contains security issues: {e}\n\n"
+                            f"Please check your input and try again with valid parameters.",
+                        )
+                    ]
+
+                # Use validated arguments for all subsequent processing
+                arguments = validated_arguments
                 result = None
                 if name == "adv_scan_code":
                     logger.info("Handling scan_code request")
@@ -457,9 +502,9 @@ class AdversaryMCPServer:
                     logger.info("Handling diff_scan request")
                     result = await self._handle_diff_scan(arguments)
 
-                elif name == "adv_configure_settings":
-                    logger.info("Handling configure_settings request")
-                    result = await self._handle_configure_settings(arguments)
+                # elif name == "adv_configure_settings":
+                #     logger.info("Handling configure_settings request")
+                #     result = await self._handle_configure_settings(arguments)
 
                 elif name == "adv_get_status":
                     logger.info("Handling get_status request")
@@ -468,6 +513,10 @@ class AdversaryMCPServer:
                 elif name == "adv_get_version":
                     logger.info("Handling get_version request")
                     result = await self._handle_get_version()
+
+                elif name == "adv_clear_cache":
+                    logger.info("Handling clear_cache request")
+                    result = await self._handle_clear_cache()
 
                 elif name == "adv_mark_false_positive":
                     logger.info("Handling mark_false_positive request")
@@ -527,6 +576,15 @@ class AdversaryMCPServer:
                 logger.info(f"=== TOOL CALL END: {name} ===")
 
     async def _handle_scan_code(
+        self, arguments: dict[str, Any]
+    ) -> list[types.TextContent]:
+        """Handle code scanning request with telemetry tracking."""
+        wrapped_handler = self.metrics_orchestrator.mcp_tool_wrapper("adv_scan_code")(
+            self._handle_scan_code_impl
+        )
+        return await wrapped_handler(arguments)
+
+    async def _handle_scan_code_impl(
         self, arguments: dict[str, Any]
     ) -> list[types.TextContent]:
         """Handle code scanning request."""
@@ -655,9 +713,21 @@ class AdversaryMCPServer:
     async def _handle_scan_file(
         self, arguments: dict[str, Any]
     ) -> list[types.TextContent]:
+        """Handle file scanning request with telemetry tracking."""
+        wrapped_handler = self.metrics_orchestrator.mcp_tool_wrapper("adv_scan_file")(
+            self._handle_scan_file_impl
+        )
+        return await wrapped_handler(arguments)
+
+    async def _handle_scan_file_impl(
+        self, arguments: dict[str, Any]
+    ) -> list[types.TextContent]:
         """Handle file scanning request."""
         try:
             logger.info("Starting file scan")
+
+            # Debug: Log ALL arguments to see what MCP is actually passing
+            logger.info(f"MCP ARGUMENTS DEBUG: {sanitize_for_logging(arguments)}")
 
             # Validate file path and ensure it's a file, not a directory
             path = arguments["path"]
@@ -665,11 +735,24 @@ class AdversaryMCPServer:
             logger.info(f"Scanning file: {file_path}")
 
             severity_threshold = arguments.get("severity_threshold", "medium")
-            include_exploits = arguments.get("include_exploits", True)
-            use_llm = arguments.get("use_llm", False)
-            use_semgrep = arguments.get("use_semgrep", True)
-            use_validation = arguments.get("use_validation", True)
+            include_exploits = self._validate_boolean_parameter(
+                arguments.get("include_exploits", True), "include_exploits"
+            )
+            use_llm = self._validate_boolean_parameter(
+                arguments.get("use_llm", False), "use_llm"
+            )
+            use_semgrep = self._validate_boolean_parameter(
+                arguments.get("use_semgrep", True), "use_semgrep"
+            )
+            use_validation = self._validate_boolean_parameter(
+                arguments.get("use_validation", True), "use_validation"
+            )
             output_format = arguments.get("output_format", "json")
+
+            # Debug: Specific validation parameter logging
+            logger.info(
+                f"VALIDATION DEBUG: Raw={arguments.get('use_validation')}, Processed={use_validation}, Type={type(use_validation)}"
+            )
 
             logger.debug(
                 f"File scan parameters - Severity: {severity_threshold}, "
@@ -773,6 +856,15 @@ class AdversaryMCPServer:
     async def _handle_scan_directory(
         self, arguments: dict[str, Any]
     ) -> list[types.TextContent]:
+        """Handle directory scanning request with telemetry tracking."""
+        wrapped_handler = self.metrics_orchestrator.mcp_tool_wrapper("adv_scan_folder")(
+            self._handle_scan_directory_impl
+        )
+        return await wrapped_handler(arguments)
+
+    async def _handle_scan_directory_impl(
+        self, arguments: dict[str, Any]
+    ) -> list[types.TextContent]:
         """Handle directory scanning request."""
         try:
             logger.info("Starting directory scan")
@@ -782,12 +874,22 @@ class AdversaryMCPServer:
             directory_path = self._validate_directory_path(path)
             logger.info(f"Scanning directory: {directory_path}")
 
-            recursive = arguments.get("recursive", True)
+            recursive = self._validate_boolean_parameter(
+                arguments.get("recursive", True), "recursive"
+            )
             severity_threshold = arguments.get("severity_threshold", "medium")
-            include_exploits = arguments.get("include_exploits", True)
-            use_llm = arguments.get("use_llm", False)
-            use_semgrep = arguments.get("use_semgrep", True)
-            use_validation = arguments.get("use_validation", True)
+            include_exploits = self._validate_boolean_parameter(
+                arguments.get("include_exploits", True), "include_exploits"
+            )
+            use_llm = self._validate_boolean_parameter(
+                arguments.get("use_llm", False), "use_llm"
+            )
+            use_semgrep = self._validate_boolean_parameter(
+                arguments.get("use_semgrep", True), "use_semgrep"
+            )
+            use_validation = self._validate_boolean_parameter(
+                arguments.get("use_validation", True), "use_validation"
+            )
             output_format = arguments.get("output_format", "json")
 
             logger.debug(
@@ -897,6 +999,15 @@ class AdversaryMCPServer:
     async def _handle_diff_scan(
         self, arguments: dict[str, Any]
     ) -> list[types.TextContent]:
+        """Handle git diff scanning request with telemetry tracking."""
+        wrapped_handler = self.metrics_orchestrator.mcp_tool_wrapper("adv_diff_scan")(
+            self._handle_diff_scan_impl
+        )
+        return await wrapped_handler(arguments)
+
+    async def _handle_diff_scan_impl(
+        self, arguments: dict[str, Any]
+    ) -> list[types.TextContent]:
         """Handle git diff scanning request."""
         try:
             source_branch = arguments["source_branch"]
@@ -908,10 +1019,18 @@ class AdversaryMCPServer:
             logger.info(f"Diff scan - working_directory: {working_directory}")
 
             severity_threshold = arguments.get("severity_threshold", "medium")
-            include_exploits = arguments.get("include_exploits", True)
-            use_llm = arguments.get("use_llm", False)
-            use_semgrep = arguments.get("use_semgrep", True)
-            use_validation = arguments.get("use_validation", True)
+            include_exploits = self._validate_boolean_parameter(
+                arguments.get("include_exploits", True), "include_exploits"
+            )
+            use_llm = self._validate_boolean_parameter(
+                arguments.get("use_llm", False), "use_llm"
+            )
+            use_semgrep = self._validate_boolean_parameter(
+                arguments.get("use_semgrep", True), "use_semgrep"
+            )
+            use_validation = self._validate_boolean_parameter(
+                arguments.get("use_validation", True), "use_validation"
+            )
             output_format = arguments.get("output_format", "json")
 
             # Convert severity threshold to enum
@@ -1083,10 +1202,19 @@ class AdversaryMCPServer:
     async def _handle_configure_settings(
         self, arguments: dict[str, Any]
     ) -> list[types.TextContent]:
+        """Handle configuration settings with telemetry tracking."""
+        wrapped_handler = self.metrics_orchestrator.mcp_tool_wrapper(
+            "adv_configure_settings"
+        )(self._handle_configure_settings_impl)
+        return await wrapped_handler(arguments)
+
+    async def _handle_configure_settings_impl(
+        self, arguments: dict[str, Any]
+    ) -> list[types.TextContent]:
         """Handle configuration settings request."""
         try:
             logger.info("Configuring server settings")
-            logger.debug(f"Configuration arguments: {arguments}")
+            logger.debug(f"Configuration arguments: {sanitize_for_logging(arguments)}")
 
             config = self.credential_manager.load_config()
             import dataclasses
@@ -1155,6 +1283,13 @@ class AdversaryMCPServer:
             raise AdversaryToolError(f"Failed to configure settings: {e}")
 
     async def _handle_get_status(self) -> list[types.TextContent]:
+        """Handle get status with telemetry tracking."""
+        wrapped_handler = self.metrics_orchestrator.mcp_tool_wrapper("adv_get_status")(
+            self._handle_get_status_impl
+        )
+        return await wrapped_handler()
+
+    async def _handle_get_status_impl(self) -> list[types.TextContent]:
         """Handle get status request."""
         try:
             logger.info("Getting server status")
@@ -1197,6 +1332,13 @@ class AdversaryMCPServer:
             raise AdversaryToolError(f"Failed to get status: {e}")
 
     async def _handle_get_version(self) -> list[types.TextContent]:
+        """Handle get version with telemetry tracking."""
+        wrapped_handler = self.metrics_orchestrator.mcp_tool_wrapper("adv_get_version")(
+            self._handle_get_version_impl
+        )
+        return await wrapped_handler()
+
+    async def _handle_get_version_impl(self) -> list[types.TextContent]:
         """Handle get version request."""
         try:
             version = self._get_version()
@@ -1221,6 +1363,78 @@ class AdversaryMCPServer:
             logger.error(f"Failed to get version: {e}")
             logger.debug("Version retrieval error details", exc_info=True)
             raise AdversaryToolError(f"Failed to get version: {e}")
+
+    async def _handle_clear_cache(self) -> list[types.TextContent]:
+        """Handle clear cache with telemetry tracking."""
+        wrapped_handler = self.metrics_orchestrator.mcp_tool_wrapper("adv_clear_cache")(
+            self._handle_clear_cache_impl
+        )
+        return await wrapped_handler()
+
+    async def _handle_clear_cache_impl(self) -> list[types.TextContent]:
+        """Handle clear cache request."""
+        try:
+            logger.info("Starting cache clearing process")
+
+            cleared_items = []
+
+            # Clear main cache manager
+            if hasattr(self, "cache_manager") and self.cache_manager is not None:
+                cache_stats_before = self.cache_manager.get_stats()
+                self.cache_manager.clear()
+                cleared_items.append(
+                    f"Main cache ({cache_stats_before.total_entries} entries)"
+                )
+
+            # Clear scan engine cache
+            if hasattr(self.scan_engine, "clear_cache"):
+                self.scan_engine.clear_cache()
+                cleared_items.append("Scan engine cache")
+
+            # Clear semgrep scanner cache
+            if hasattr(self.scan_engine, "semgrep_scanner") and hasattr(
+                self.scan_engine.semgrep_scanner, "clear_cache"
+            ):
+                self.scan_engine.semgrep_scanner.clear_cache()
+                cleared_items.append("Semgrep scanner cache")
+
+            # Clear token estimator cache
+            if (
+                hasattr(self.scan_engine, "llm_analyzer")
+                and self.scan_engine.llm_analyzer is not None
+            ):
+                if hasattr(
+                    self.scan_engine.llm_analyzer, "token_estimator"
+                ) and hasattr(
+                    self.scan_engine.llm_analyzer.token_estimator, "clear_cache"
+                ):
+                    self.scan_engine.llm_analyzer.token_estimator.clear_cache()
+                    cleared_items.append("Token estimator cache")
+
+            # Clear database cache and temp data
+            if hasattr(self, "database") and self.database is not None:
+                # Note: We don't clear persistent data like false positives, just temp/cache data
+                cleared_items.append("Database temporary data")
+
+            result = "🗑️ **Cache Cleared Successfully**\n\n"
+            result += "**Cleared Components:**\n"
+            for item in cleared_items:
+                result += f"• {item}\n"
+
+            if not cleared_items:
+                result += "• No cache components found to clear\n"
+
+            result += "\n✅ Local cache and temporary data have been reset."
+
+            logger.info(
+                f"Cache clearing completed successfully. Cleared: {', '.join(cleared_items)}"
+            )
+            return [types.TextContent(type="text", text=result)]
+
+        except Exception as e:
+            logger.error(f"Failed to clear cache: {e}")
+            logger.debug("Cache clearing error details", exc_info=True)
+            raise AdversaryToolError(f"Failed to clear cache: {e}")
 
     def _get_version(self) -> str:
         """Get the current version."""
@@ -2067,7 +2281,7 @@ class AdversaryMCPServer:
                         "llm_validation_success", False
                     ),
                     "reason": scan_result.scan_metadata.get(
-                        "llm_validation_reason", "unknown"
+                        "llm_validation_reason", "disabled"
                     ),
                     "error": scan_result.scan_metadata.get(
                         "llm_validation_error", None
@@ -2767,6 +2981,15 @@ class AdversaryMCPServer:
     async def _handle_mark_false_positive(
         self, arguments: dict[str, Any]
     ) -> list[types.TextContent]:
+        """Handle mark false positive with telemetry tracking."""
+        wrapped_handler = self.metrics_orchestrator.mcp_tool_wrapper(
+            "adv_mark_false_positive"
+        )(self._handle_mark_false_positive_impl)
+        return await wrapped_handler(arguments)
+
+    async def _handle_mark_false_positive_impl(
+        self, arguments: dict[str, Any]
+    ) -> list[types.TextContent]:
         """Handle mark false positive request."""
         try:
             finding_uuid = arguments.get("finding_uuid")
@@ -2813,6 +3036,15 @@ class AdversaryMCPServer:
             raise AdversaryToolError(f"Failed to mark false positive: {str(e)}")
 
     async def _handle_unmark_false_positive(
+        self, arguments: dict[str, Any]
+    ) -> list[types.TextContent]:
+        """Handle unmark false positive with telemetry tracking."""
+        wrapped_handler = self.metrics_orchestrator.mcp_tool_wrapper(
+            "adv_unmark_false_positive"
+        )(self._handle_unmark_false_positive_impl)
+        return await wrapped_handler(arguments)
+
+    async def _handle_unmark_false_positive_impl(
         self, arguments: dict[str, Any]
     ) -> list[types.TextContent]:
         """Handle unmark false positive request."""

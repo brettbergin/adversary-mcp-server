@@ -52,7 +52,7 @@ class SerializableThreatMatch:
             ),
             file_path=threat.file_path,
             line_number=threat.line_number,
-            end_line_number=threat.end_line_number,
+            end_line_number=getattr(threat, "end_line_number", threat.line_number),
             code_snippet=threat.code_snippet,
             confidence=threat.confidence,
             source=threat.source,
@@ -62,7 +62,7 @@ class SerializableThreatMatch:
             references=threat.references or [],
             exploit_examples=threat.exploit_examples or [],
             is_false_positive=threat.is_false_positive,
-            false_positive_metadata=threat.false_positive_metadata,
+            false_positive_metadata=getattr(threat, "false_positive_metadata", None),
         )
 
     def to_threat_match(self) -> ThreatMatch:
@@ -78,7 +78,7 @@ class SerializableThreatMatch:
             severity=Severity(self.severity),
             file_path=self.file_path,
             line_number=self.line_number,
-            end_line_number=self.end_line_number,
+            # end_line_number is not in ThreatMatch - skip it
             code_snippet=self.code_snippet,
             confidence=self.confidence,
             source=self.source,
@@ -88,7 +88,7 @@ class SerializableThreatMatch:
             references=self.references,
             exploit_examples=self.exploit_examples,
             is_false_positive=self.is_false_positive,
-            false_positive_metadata=self.false_positive_metadata,
+            # false_positive_metadata is not in ThreatMatch - skip it
         )
 
     def to_dict(self) -> dict[str, Any]:

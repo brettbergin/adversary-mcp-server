@@ -17,13 +17,19 @@ from .benchmarks import BenchmarkRunner
 from .cache import CacheManager
 from .config import get_app_cache_dir, get_app_metrics_dir
 from .credentials import CredentialManager, get_credential_manager
+from .database.models import AdversaryDatabase
+from .llm.model_catalog import ModelCatalogService
+from .llm.model_types import ModelProvider
 from .logger import get_logger
 from .monitoring import MetricsCollector
-from .monitoring.dashboard import MonitoringDashboard
 from .monitoring.types import MonitoringConfig
+from .monitoring.unified_dashboard import UnifiedDashboard
 from .scanner.diff_scanner import GitDiffScanner
 from .scanner.scan_engine import ScanEngine
 from .scanner.types import Severity
+from .security import InputValidator, SecurityError, sanitize_for_logging
+from .telemetry.integration import MetricsCollectionOrchestrator
+from .telemetry.service import TelemetryService
 
 console = Console()
 logger = get_logger("cli")
@@ -33,6 +39,32 @@ _shared_metrics_collector: MetricsCollector | None = None
 
 # Global shared cache manager for CLI commands to persist cache across invocations
 _shared_cache_manager = None
+
+# Global shared telemetry system for CLI commands
+_shared_db: AdversaryDatabase | None = None
+_shared_telemetry_service: TelemetryService | None = None
+_shared_metrics_orchestrator: MetricsCollectionOrchestrator | None = None
+
+
+def _initialize_telemetry_system() -> MetricsCollectionOrchestrator:
+    """Initialize shared telemetry system for CLI operations.
+
+    Uses shared instances to persist telemetry across CLI commands.
+
+    Returns:
+        MetricsCollectionOrchestrator instance
+    """
+    global _shared_db, _shared_telemetry_service, _shared_metrics_orchestrator
+
+    if _shared_metrics_orchestrator is None:
+        _shared_db = AdversaryDatabase()
+        _shared_telemetry_service = TelemetryService(_shared_db)
+        _shared_metrics_orchestrator = MetricsCollectionOrchestrator(
+            _shared_telemetry_service
+        )
+        logger.debug("Initialized shared telemetry system for CLI")
+
+    return _shared_metrics_orchestrator
 
 
 def _initialize_cache_manager(enable_caching: bool = True) -> CacheManager | None:
@@ -142,7 +174,7 @@ def _initialize_scan_components(
 
 
 def cli_command_monitor(command_name: str):
-    """Decorator to monitor CLI command execution timing and outcomes.
+    """Decorator to monitor CLI command execution timing and outcomes with telemetry.
 
     Args:
         command_name: Name of the CLI command for metrics labeling
@@ -151,12 +183,20 @@ def cli_command_monitor(command_name: str):
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
-            start_time = time.time()
             logger.debug(f"Starting CLI command: {command_name}")
 
-            # Initialize monitoring for this command
+            # Initialize monitoring for this command (legacy)
             metrics_collector = _initialize_monitoring()
 
+            # Initialize telemetry system (new)
+            metrics_orchestrator = _initialize_telemetry_system()
+
+            # Use the new telemetry system wrapper
+            telemetry_wrapped = metrics_orchestrator.cli_command_wrapper(command_name)(
+                func
+            )
+
+            # Legacy metrics collection
             if metrics_collector:
                 metrics_collector.record_metric(
                     "cli_commands_total",
@@ -165,31 +205,22 @@ def cli_command_monitor(command_name: str):
                 )
 
             try:
-                # Execute the command
-                result = func(*args, **kwargs)
+                # Execute the command with telemetry tracking
+                result = telemetry_wrapped(*args, **kwargs)
 
-                # Record successful completion
-                duration = time.time() - start_time
+                # Legacy metrics collection for backward compatibility
                 if metrics_collector:
                     metrics_collector.record_metric(
                         "cli_commands_total",
                         1,
                         labels={"command": command_name, "status": "success"},
                     )
-                    metrics_collector.record_histogram(
-                        "cli_command_duration_seconds",
-                        duration,
-                        labels={"command": command_name, "status": "success"},
-                    )
 
-                logger.debug(
-                    f"CLI command {command_name} completed successfully in {duration:.2f}s"
-                )
+                logger.debug(f"CLI command {command_name} completed successfully")
                 return result
 
             except Exception as e:
-                # Record failure
-                duration = time.time() - start_time
+                # Legacy metrics collection for errors
                 if metrics_collector:
                     metrics_collector.record_metric(
                         "cli_commands_total",
@@ -200,15 +231,8 @@ def cli_command_monitor(command_name: str):
                             "error_type": type(e).__name__,
                         },
                     )
-                    metrics_collector.record_histogram(
-                        "cli_command_duration_seconds",
-                        duration,
-                        labels={"command": command_name, "status": "error"},
-                    )
 
-                logger.error(
-                    f"CLI command {command_name} failed after {duration:.2f}s: {e}"
-                )
+                logger.error(f"CLI command {command_name} failed: {e}")
                 raise
 
         return wrapper
@@ -444,9 +468,6 @@ def configure(
 
             # Always do model selection when configuring a provider
             try:
-                from .llm.model_catalog import ModelCatalogService
-                from .llm.model_types import ModelProvider
-
                 provider_enum = (
                     ModelProvider.OPENAI
                     if llm_provider == "openai"
@@ -458,9 +479,6 @@ def configure(
 
                 # Get available models synchronously
                 catalog = ModelCatalogService()
-
-                # Import Prompt for model selection
-                from rich.prompt import Prompt as ModelPrompt
 
                 # Get models from pricing config (synchronous fallback)
                 fallback_models = catalog._load_fallback_models()
@@ -490,7 +508,7 @@ def configure(
                             index += 1
 
                     # Get user selection
-                    selection = ModelPrompt.ask(
+                    selection = Prompt.ask(
                         f"Select model (1-{index-1})",
                         choices=choices,
                         default="1",
@@ -840,12 +858,61 @@ def scan(
 ):
     """Scan a file or directory for security vulnerabilities."""
     logger.info("=== Starting scan command ===")
-    logger.debug(
-        f"Scan parameters - Path: {path}, Source: {source_branch}, "
-        f"Target branch: {target_branch}, "
-        f"LLM: {use_llm}, Semgrep: {use_semgrep}, Validation: {use_validation}, "
-        f"Severity: {severity}, Format: {output_format}, Include exploits: {include_exploits}"
-    )
+
+    # Sanitize sensitive parameters for logging
+    scan_params = {
+        "path": path,
+        "source_branch": source_branch,
+        "target_branch": target_branch,
+        "use_llm": use_llm,
+        "use_semgrep": use_semgrep,
+        "use_validation": use_validation,
+        "severity": severity,
+        "output_format": output_format,
+        "include_exploits": include_exploits,
+    }
+    logger.debug(f"Scan parameters: {sanitize_for_logging(scan_params)}")
+
+    # Validate and sanitize CLI arguments
+    try:
+        validated_path = (
+            InputValidator.validate_file_path(path)
+            if Path(path).is_file()
+            else InputValidator.validate_directory_path(path)
+        )
+        if severity:
+            validated_severity = InputValidator.validate_severity_threshold(severity)
+        else:
+            validated_severity = severity
+
+        if source_branch:
+            validated_source_branch = InputValidator.validate_string_param(
+                source_branch, "source_branch", 100, r"^[a-zA-Z0-9_.-]+$"
+            )
+        else:
+            validated_source_branch = source_branch
+
+        if target_branch:
+            validated_target_branch = InputValidator.validate_string_param(
+                target_branch, "target_branch", 100, r"^[a-zA-Z0-9_.-]+$"
+            )
+        else:
+            validated_target_branch = target_branch
+
+        # Update parameters with validated values
+        path = str(validated_path)
+        severity = validated_severity
+        source_branch = validated_source_branch
+        target_branch = validated_target_branch
+
+        logger.debug("CLI argument validation passed")
+
+    except (SecurityError, ValueError, FileNotFoundError) as e:
+        logger.error(f"CLI argument validation failed: {e}")
+        console.print("❌ [bold red]Input Validation Error[/bold red]")
+        console.print(f"The provided input contains issues: {e}")
+        console.print("Please check your input and try again with valid parameters.")
+        sys.exit(1)
 
     try:
         # Initialize scanner components
@@ -1053,7 +1120,9 @@ def scan(
         # Export metrics to persist scan data for monitoring
         if metrics_collector:
             try:
-                metrics_file = metrics_collector.export_metrics()
+                import asyncio
+
+                metrics_file = asyncio.run(metrics_collector.export_metrics())
                 if metrics_file:
                     logger.debug(f"Scan metrics exported to: {metrics_file}")
             except Exception as e:
@@ -1708,6 +1777,59 @@ def benchmark(scenario: str | None, output: str | None):
 
 @cli.command()
 @click.option(
+    "--hours",
+    type=int,
+    default=24,
+    help="Hours of data to include in dashboard (default: 24)",
+)
+@click.option(
+    "--no-launch",
+    is_flag=True,
+    help="Don't automatically open dashboard in browser",
+)
+@cli_command_monitor("dashboard")
+def dashboard(hours: int, no_launch: bool):
+    """Generate and launch rich HTML dashboard with comprehensive telemetry."""
+    try:
+        from .dashboard.html_dashboard import ComprehensiveHTMLDashboard
+
+        console.print("🚀 Generating comprehensive HTML dashboard...")
+
+        # Initialize telemetry system
+        orchestrator = _initialize_telemetry_system()
+        db = orchestrator.telemetry.db
+
+        # Create dashboard
+        html_dashboard = ComprehensiveHTMLDashboard(db)
+
+        console.print(f"📊 Collecting {hours} hours of telemetry data...")
+
+        # Generate and launch dashboard
+        html_file = html_dashboard.generate_and_launch_dashboard(
+            hours=hours, auto_launch=not no_launch
+        )
+
+        console.print("✅ Dashboard generated successfully!")
+        console.print(f"📄 Dashboard file: {html_file}")
+
+        if no_launch:
+            console.print(f"🌐 Open in browser: file://{Path(html_file).absolute()}")
+        else:
+            console.print("🚀 Dashboard launched in your default browser!")
+
+    except ImportError as e:
+        console.print(f"❌ Dashboard dependencies missing: {e}")
+        console.print("💡 Install with: pip install jinja2")
+        sys.exit(1)
+
+    except Exception as e:
+        console.print(f"❌ Failed to generate dashboard: {e}")
+        logger.error(f"Dashboard generation failed: {e}", exc_info=True)
+        sys.exit(1)
+
+
+@cli.command()
+@click.option(
     "--export-format",
     type=click.Choice(["json", "prometheus"]),
     default="json",
@@ -1721,21 +1843,31 @@ def benchmark(scenario: str | None, output: str | None):
 )
 @cli_command_monitor("monitoring")
 def monitoring(export_format: str, output_path: str | None, show_dashboard: bool):
-    """Monitor system metrics and export monitoring data."""
-    logger.info("=== Starting monitoring command ===")
+    """Monitor system metrics and export monitoring data.
+
+    DEPRECATED: Use 'adversary-mcp-cli dashboard' for the new HTML dashboard.
+    """
+    logger.info("=== Starting legacy monitoring command ===")
+
+    console.print("⚠️  [yellow]WARNING: This command is deprecated![/yellow]")
+    console.print(
+        "🚀 [cyan]Use 'adversary-mcp-cli dashboard' for the new HTML dashboard[/cyan]"
+    )
+    console.print(
+        "📊 [dim]Legacy monitoring functionality preserved for compatibility[/dim]\n"
+    )
 
     try:
-        # Initialize monitoring components
+        # Initialize monitoring components (legacy compatibility)
         metrics_collector = _initialize_monitoring(enable_metrics=True)
         if not metrics_collector:
             console.print("❌ [red]Failed to initialize monitoring system[/red]")
             sys.exit(1)
 
-        # Load historical metrics from exported files
-        logger.debug("Loading historical metrics from exported files...")
-        metrics_collector.load_exported_metrics()
+        # Use the new unified dashboard
+        from .monitoring.unified_dashboard import UnifiedDashboard
 
-        dashboard = MonitoringDashboard(metrics_collector, console)
+        dashboard = UnifiedDashboard(metrics_collector, console)
 
         if show_dashboard:
             console.print("🔍 [bold cyan]Real-Time Monitoring Dashboard[/bold cyan]")
@@ -1760,26 +1892,29 @@ def monitoring(export_format: str, output_path: str | None, show_dashboard: bool
 
             except KeyboardInterrupt:
                 console.print("\n👋 [yellow]Dashboard monitoring stopped[/yellow]")
-                sys.exit(0)
+                return  # Exit normally without using sys.exit()
         else:
-            # Export metrics in specified format
-            output_path_obj = Path(output_path) if output_path else None
+            # Export metrics using unified dashboard
+            console.print(
+                f"📤 [cyan]Exporting metrics in {export_format} format...[/cyan]"
+            )
 
-            if export_format == "json":
-                exported_file = dashboard.export_dashboard_report(output_path_obj)
+            exported_file = dashboard.export_metrics(export_format, output_path)
+
+            if exported_file:
+                console.print("✅ [green]Metrics exported successfully[/green]")
+            else:
                 console.print(
-                    f"📊 [green]Dashboard report exported to: {exported_file}[/green]"
-                )
-            elif export_format == "prometheus":
-                exported_file = dashboard.export_prometheus_metrics(output_path_obj)
-                console.print(
-                    f"📈 [green]Prometheus metrics exported to: {exported_file}[/green]"
+                    f"❌ [red]Failed to export metrics in {export_format} format[/red]"
                 )
 
             # Show summary
             console.print("\n📋 [bold]Current Metrics Summary:[/bold]")
             dashboard.display_real_time_dashboard()
 
+    except KeyboardInterrupt:
+        console.print("\n👋 [yellow]Dashboard monitoring stopped[/yellow]")
+        return  # Exit normally without using sys.exit()
     except Exception as e:
         logger.error(f"Monitoring command failed: {e}")
         logger.debug("Monitoring error details", exc_info=True)
@@ -1818,7 +1953,7 @@ def metrics_analyze(metrics_dir: str | None, time_range: str, output_format: str
             console.print("❌ [red]Failed to initialize monitoring system[/red]")
             sys.exit(1)
 
-        dashboard = MonitoringDashboard(metrics_collector, console)
+        dashboard = UnifiedDashboard(metrics_collector, console)
 
         console.print(
             f"📊 [bold cyan]Metrics Analysis - {time_range} time range[/bold cyan]\n"
@@ -1895,6 +2030,83 @@ def metrics_analyze(metrics_dir: str | None, time_range: str, output_format: str
         logger.error(f"Metrics analysis failed: {e}")
         logger.debug("Metrics analysis error details", exc_info=True)
         console.print(f"❌ [red]Metrics analysis failed: {e}[/red]")
+        sys.exit(1)
+
+
+@cli.command(name="clear-cache")
+@cli_command_monitor("clear-cache")
+def clear_cache():
+    """Clear all local cache and data storage."""
+    logger.info("=== Starting cache clearing command ===")
+
+    try:
+        logger.debug("Initializing components for cache clearing...")
+        metrics_collector = _initialize_monitoring()
+        cache_manager = _initialize_cache_manager()
+        credential_manager, scan_engine = _initialize_scan_components(
+            use_validation=False,  # Don't need validation for cache clearing
+            metrics_collector=metrics_collector,
+            cache_manager=cache_manager,
+        )
+        logger.debug("Components initialized successfully")
+
+        console.print("🗑️ [bold]Clearing Local Cache and Data Storage[/bold]")
+        console.print()
+
+        cleared_items = []
+
+        # Clear main cache manager
+        if cache_manager is not None:
+            cache_stats_before = cache_manager.get_stats()
+            cache_manager.clear()
+            cleared_items.append(
+                f"Main cache ({cache_stats_before.total_entries} entries)"
+            )
+            console.print(
+                f"✅ Cleared main cache: {cache_stats_before.total_entries} entries"
+            )
+
+        # Clear scan engine cache
+        if hasattr(scan_engine, "clear_cache"):
+            scan_engine.clear_cache()
+            cleared_items.append("Scan engine cache")
+            console.print("✅ Cleared scan engine cache")
+
+        # Clear semgrep scanner cache
+        if hasattr(scan_engine, "semgrep_scanner") and hasattr(
+            scan_engine.semgrep_scanner, "clear_cache"
+        ):
+            scan_engine.semgrep_scanner.clear_cache()
+            cleared_items.append("Semgrep scanner cache")
+            console.print("✅ Cleared Semgrep scanner cache")
+
+        # Clear token estimator cache if available
+        if (
+            hasattr(scan_engine, "llm_analyzer")
+            and scan_engine.llm_analyzer is not None
+        ):
+            if hasattr(scan_engine.llm_analyzer, "token_estimator") and hasattr(
+                scan_engine.llm_analyzer.token_estimator, "clear_cache"
+            ):
+                scan_engine.llm_analyzer.token_estimator.clear_cache()
+                cleared_items.append("Token estimator cache")
+                console.print("✅ Cleared token estimator cache")
+
+        console.print()
+        if cleared_items:
+            console.print("🎉 [green]Cache clearing completed successfully![/green]")
+            console.print(f"📊 [cyan]Cleared components: {len(cleared_items)}[/cyan]")
+        else:
+            console.print("ℹ️ [yellow]No cache components found to clear[/yellow]")
+
+        logger.info(
+            f"Cache clearing completed successfully. Cleared: {', '.join(cleared_items)}"
+        )
+
+    except Exception as e:
+        logger.error(f"Cache clearing failed: {e}")
+        logger.debug("Cache clearing error details", exc_info=True)
+        console.print(f"❌ [red]Cache clearing failed: {e}[/red]")
         sys.exit(1)
 
 
