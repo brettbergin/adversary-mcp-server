@@ -132,7 +132,7 @@ class TestBootstrap:
         mock_credential_manager.load_config.return_value = mock_config
 
         with patch(
-            "adversary_mcp_server.application.bootstrap.MetricsCollector"
+            "adversary_mcp_server.application.bootstrap.UnifiedMetricsCollector"
         ) as mock_metrics_cls:
             mock_metrics_collector = Mock()
             mock_metrics_cls.return_value = mock_metrics_collector
@@ -148,13 +148,13 @@ class TestBootstrap:
         mock_credential_manager.load_config.side_effect = Exception("Config error")
 
         with patch(
-            "adversary_mcp_server.application.bootstrap.MetricsCollector"
+            "adversary_mcp_server.application.bootstrap.UnifiedMetricsCollector"
         ) as mock_metrics_cls:
             mock_metrics_collector = Mock()
             mock_metrics_cls.return_value = mock_metrics_collector
 
             with patch(
-                "adversary_mcp_server.monitoring.types.MonitoringConfig"
+                "adversary_mcp_server.application.bootstrap.MonitoringConfig"
             ) as mock_config_cls:
                 mock_default_config = Mock()
                 mock_config_cls.return_value = mock_default_config
@@ -175,13 +175,13 @@ class TestBootstrap:
         mock_credential_manager.load_config.return_value = mock_config
 
         with patch(
-            "adversary_mcp_server.application.bootstrap.MetricsCollector"
+            "adversary_mcp_server.application.bootstrap.UnifiedMetricsCollector"
         ) as mock_metrics_cls:
             mock_metrics_collector = Mock()
             mock_metrics_cls.return_value = mock_metrics_collector
 
             with patch(
-                "adversary_mcp_server.monitoring.types.MonitoringConfig"
+                "adversary_mcp_server.application.bootstrap.MonitoringConfig"
             ) as mock_config_cls:
                 mock_default_config = Mock()
                 mock_config_cls.return_value = mock_default_config

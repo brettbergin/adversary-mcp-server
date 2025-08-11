@@ -6,7 +6,10 @@ import time
 from pathlib import Path
 from typing import Any
 
+from ..database.models import AdversaryDatabase
 from ..logger import get_logger
+from ..telemetry.integration import MetricsCollectionOrchestrator
+from ..telemetry.service import TelemetryService
 from .content_hasher import ContentHasher
 from .types import CacheEntry, CacheKey, CacheStats, CacheType
 
@@ -23,6 +26,7 @@ class CacheManager:
         max_age_hours: int = 24,
         enable_persistence: bool = True,
         metrics_collector=None,
+        metrics_orchestrator: MetricsCollectionOrchestrator = None,
     ):
         """Initialize cache manager.
 
@@ -31,7 +35,8 @@ class CacheManager:
             max_size_mb: Maximum cache size in MB
             max_age_hours: Maximum age for cache entries in hours
             enable_persistence: Whether to persist cache to disk
-            metrics_collector: Optional metrics collector for cache operations
+            metrics_collector: Optional legacy metrics collector for cache operations
+            metrics_orchestrator: Optional telemetry orchestrator for comprehensive tracking
         """
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -40,6 +45,20 @@ class CacheManager:
         self.max_age_seconds = max_age_hours * 3600
         self.enable_persistence = enable_persistence
         self.metrics_collector = metrics_collector
+
+        # Initialize telemetry system
+        self.metrics_orchestrator = metrics_orchestrator
+        if self.metrics_orchestrator is None:
+            try:
+                db = AdversaryDatabase()
+                telemetry_service = TelemetryService(db)
+                self.metrics_orchestrator = MetricsCollectionOrchestrator(
+                    telemetry_service
+                )
+                logger.debug("Initialized telemetry system for cache manager")
+            except Exception as e:
+                logger.warning(f"Failed to initialize telemetry system for cache: {e}")
+                self.metrics_orchestrator = None
 
         # In-memory cache storage
         self._cache: dict[str, CacheEntry] = {}
@@ -279,12 +298,27 @@ class CacheManager:
             freed_size += entry.size_bytes
             self._stats.eviction_count += 1
 
+            # Legacy metrics
             if self.metrics_collector:
                 self.metrics_collector.record_metric(
                     "cache_evictions_total", 1, labels={"reason": "lru"}
                 )
                 self.metrics_collector.record_metric(
                     "cache_evicted_bytes_total", entry.size_bytes
+                )
+
+            # New telemetry tracking
+            if self.metrics_orchestrator:
+                self.metrics_orchestrator.track_cache_operation(
+                    operation_type="evict",
+                    cache_name=(
+                        entry.key.cache_type.value
+                        if hasattr(entry.key, "cache_type")
+                        else "unknown"
+                    ),
+                    key=key_str,
+                    size_bytes=entry.size_bytes,
+                    eviction_reason="lru",
                 )
 
             logger.debug(f"Evicted cache entry: {key_str}")
@@ -324,8 +358,21 @@ class CacheManager:
 
         if key_str not in self._cache:
             self._stats.miss_count += 1
+            # Legacy metrics
             if self.metrics_collector:
                 self.metrics_collector.record_cache_operation("get", hit=False)
+            # New telemetry tracking
+            if self.metrics_orchestrator:
+                self.metrics_orchestrator.track_cache_operation(
+                    operation_type="miss",
+                    cache_name=(
+                        key.cache_type.value
+                        if hasattr(key, "cache_type")
+                        else "unknown"
+                    ),
+                    key=key_str,
+                    access_time_ms=0.0,
+                )
             logger.debug(f"Cache miss: {key_str}")
             return None
 
@@ -336,16 +383,41 @@ class CacheManager:
             del self._cache[key_str]
             self._remove_entry_from_disk(key_str)
             self._stats.miss_count += 1
+            # Legacy metrics
             if self.metrics_collector:
                 self.metrics_collector.record_cache_operation("get", hit=False)
+            # New telemetry tracking
+            if self.metrics_orchestrator:
+                self.metrics_orchestrator.track_cache_operation(
+                    operation_type="expired",
+                    cache_name=(
+                        key.cache_type.value
+                        if hasattr(key, "cache_type")
+                        else "unknown"
+                    ),
+                    key=key_str,
+                    access_time_ms=0.0,
+                )
             logger.debug(f"Cache expired: {key_str}")
             return None
 
         # Update access stats
         entry.mark_accessed()
         self._stats.hit_count += 1
+        # Legacy metrics
         if self.metrics_collector:
             self.metrics_collector.record_cache_operation("get", hit=True)
+        # New telemetry tracking
+        if self.metrics_orchestrator:
+            self.metrics_orchestrator.track_cache_operation(
+                operation_type="hit",
+                cache_name=(
+                    key.cache_type.value if hasattr(key, "cache_type") else "unknown"
+                ),
+                key=key_str,
+                size_bytes=entry.size_bytes,
+                access_time_ms=0.1,  # Approximate access time
+            )
         logger.debug(f"Cache hit: {key_str}")
 
         return entry.data
@@ -393,6 +465,19 @@ class CacheManager:
 
         # Save to disk
         self._save_entry_to_disk(key_str, entry)
+
+        # Track telemetry for cache set operation
+        if self.metrics_orchestrator:
+            self.metrics_orchestrator.track_cache_operation(
+                operation_type="set",
+                cache_name=(
+                    key.cache_type.value if hasattr(key, "cache_type") else "unknown"
+                ),
+                key=key_str,
+                size_bytes=size_bytes,
+                access_time_ms=1.0,  # Approximate put time
+                ttl_seconds=expires_in_seconds,
+            )
 
         logger.debug(f"Cached data: {key_str} ({size_bytes} bytes)")
 

@@ -6,8 +6,8 @@ import time
 import psutil
 
 from ..logger import get_logger
-from .metrics_collector import MetricsCollector
 from .types import MonitoringConfig, PerformanceMetrics
+from .unified_metrics_collector import UnifiedMetricsCollector as MetricsCollector
 
 logger = get_logger("performance_monitor")
 
@@ -208,8 +208,6 @@ class PerformanceMonitor:
         if self._process:
             try:
                 # Create task to collect metrics but don't wait for it
-                import asyncio
-
                 try:
                     loop = asyncio.get_event_loop()
                     if loop.is_running():

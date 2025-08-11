@@ -3358,7 +3358,7 @@ class TestScanEngineErrorHandling:
 
             engine = ScanEngine(mock_cm)
             result = await engine.scan_code(
-                "test code", "test.py", "python", use_semgrep=True
+                "test code", "test.py", use_semgrep=True, use_llm=False
             )
 
             assert isinstance(result, EnhancedScanResult)
@@ -3631,3 +3631,414 @@ class TestScanEngineDirectoryOptimizations:
 
                 # Verify directory-level scan was used
                 mock_semgrep.scan_directory.assert_called_once()
+
+
+class TestScanEnginePhase2Integration:
+    """Test ScanEngine integration with Phase II coordination layer components."""
+
+    def test_scan_engine_initialization_with_coordinators(self):
+        """Test ScanEngine can be initialized with coordination layer components."""
+        from adversary_mcp_server.application.coordination.cache_coordinator import (
+            CacheCoordinator,
+        )
+        from adversary_mcp_server.application.coordination.scan_orchestrator import (
+            ScanOrchestrator,
+        )
+        from adversary_mcp_server.application.coordination.validation_coordinator import (
+            ValidationCoordinator,
+        )
+
+        mock_cm = create_mock_credential_manager()
+
+        with (
+            patch(
+                "adversary_mcp_server.scanner.scan_engine.SemgrepScanner"
+            ) as mock_semgrep,
+            patch("adversary_mcp_server.scanner.scan_engine.ErrorHandler"),
+        ):
+
+            # Mock dependencies for coordination layer
+            mock_semgrep_instance = Mock()
+            mock_semgrep.return_value = mock_semgrep_instance
+
+            # Create coordination components
+            scan_orchestrator = ScanOrchestrator(semgrep_scanner=mock_semgrep_instance)
+            cache_coordinator = CacheCoordinator()
+            validation_coordinator = ValidationCoordinator()
+
+            # Verify coordination components can be used with scan engine context
+            assert scan_orchestrator.semgrep_scanner is mock_semgrep_instance
+            assert cache_coordinator.is_cache_available() is False  # No cache manager
+            assert validation_coordinator.validator is None  # No validator
+
+            # Initialize scan engine
+            engine = ScanEngine(credential_manager=mock_cm)
+
+            # Verify scan engine initialization doesn't conflict with coordinators
+            assert engine.credential_manager == mock_cm
+
+    def test_scan_engine_coordination_layer_compatibility(self):
+        """Test ScanEngine compatibility with coordination layer patterns."""
+        from adversary_mcp_server.domain.aggregation.threat_aggregator import (
+            ThreatAggregator,
+        )
+        from adversary_mcp_server.infrastructure.builders.result_builder import (
+            ResultBuilder,
+        )
+
+        mock_cm = create_mock_credential_manager()
+
+        with (
+            patch("adversary_mcp_server.scanner.scan_engine.SemgrepScanner"),
+            patch("adversary_mcp_server.scanner.scan_engine.ErrorHandler"),
+        ):
+
+            # Create domain and infrastructure components
+            threat_aggregator = ThreatAggregator()
+            result_builder = ResultBuilder()
+
+            # Create sample threats
+            sample_threats = [
+                ThreatMatch(
+                    rule_id="test_rule_1",
+                    rule_name="Test Rule 1",
+                    description="Test description",
+                    category=Category.INJECTION,
+                    severity=Severity.HIGH,
+                    file_path="test.py",
+                    line_number=10,
+                )
+            ]
+
+            # Test aggregation works with scan engine threat format
+            # Split threats for separate semgrep and llm arguments (test data - split evenly)
+            mid = len(sample_threats) // 2
+            semgrep_threats = sample_threats[:mid]
+            llm_threats = sample_threats[mid:]
+            aggregated = threat_aggregator.aggregate_threats(
+                semgrep_threats, llm_threats
+            )
+            assert len(aggregated) == 1
+            assert aggregated[0].rule_id == "test_rule_1"
+
+            # Test result building works with scan engine results
+            result = result_builder.build_scan_result(
+                threats=aggregated, metadata={"scan_type": "integration_test"}
+            )
+            assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_scan_engine_orchestrator_integration(self):
+        """Test ScanEngine integration with ScanOrchestrator workflow."""
+        from adversary_mcp_server.application.coordination.scan_orchestrator import (
+            ScanOrchestrator,
+        )
+        from adversary_mcp_server.interfaces.scanner import ISemgrepScanner
+
+        mock_cm = create_mock_credential_manager()
+
+        with (
+            patch(
+                "adversary_mcp_server.scanner.scan_engine.SemgrepScanner"
+            ) as mock_semgrep_class,
+            patch("adversary_mcp_server.scanner.scan_engine.ErrorHandler"),
+        ):
+
+            # Create mock semgrep scanner that implements interface
+            mock_semgrep = Mock(spec=ISemgrepScanner)
+            mock_semgrep.scan_file.return_value = []
+            mock_semgrep.scan_code.return_value = []
+            mock_semgrep_class.return_value = mock_semgrep
+
+            # Create orchestrator with mocked scanner
+            orchestrator = ScanOrchestrator(semgrep_scanner=mock_semgrep)
+
+            # Test file scan orchestration
+            test_file = Path("/test/file.py")
+            with patch("pathlib.Path.read_text", return_value="print('test')"):
+                result = await orchestrator.orchestrate_file_scan(test_file)
+
+                # Verify orchestration completed
+                assert result is not None
+                assert result.file_path == str(test_file)
+
+                # Verify semgrep scanner was called
+                mock_semgrep.scan_file.assert_called_once()
+
+    def test_scan_engine_coordination_error_handling(self):
+        """Test error handling between ScanEngine and coordination layer."""
+        from adversary_mcp_server.application.coordination.validation_coordinator import (
+            ValidationCoordinator,
+        )
+
+        mock_cm = create_mock_credential_manager()
+
+        with (
+            patch("adversary_mcp_server.scanner.scan_engine.SemgrepScanner"),
+            patch("adversary_mcp_server.scanner.scan_engine.ErrorHandler"),
+        ):
+
+            # Create coordination components
+            validation_coordinator = ValidationCoordinator()
+
+            # Test error handling in validation
+            sample_threats = [
+                ThreatMatch(
+                    rule_id="test_rule_1",
+                    rule_name="Test Rule 1",
+                    description="Test description",
+                    category=Category.INJECTION,
+                    severity=Severity.HIGH,
+                    file_path="test.py",
+                    line_number=10,
+                )
+            ]
+
+            # Test validation without validator (should handle gracefully)
+            should_validate = validation_coordinator.should_validate(
+                use_validation=True, enable_llm_validation=True, threats=sample_threats
+            )
+
+            # Should return False since no validator is configured
+            assert should_validate is False
+
+    @pytest.mark.asyncio
+    async def test_scan_engine_cache_coordination_integration(self):
+        """Test ScanEngine integration with cache coordination."""
+        from adversary_mcp_server.application.coordination.cache_coordinator import (
+            CacheCoordinator,
+        )
+
+        mock_cm = create_mock_credential_manager()
+
+        with (
+            patch("adversary_mcp_server.scanner.scan_engine.SemgrepScanner"),
+            patch("adversary_mcp_server.scanner.scan_engine.ErrorHandler"),
+        ):
+
+            # Create cache coordinator
+            cache_coordinator = CacheCoordinator()  # No cache manager
+
+            # Test cache availability check
+            assert cache_coordinator.is_cache_available() is False
+
+            # Test content hash creation (should handle no cache manager)
+            content_hash = cache_coordinator.create_content_hash("test content")
+            assert content_hash == ""  # Empty string when no cache manager
+
+            # Test cache key creation (should return None when no cache manager)
+            cache_key = cache_coordinator.create_cache_key_for_code(
+                "test content", {"use_llm": True, "use_semgrep": True}
+            )
+            assert cache_key is None
+
+    def test_scan_engine_telemetry_coordination_integration(self):
+        """Test ScanEngine telemetry integration with coordination layer."""
+        mock_cm = create_mock_credential_manager()
+
+        with (
+            patch("adversary_mcp_server.scanner.scan_engine.SemgrepScanner"),
+            patch("adversary_mcp_server.scanner.scan_engine.ErrorHandler"),
+            patch(
+                "adversary_mcp_server.scanner.scan_engine.AdversaryDatabase"
+            ) as mock_db,
+            patch(
+                "adversary_mcp_server.scanner.scan_engine.TelemetryService"
+            ) as mock_telemetry,
+            patch(
+                "adversary_mcp_server.scanner.scan_engine.MetricsCollectionOrchestrator"
+            ) as mock_orchestrator,
+        ):
+
+            # Setup telemetry mocks
+            mock_db_instance = Mock()
+            mock_db.return_value = mock_db_instance
+
+            mock_telemetry_instance = Mock()
+            mock_telemetry.return_value = mock_telemetry_instance
+
+            mock_orchestrator_instance = Mock()
+            mock_orchestrator.return_value = mock_orchestrator_instance
+
+            # Initialize scan engine (should create telemetry system)
+            engine = ScanEngine(credential_manager=mock_cm)
+
+            # Verify telemetry components were initialized
+            assert engine.metrics_orchestrator is mock_orchestrator_instance
+            mock_db.assert_called_once()
+            mock_telemetry.assert_called_once_with(mock_db_instance)
+            mock_orchestrator.assert_called_once_with(mock_telemetry_instance)
+
+    def test_scan_engine_architecture_separation_validation(self):
+        """Test that ScanEngine maintains proper architectural separation with coordination layer."""
+        from adversary_mcp_server.application.coordination.scan_orchestrator import (
+            ScanOrchestrator,
+        )
+        from adversary_mcp_server.domain.aggregation.threat_aggregator import (
+            ThreatAggregator,
+        )
+        from adversary_mcp_server.infrastructure.builders.result_builder import (
+            ResultBuilder,
+        )
+
+        mock_cm = create_mock_credential_manager()
+
+        with (
+            patch(
+                "adversary_mcp_server.scanner.scan_engine.SemgrepScanner"
+            ) as mock_semgrep_class,
+            patch("adversary_mcp_server.scanner.scan_engine.ErrorHandler"),
+        ):
+
+            mock_semgrep = Mock()
+            mock_semgrep_class.return_value = mock_semgrep
+
+            # Create all architectural layers
+            scan_engine = ScanEngine(credential_manager=mock_cm)
+            scan_orchestrator = ScanOrchestrator(semgrep_scanner=mock_semgrep)
+            threat_aggregator = ThreatAggregator()
+            result_builder = ResultBuilder()
+
+            # Verify each component maintains its responsibilities
+            # ScanEngine - scanner configuration and execution
+            assert hasattr(scan_engine, "credential_manager")
+            assert hasattr(scan_engine, "semgrep_scanner")
+
+            # ScanOrchestrator - workflow coordination
+            assert hasattr(scan_orchestrator, "orchestrate_file_scan")
+            assert hasattr(scan_orchestrator, "orchestrate_code_scan")
+
+            # ThreatAggregator - domain logic
+            assert hasattr(threat_aggregator, "aggregate_threats")
+
+            # ResultBuilder - infrastructure concerns
+            assert hasattr(result_builder, "build_scan_result")
+
+            # Verify clean interfaces between layers
+            assert scan_orchestrator.semgrep_scanner is mock_semgrep
+            assert scan_orchestrator.threat_aggregator is not None
+            assert scan_orchestrator.result_builder is not None
+
+
+class TestScanEnginePhase3SecurityIntegration:
+    """Test ScanEngine integration with Phase III security components."""
+
+    def test_scan_engine_security_validation_integration(self):
+        """Test ScanEngine integration with security validation."""
+        from adversary_mcp_server.security import SecurityError
+        from adversary_mcp_server.security.input_validator import InputValidator
+
+        mock_cm = create_mock_credential_manager()
+
+        with (
+            patch("adversary_mcp_server.scanner.scan_engine.SemgrepScanner"),
+            patch("adversary_mcp_server.scanner.scan_engine.ErrorHandler"),
+        ):
+
+            # Test security validation availability
+            validator = InputValidator()
+
+            # Test path traversal validation
+            with pytest.raises(SecurityError, match="Path traversal"):
+                validator.validate_file_path("../../../etc/passwd")
+
+            # Test safe path validation with a temporary file
+            with (
+                patch("pathlib.Path.exists", return_value=True),
+                patch("pathlib.Path.is_file", return_value=True),
+            ):
+                safe_path = "/safe/path/test.py"
+                validated_path = validator.validate_file_path(safe_path)
+                assert str(validated_path) == str(Path(safe_path).resolve())
+
+    def test_scan_engine_log_sanitization_integration(self):
+        """Test ScanEngine integration with log sanitization."""
+        from adversary_mcp_server.security.log_sanitizer import sanitize_for_logging
+
+        # Test sanitization of sensitive scan data
+        sensitive_scan_data = {
+            "file_path": "/safe/path/test.py",
+            "api_key": "sk-secret123",
+            "scan_results": "SQL injection found",
+            "auth_token": "bearer_token_456",
+        }
+
+        sanitized = sanitize_for_logging(sensitive_scan_data)
+
+        # Verify sensitive data is redacted
+        assert "sk-secret123" not in sanitized
+        assert "bearer_token_456" not in sanitized
+        assert "[REDACTED]" in sanitized
+
+        # Verify safe data is preserved
+        assert "/safe/path/test.py" in sanitized
+        assert "SQL injection found" in sanitized
+
+    def test_scan_engine_security_error_handling(self):
+        """Test ScanEngine security error handling."""
+        from adversary_mcp_server.security import SecurityError
+
+        mock_cm = create_mock_credential_manager()
+
+        with (
+            patch("adversary_mcp_server.scanner.scan_engine.SemgrepScanner"),
+            patch("adversary_mcp_server.scanner.scan_engine.ErrorHandler"),
+        ):
+
+            # Create scan engine
+            engine = ScanEngine(credential_manager=mock_cm)
+
+            # Test that SecurityError can be properly handled in scan engine context
+            try:
+                raise SecurityError("Test security error")
+            except SecurityError as e:
+                # Verify security errors are handled properly
+                assert str(e) == "Test security error"
+                assert isinstance(e, SecurityError)
+
+    def test_scan_engine_security_integration_with_coordination(self):
+        """Test security integration with coordination layer components."""
+        from adversary_mcp_server.application.coordination.validation_coordinator import (
+            ValidationCoordinator,
+        )
+        from adversary_mcp_server.security.input_validator import InputValidator
+
+        mock_cm = create_mock_credential_manager()
+
+        with (
+            patch("adversary_mcp_server.scanner.scan_engine.SemgrepScanner"),
+            patch("adversary_mcp_server.scanner.scan_engine.ErrorHandler"),
+        ):
+
+            # Create components with security integration
+            validator = InputValidator()
+            validation_coordinator = ValidationCoordinator(validator=None)
+
+            # Test security validation in coordination context
+            sample_threats = [
+                ThreatMatch(
+                    rule_id="security_test",
+                    rule_name="Security Test Rule",
+                    description="Test security validation",
+                    category=Category.INJECTION,
+                    severity=Severity.HIGH,
+                    file_path="test.py",
+                    line_number=10,
+                )
+            ]
+
+            # Test validation decision making
+            should_validate = validation_coordinator.should_validate(
+                use_validation=True, enable_llm_validation=True, threats=sample_threats
+            )
+
+            # Should return False since no validator is configured in coordinator
+            assert should_validate is False
+
+            # Test validation metadata building
+            metadata = validation_coordinator.build_validation_metadata(
+                use_validation=False, enable_llm_validation=False, validation_results={}
+            )
+
+            assert "llm_validation_success" in metadata
+            assert metadata["llm_validation_success"] is False

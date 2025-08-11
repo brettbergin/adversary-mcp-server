@@ -22,7 +22,7 @@ from ..credentials import CredentialManager
 from ..llm import LLMClient, LLMProvider, create_llm_client
 from ..logger import get_logger
 from ..resilience import ErrorHandler, ResilienceConfig
-from .language_mapping import LanguageMapper
+from .language_mapping import ANALYZABLE_SOURCE_EXTENSIONS, LanguageMapper
 from .types import Category, Severity, ThreatMatch
 
 logger = get_logger("llm_scanner")
@@ -292,6 +292,7 @@ class LLMScanner:
                     provider=LLMProvider(self.config.llm_provider),
                     api_key=self.config.llm_api_key,
                     model=self.config.llm_model,
+                    metrics_collector=self.metrics_collector,
                 )
                 logger.info("LLM client initialized successfully")
             else:
@@ -1436,42 +1437,7 @@ Response format:
         Returns:
             True if file should be analyzed
         """
-        # Common source code extensions
-        analyzable_extensions = {
-            ".py",
-            ".js",
-            ".ts",
-            ".jsx",
-            ".tsx",
-            ".java",
-            ".c",
-            ".cpp",
-            ".cc",
-            ".h",
-            ".hpp",
-            ".cs",
-            ".go",
-            ".rs",
-            ".php",
-            ".rb",
-            ".swift",
-            ".kt",
-            ".scala",
-            ".r",
-            ".m",
-            ".mm",
-            ".sh",
-            ".bash",
-            ".zsh",
-            ".ps1",
-            ".pl",
-            ".lua",
-            ".dart",
-            ".vue",
-            ".svelte",
-        }
-
-        return file_path.suffix.lower() in analyzable_extensions
+        return file_path.suffix.lower() in ANALYZABLE_SOURCE_EXTENSIONS
 
     def _detect_language(self, file_path: Path) -> str:
         """Detect programming language from file extension using shared mapper.

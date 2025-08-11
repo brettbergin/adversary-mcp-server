@@ -22,13 +22,93 @@ from ..interfaces import (
     IValidator,
 )
 from ..logger import get_logger
-from ..monitoring.metrics_collector import MetricsCollector
+from ..monitoring.types import MonitoringConfig
+from ..monitoring.unified_metrics_collector import UnifiedMetricsCollector
 from ..scanner.llm_scanner import LLMScanner
 from ..scanner.llm_validator import LLMValidator
 from ..scanner.scan_engine import ScanEngine
 from ..scanner.semgrep_scanner import SemgrepScanner
 
 logger = get_logger("bootstrap")
+
+
+class ApplicationBootstrap:
+    """Bootstrap class for initializing the entire application dependency graph."""
+
+    def __init__(self, config_dir: Path | None = None):
+        """Initialize the application bootstrap.
+
+        Args:
+            config_dir: Optional configuration directory path
+        """
+        self.config_dir = config_dir
+        self._container: ServiceContainer | None = None
+        self._initialized = False
+
+    def initialize_application(self) -> ServiceContainer:
+        """Initialize the complete application with all dependencies configured.
+
+        Returns:
+            Fully configured service container
+        """
+        if self._initialized and self._container:
+            return self._container
+
+        logger.info("Initializing application with dependency injection container")
+
+        # Create and configure the container
+        self._container = create_configured_container(self.config_dir)
+        self._initialized = True
+
+        logger.info("Application bootstrap completed successfully")
+        return self._container
+
+    def get_container(self) -> ServiceContainer | None:
+        """Get the initialized container, if available.
+
+        Returns:
+            The service container if initialized, otherwise None
+        """
+        return self._container
+
+    def configure_dependencies(self) -> dict[str, object]:
+        """Configure dependencies and return them as a dictionary.
+
+        Returns:
+            Dictionary of configured service instances
+        """
+        if not self._initialized:
+            self.initialize_application()
+
+        if not self._container:
+            raise RuntimeError("Container not initialized")
+
+        # Build a dictionary of services for testing/inspection
+        services: dict[str, object] = {}
+        try:
+            # Try to resolve each service and add to dictionary
+            # Cast to object to satisfy MyPy since interface types are abstract
+            services["credential_manager"] = self._container.resolve(ICredentialManager)  # type: ignore[type-abstract]
+            services["cache_manager"] = self._container.resolve(ICacheManager)  # type: ignore[type-abstract]
+            services["metrics_collector"] = self._container.resolve(IMetricsCollector)  # type: ignore[type-abstract]
+            services["semgrep_scanner"] = self._container.resolve(ISemgrepScanner)  # type: ignore[type-abstract]
+            services["llm_scanner"] = self._container.resolve(ILLMScanner)  # type: ignore[type-abstract]
+            services["llm_validator"] = self._container.resolve(ILLMValidator)  # type: ignore[type-abstract]
+            services["scan_engine"] = self._container.resolve(IScanEngine)  # type: ignore[type-abstract]
+
+        except Exception as e:
+            logger.warning(f"Error resolving some services: {e}")
+            # Return at least what we have
+            pass
+
+        return services
+
+    def shutdown(self) -> None:
+        """Shutdown the application and clean up resources."""
+        if self._container:
+            logger.info("Shutting down application")
+            # Container cleanup would go here if needed
+            self._initialized = False
 
 
 def configure_container(
@@ -165,15 +245,13 @@ def _create_metrics_collector(
         monitoring_config = getattr(config, "monitoring", None)
         if monitoring_config is None:
             # Create default monitoring configuration
-            from ..monitoring.types import MonitoringConfig
-
             monitoring_config = MonitoringConfig(
                 enable_metrics=True,
                 collection_interval_seconds=60,
                 metrics_retention_hours=24,
             )
 
-        metrics_collector = MetricsCollector(monitoring_config)
+        metrics_collector = UnifiedMetricsCollector(monitoring_config)
         logger.debug("Created metrics collector with configuration")
         return metrics_collector  # type: ignore[return-value]
 
@@ -182,14 +260,12 @@ def _create_metrics_collector(
             f"Failed to load config for metrics collector: {e}, using defaults"
         )
         # Fallback to default configuration
-        from ..monitoring.types import MonitoringConfig
-
         default_config = MonitoringConfig(
             enable_metrics=True,
             collection_interval_seconds=60,
             metrics_retention_hours=24,
         )
-        return MetricsCollector(default_config)  # type: ignore[return-value]
+        return UnifiedMetricsCollector(default_config)  # type: ignore[return-value]
 
 
 # === Container Lifecycle Management ===

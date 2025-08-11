@@ -380,3 +380,270 @@ class TestContainerIntegration:
         # Post-cleanup verification
         instance3 = container.resolve(ITestService)
         assert instance3.dependency is not instance1.dependency  # New singleton created
+
+
+class TestContainerPhase2Integration:
+    """Test container integration with Phase II architecture components."""
+
+    def test_scan_orchestrator_registration(self, container):
+        """Test that ScanOrchestrator can be properly registered and resolved."""
+        from unittest.mock import Mock
+
+        from adversary_mcp_server.application.coordination.scan_orchestrator import (
+            ScanOrchestrator,
+        )
+        from adversary_mcp_server.interfaces.scanner import ISemgrepScanner
+
+        # Register mock dependencies
+        mock_semgrep = Mock(spec=ISemgrepScanner)
+        container.register_instance(ISemgrepScanner, mock_semgrep)
+
+        # Register orchestrator as singleton
+        container.register_singleton(ScanOrchestrator, ScanOrchestrator)
+
+        # Resolve orchestrator
+        orchestrator = container.resolve(ScanOrchestrator)
+
+        # Verify dependency injection worked
+        assert orchestrator is not None
+        assert orchestrator.semgrep_scanner is mock_semgrep
+
+    def test_coordination_layer_dependency_injection(self, container):
+        """Test dependency injection for all coordination layer components."""
+        from unittest.mock import Mock
+
+        from adversary_mcp_server.application.coordination.cache_coordinator import (
+            CacheCoordinator,
+        )
+        from adversary_mcp_server.application.coordination.scan_orchestrator import (
+            ScanOrchestrator,
+        )
+        from adversary_mcp_server.application.coordination.validation_coordinator import (
+            ValidationCoordinator,
+        )
+        from adversary_mcp_server.interfaces.cache import ICacheManager
+        from adversary_mcp_server.interfaces.scanner import ISemgrepScanner
+        from adversary_mcp_server.interfaces.validator import IValidator
+
+        # Register all dependencies as mocks
+        mock_semgrep = Mock(spec=ISemgrepScanner)
+        mock_cache = Mock(spec=ICacheManager)
+        mock_validator = Mock(spec=IValidator)
+
+        container.register_instance(ISemgrepScanner, mock_semgrep)
+        container.register_instance(ICacheManager, mock_cache)
+        container.register_instance(IValidator, mock_validator)
+
+        # Register coordinators
+        container.register_singleton(ScanOrchestrator, ScanOrchestrator)
+        container.register_singleton(CacheCoordinator, CacheCoordinator)
+        container.register_singleton(ValidationCoordinator, ValidationCoordinator)
+
+        # Resolve all coordinators
+        scan_orch = container.resolve(ScanOrchestrator)
+        cache_coord = container.resolve(CacheCoordinator)
+        val_coord = container.resolve(ValidationCoordinator)
+
+        # Verify all dependencies were injected properly
+        assert scan_orch.semgrep_scanner is mock_semgrep
+        assert scan_orch.cache_manager is mock_cache
+        assert val_coord.validator is mock_validator
+
+    def test_domain_layer_registration(self, container):
+        """Test registration and resolution of domain layer components."""
+        from adversary_mcp_server.domain.aggregation.threat_aggregator import (
+            ThreatAggregator,
+        )
+
+        # Register as singleton
+        container.register_singleton(ThreatAggregator, ThreatAggregator)
+
+        # Resolve multiple times to verify singleton behavior
+        aggregator1 = container.resolve(ThreatAggregator)
+        aggregator2 = container.resolve(ThreatAggregator)
+
+        assert aggregator1 is aggregator2
+        assert aggregator1 is not None
+
+    def test_infrastructure_layer_registration(self, container):
+        """Test registration of infrastructure layer components."""
+        from adversary_mcp_server.infrastructure.builders.result_builder import (
+            ResultBuilder,
+        )
+
+        # Register as singleton
+        container.register_singleton(ResultBuilder, ResultBuilder)
+
+        # Verify resolution
+        builder = container.resolve(ResultBuilder)
+        assert builder is not None
+
+    def test_telemetry_system_registration(self, container):
+        """Test registration of telemetry system components."""
+        from unittest.mock import Mock
+
+        from adversary_mcp_server.database.models import AdversaryDatabase
+        from adversary_mcp_server.telemetry.integration import (
+            MetricsCollectionOrchestrator,
+        )
+        from adversary_mcp_server.telemetry.service import TelemetryService
+
+        # Mock heavy dependencies
+        mock_db = Mock(spec=AdversaryDatabase)
+        container.register_instance(AdversaryDatabase, mock_db)
+
+        # Register telemetry services
+        container.register_singleton(TelemetryService, TelemetryService)
+        container.register_singleton(
+            MetricsCollectionOrchestrator, MetricsCollectionOrchestrator
+        )
+
+        # Resolve telemetry components
+        telemetry = container.resolve(TelemetryService)
+        orchestrator = container.resolve(MetricsCollectionOrchestrator)
+
+        # Verify registration
+        assert telemetry is not None
+        assert orchestrator is not None
+        assert telemetry.db is mock_db
+
+    def test_security_system_registration(self, container):
+        """Test registration of security system components."""
+        from adversary_mcp_server.security.input_validator import InputValidator
+        from adversary_mcp_server.security.log_sanitizer import sanitize_for_logging
+
+        # Register security validator as singleton
+        container.register_singleton(InputValidator, InputValidator)
+
+        # Resolve and verify
+        validator = container.resolve(InputValidator)
+        assert validator is not None
+
+        # Verify security functions are available
+        test_data = {"api_key": "test123", "safe": "data"}
+        sanitized = sanitize_for_logging(test_data)
+        assert "[REDACTED]" in sanitized
+
+    def test_bootstrap_system_integration(self, container):
+        """Test integration with bootstrap system."""
+        from adversary_mcp_server.application.bootstrap import ApplicationBootstrap
+
+        # Register bootstrap as singleton
+        container.register_singleton(ApplicationBootstrap, ApplicationBootstrap)
+
+        # Resolve bootstrap
+        bootstrap = container.resolve(ApplicationBootstrap)
+
+        # Verify bootstrap can be resolved
+        assert bootstrap is not None
+        assert hasattr(bootstrap, "initialize_application")
+        assert hasattr(bootstrap, "get_container")
+
+        # Verify it has a config_dir parameter handled correctly
+        assert bootstrap.config_dir is None  # Default value
+
+    def test_full_phase2_dependency_graph(self, container):
+        """Test complete Phase II dependency graph resolution."""
+        from unittest.mock import Mock
+
+        from adversary_mcp_server.application.coordination.scan_orchestrator import (
+            ScanOrchestrator,
+        )
+        from adversary_mcp_server.domain.aggregation.threat_aggregator import (
+            ThreatAggregator,
+        )
+        from adversary_mcp_server.infrastructure.builders.result_builder import (
+            ResultBuilder,
+        )
+        from adversary_mcp_server.interfaces.scanner import ISemgrepScanner
+
+        # Register all dependencies in correct order
+        mock_semgrep = Mock(spec=ISemgrepScanner)
+        container.register_instance(ISemgrepScanner, mock_semgrep)
+
+        # Domain layer
+        container.register_singleton(ThreatAggregator, ThreatAggregator)
+
+        # Infrastructure layer
+        container.register_singleton(ResultBuilder, ResultBuilder)
+
+        # Application layer (depends on domain + infrastructure)
+        container.register_singleton(ScanOrchestrator, ScanOrchestrator)
+
+        # Resolve top-level service (should pull in entire graph)
+        orchestrator = container.resolve(ScanOrchestrator)
+
+        # Verify entire dependency graph was resolved
+        assert orchestrator is not None
+        assert orchestrator.semgrep_scanner is mock_semgrep
+        assert orchestrator.threat_aggregator is not None
+        assert orchestrator.result_builder is not None
+
+
+class TestContainerPhase3SecurityIntegration:
+    """Test container integration with Phase III security components."""
+
+    def test_security_validator_lifecycle(self, container):
+        """Test security validator lifecycle management."""
+        from adversary_mcp_server.security.input_validator import InputValidator
+
+        # Register validator as singleton to ensure consistent behavior
+        container.register_singleton(InputValidator, InputValidator)
+
+        # Resolve multiple times
+        validator1 = container.resolve(InputValidator)
+        validator2 = container.resolve(InputValidator)
+
+        # Should be same instance (singleton)
+        assert validator1 is validator2
+
+        # Test validator functionality
+        with pytest.raises(Exception):  # Should raise SecurityError or ValueError
+            validator1.validate_file_path("../../../etc/passwd")
+
+    def test_security_integration_with_coordinators(self, container):
+        """Test security integration with coordination layer."""
+        from unittest.mock import Mock
+
+        from adversary_mcp_server.application.coordination.scan_orchestrator import (
+            ScanOrchestrator,
+        )
+        from adversary_mcp_server.interfaces.scanner import ISemgrepScanner
+        from adversary_mcp_server.security.input_validator import InputValidator
+
+        # Register dependencies
+        mock_semgrep = Mock(spec=ISemgrepScanner)
+        container.register_instance(ISemgrepScanner, mock_semgrep)
+        container.register_singleton(InputValidator, InputValidator)
+        container.register_singleton(ScanOrchestrator, ScanOrchestrator)
+
+        # Resolve components
+        orchestrator = container.resolve(ScanOrchestrator)
+        validator = container.resolve(InputValidator)
+
+        # Verify both components can coexist and work together
+        assert orchestrator is not None
+        assert validator is not None
+
+    def test_container_security_error_handling(self, container):
+        """Test container error handling with security constraints."""
+        from adversary_mcp_server.security import SecurityError
+
+        # Test that SecurityError can be properly handled in container context
+        class SecurityTestService:
+            def __init__(self):
+                if hasattr(SecurityTestService, "_should_fail"):
+                    raise SecurityError("Security validation failed")
+
+        container.register_singleton(SecurityTestService, SecurityTestService)
+
+        # First resolution should work
+        service = container.resolve(SecurityTestService)
+        assert service is not None
+
+        # Test error handling
+        SecurityTestService._should_fail = True
+        container.clear_singletons()
+
+        with pytest.raises(SecurityError):
+            container.resolve(SecurityTestService)

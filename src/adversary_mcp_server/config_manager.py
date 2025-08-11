@@ -9,6 +9,7 @@ import psutil
 
 from .config import SecurityConfig, ValidationFallbackMode
 from .logger import get_logger
+from .security import sanitize_env_vars
 
 logger = get_logger("config_manager")
 
@@ -375,12 +376,14 @@ class ConfigManager:
             "llm_max_batch_size": self.dynamic_limits.llm_max_batch_size,
             "llm_target_tokens": self.dynamic_limits.llm_target_tokens,
             "llm_max_tokens": self.dynamic_limits.llm_max_tokens,
-            # Environment overrides detected
-            "env_overrides": {
-                key: value
-                for key, value in os.environ.items()
-                if key.startswith("ADVERSARY_")
-            },
+            # Environment overrides detected (sensitive values redacted)
+            "env_overrides": sanitize_env_vars(
+                {
+                    key: value
+                    for key, value in os.environ.items()
+                    if key.startswith("ADVERSARY_")
+                }
+            ),
         }
 
 

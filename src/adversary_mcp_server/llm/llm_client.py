@@ -5,10 +5,13 @@ import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..logger import get_logger
 from .pricing_manager import PricingManager
+
+if TYPE_CHECKING:
+    from ..interfaces import IMetricsCollector
 
 logger = get_logger("llm_client")
 
@@ -52,20 +55,70 @@ class LLMRateLimitError(LLMClientError):
 class LLMClient(ABC):
     """Abstract base class for LLM clients."""
 
-    def __init__(self, api_key: str, model: str | None = None):
+    def __init__(
+        self,
+        api_key: str,
+        model: str | None = None,
+        metrics_collector: "IMetricsCollector | None" = None,
+    ):
         """Initialize LLM client.
 
         Args:
             api_key: API key for the provider
             model: Model to use (provider-specific)
+            metrics_collector: Optional metrics collector for LLM usage tracking
         """
         self.api_key = api_key
         self.model = model or self.get_default_model()
         self.pricing_manager = PricingManager()
+        self.metrics_collector = metrics_collector
         logger.info(f"Initializing {self.__class__.__name__} with model: {self.model}")
         logger.debug(
             f"Pricing manager initialized with {len(self.pricing_manager.get_supported_models())} supported models"
         )
+
+    def _record_llm_metrics(
+        self,
+        provider: str,
+        model: str,
+        usage_data: dict[str, Any],
+        duration: float,
+        success: bool,
+    ) -> None:
+        """Record LLM request metrics if metrics collector is available.
+
+        Args:
+            provider: LLM provider name (openai, anthropic)
+            model: Model name used
+            usage_data: Usage data from LLM response
+            duration: Request duration in seconds
+            success: Whether request was successful
+        """
+        if self.metrics_collector and usage_data:
+            # Extract total tokens from usage data
+            total_tokens = usage_data.get("total_tokens", 0)
+            if not total_tokens:
+                # Calculate from prompt + completion tokens if total not available
+                prompt_tokens = usage_data.get("prompt_tokens", 0)
+                completion_tokens = usage_data.get("completion_tokens", 0)
+                total_tokens = prompt_tokens + completion_tokens
+
+            # Record the metrics
+            try:
+                self.metrics_collector.record_llm_request(
+                    provider=provider,
+                    model=model,
+                    tokens=total_tokens,
+                    duration=duration,
+                    success=success,
+                )
+                logger.debug(
+                    f"Recorded LLM metrics: {provider}/{model}, "
+                    f"{total_tokens} tokens, {duration:.2f}s, "
+                    f"success={success}"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to record LLM metrics: {e}")
 
     @abstractmethod
     def get_default_model(self) -> str:
@@ -257,6 +310,7 @@ class OpenAIClient(LLMClient):
 
         client = openai.AsyncOpenAI(api_key=self.api_key)
 
+        start_time = asyncio.get_event_loop().time()
         try:
             # Prepare messages
             messages = [
@@ -308,6 +362,16 @@ class OpenAIClient(LLMClient):
                 f"(pricing: {cost_breakdown['pricing_source']})"
             )
 
+            # Record LLM metrics if collector is available
+            duration = asyncio.get_event_loop().time() - start_time
+            self._record_llm_metrics(
+                provider="openai",
+                model=response.model,
+                usage_data=usage,
+                duration=duration,
+                success=True,
+            )
+
             return LLMResponse(
                 content=content,
                 model=response.model,
@@ -317,12 +381,36 @@ class OpenAIClient(LLMClient):
             )
 
         except openai.RateLimitError as e:
+            duration = asyncio.get_event_loop().time() - start_time
+            self._record_llm_metrics(
+                provider="openai",
+                model=self.model,
+                usage_data={},
+                duration=duration,
+                success=False,
+            )
             logger.error(f"OpenAI rate limit error: {e}")
             raise LLMRateLimitError(f"OpenAI rate limit exceeded: {e}")
         except openai.APIError as e:
+            duration = asyncio.get_event_loop().time() - start_time
+            self._record_llm_metrics(
+                provider="openai",
+                model=self.model,
+                usage_data={},
+                duration=duration,
+                success=False,
+            )
             logger.error(f"OpenAI API error: {e}")
             raise LLMAPIError(f"OpenAI API error: {e}")
         except Exception as e:
+            duration = asyncio.get_event_loop().time() - start_time
+            self._record_llm_metrics(
+                provider="openai",
+                model=self.model,
+                usage_data={},
+                duration=duration,
+                success=False,
+            )
             logger.error(f"Unexpected OpenAI error: {e}")
             raise LLMClientError(f"Unexpected error in OpenAI client: {e}")
 
@@ -364,6 +452,7 @@ class AnthropicClient(LLMClient):
 
         client = anthropic.AsyncAnthropic(api_key=self.api_key)
 
+        start_time = asyncio.get_event_loop().time()
         try:
             # Combine prompts for Anthropic format
             # Add JSON instruction if needed
@@ -411,6 +500,16 @@ class AnthropicClient(LLMClient):
                 f"(pricing: {cost_breakdown['pricing_source']})"
             )
 
+            # Record LLM metrics if collector is available
+            duration = asyncio.get_event_loop().time() - start_time
+            self._record_llm_metrics(
+                provider="anthropic",
+                model=response.model,
+                usage_data=usage,
+                duration=duration,
+                success=True,
+            )
+
             return LLMResponse(
                 content=content,
                 model=response.model,
@@ -420,18 +519,45 @@ class AnthropicClient(LLMClient):
             )
 
         except anthropic.RateLimitError as e:
+            duration = asyncio.get_event_loop().time() - start_time
+            self._record_llm_metrics(
+                provider="anthropic",
+                model=self.model,
+                usage_data={},
+                duration=duration,
+                success=False,
+            )
             logger.error(f"Anthropic rate limit error: {e}")
             raise LLMRateLimitError(f"Anthropic rate limit exceeded: {e}")
         except anthropic.APIError as e:
+            duration = asyncio.get_event_loop().time() - start_time
+            self._record_llm_metrics(
+                provider="anthropic",
+                model=self.model,
+                usage_data={},
+                duration=duration,
+                success=False,
+            )
             logger.error(f"Anthropic API error: {e}")
             raise LLMAPIError(f"Anthropic API error: {e}")
         except Exception as e:
+            duration = asyncio.get_event_loop().time() - start_time
+            self._record_llm_metrics(
+                provider="anthropic",
+                model=self.model,
+                usage_data={},
+                duration=duration,
+                success=False,
+            )
             logger.error(f"Unexpected Anthropic error: {e}")
             raise LLMClientError(f"Unexpected error in Anthropic client: {e}")
 
 
 def create_llm_client(
-    provider: LLMProvider, api_key: str, model: str | None = None
+    provider: LLMProvider,
+    api_key: str,
+    model: str | None = None,
+    metrics_collector: "IMetricsCollector | None" = None,
 ) -> LLMClient:
     """Factory function to create LLM client based on provider.
 
@@ -439,6 +565,7 @@ def create_llm_client(
         provider: LLM provider to use
         api_key: API key for the provider
         model: Optional model override
+        metrics_collector: Optional metrics collector for LLM usage tracking
 
     Returns:
         Configured LLM client instance
@@ -453,13 +580,17 @@ def create_llm_client(
 
     try:
         if provider == LLMProvider.OPENAI:
-            client = OpenAIClient(api_key=api_key, model=model)
+            client = OpenAIClient(
+                api_key=api_key, model=model, metrics_collector=metrics_collector
+            )
             logger.info(
                 f"Successfully created OpenAI client with model: {client.model}"
             )
             return client
         elif provider == LLMProvider.ANTHROPIC:
-            client = AnthropicClient(api_key=api_key, model=model)
+            client = AnthropicClient(
+                api_key=api_key, model=model, metrics_collector=metrics_collector
+            )
             logger.info(
                 f"Successfully created Anthropic client with model: {client.model}"
             )

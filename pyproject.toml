@@ -1,6 +1,6 @@
 [project]
 name = "adversary-mcp-server"
-version = "1.0.7"
+version = "1.0.8"
 description = "MCP server for security vulnerability scanning and detection"
 readme = "README.md"
 authors = [
@@ -37,6 +37,7 @@ dependencies = [
     "openai>=1.0.0",
     "anthropic>=0.8.0",
     "psutil>=5.9.0",
+    "sqlalchemy>=2.0.0",
     "questionary>=2.0.0",
     "aiohttp>=3.9.0",
 ]

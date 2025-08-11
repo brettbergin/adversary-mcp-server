@@ -5,9 +5,10 @@ dependencies, enabling loose coupling, easier testing, and better architecture.
 """
 
 import inspect
+import types
 from collections.abc import Callable
 from enum import Enum
-from typing import Any, TypeVar
+from typing import Any, TypeVar, Union, get_args, get_origin
 
 from .logger import get_logger
 
@@ -238,10 +239,94 @@ class ServiceContainer:
 
         for param_name, param in signature.parameters.items():
             if param.annotation != inspect.Parameter.empty:
-                dependency = self.resolve(param.annotation)
-                kwargs[param_name] = dependency
+                try:
+                    dependency = self._resolve_optional_dependency(param.annotation)
+                    kwargs[param_name] = dependency
+                except ValueError as e:
+                    # Skip primitive types - they should use their default values
+                    if "requires a default value" in str(e):
+                        logger.debug(
+                            f"Skipping primitive type parameter {param_name} in factory, using default value"
+                        )
+                        continue
+                    else:
+                        raise
 
         return factory(**kwargs)
+
+    def _is_optional_type(self, annotation: Any) -> tuple[bool, type | None]:
+        """Check if an annotation is an optional type (Union[T, None] or T | None).
+
+        Args:
+            annotation: Type annotation to check
+
+        Returns:
+            Tuple of (is_optional, non_none_type)
+        """
+        # Handle Union types (both typing.Union and | syntax)
+        origin = get_origin(annotation)
+
+        # Check for both typing.Union and types.UnionType (Python 3.10+)
+        if origin is Union or isinstance(annotation, types.UnionType):
+            args = get_args(annotation)
+            # Check if this is Optional[T] (Union[T, None])
+            if len(args) == 2 and type(None) in args:
+                non_none_type = next(arg for arg in args if arg is not type(None))
+                return True, non_none_type
+
+        return False, None
+
+    def _is_primitive_type(self, annotation: Any) -> bool:
+        """Check if an annotation is a primitive type that should not be dependency-injected.
+
+        Args:
+            annotation: Type annotation to check
+
+        Returns:
+            True if this is a primitive type (int, str, float, bool, etc.)
+        """
+        primitive_types = {int, str, float, bool, bytes, type(None), type, object}
+        return annotation in primitive_types
+
+    def _resolve_optional_dependency(self, param_annotation: Any) -> Any:
+        """Resolve an optional dependency, returning None if not registered.
+
+        Args:
+            param_annotation: Parameter type annotation
+
+        Returns:
+            Resolved instance or None if optional dependency is not registered
+
+        Raises:
+            ValueError: If primitive type dependency cannot be resolved (should use default value)
+        """
+        # Check if this is a primitive type that shouldn't be dependency-injected
+        if self._is_primitive_type(param_annotation):
+            raise ValueError(
+                f"Primitive type {param_annotation} requires a default value"
+            )
+
+        is_optional, non_none_type = self._is_optional_type(param_annotation)
+
+        if is_optional and non_none_type:
+            # Check if the non-None type is a primitive
+            if self._is_primitive_type(non_none_type):
+                raise ValueError(
+                    f"Optional primitive type {non_none_type} requires a default value"
+                )
+
+            # Check if the non-None type is registered
+            if self.is_registered(non_none_type):
+                return self.resolve(non_none_type)
+            else:
+                # Optional dependency not registered - return None
+                logger.debug(
+                    f"Optional dependency {non_none_type} not registered, using None"
+                )
+                return None
+        else:
+            # Not an optional type, resolve normally
+            return self.resolve(param_annotation)
 
     def _create_from_class(self, implementation: type) -> Any:
         """Create instance using constructor injection.
@@ -261,9 +346,19 @@ class ServiceContainer:
                 continue
 
             if param.annotation != inspect.Parameter.empty:
-                # Resolve dependency
-                dependency = self.resolve(param.annotation)
-                kwargs[param_name] = dependency
+                try:
+                    # Resolve dependency (handles optional types)
+                    dependency = self._resolve_optional_dependency(param.annotation)
+                    kwargs[param_name] = dependency
+                except ValueError as e:
+                    # Skip primitive types - they should use their default values
+                    if "requires a default value" in str(e):
+                        logger.debug(
+                            f"Skipping primitive type parameter {param_name} in {implementation.__name__}, using default value"
+                        )
+                        continue
+                    else:
+                        raise
             elif param.default != inspect.Parameter.empty:
                 # Use default value if no annotation
                 continue

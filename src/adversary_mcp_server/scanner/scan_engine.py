@@ -10,9 +10,12 @@ from ..cache import CacheKey, CacheManager, CacheType, SerializableThreatMatch
 from ..config import get_app_cache_dir
 from ..config_manager import get_config_manager
 from ..credentials import CredentialManager, get_credential_manager
+from ..database.models import AdversaryDatabase
 from ..logger import get_logger
 from ..monitoring import MetricsCollector
 from ..resilience import ErrorHandler, ResilienceConfig
+from ..telemetry.integration import MetricsCollectionOrchestrator
+from ..telemetry.service import TelemetryService
 from .file_filter import FileFilter
 from .llm_scanner import LLMScanner
 from .llm_validator import LLMValidator
@@ -302,6 +305,7 @@ class ScanEngine:
         credential_manager: CredentialManager | None = None,
         cache_manager: CacheManager | None = None,
         metrics_collector: MetricsCollector | None = None,
+        metrics_orchestrator: MetricsCollectionOrchestrator | None = None,
         enable_llm_analysis: bool = True,
         enable_semgrep_analysis: bool = True,
         enable_llm_validation: bool = True,
@@ -311,7 +315,8 @@ class ScanEngine:
         Args:
             credential_manager: Credential manager for configuration
             cache_manager: Optional cache manager for scan results
-            metrics_collector: Optional metrics collector for performance monitoring
+            metrics_collector: Optional legacy metrics collector for performance monitoring
+            metrics_orchestrator: Optional telemetry orchestrator for comprehensive tracking
             enable_llm_analysis: Whether to enable LLM analysis
             enable_semgrep_analysis: Whether to enable Semgrep analysis
             enable_llm_validation: Whether to enable LLM validation of findings
@@ -321,6 +326,21 @@ class ScanEngine:
         self.cache_manager = cache_manager
         self.metrics_collector = metrics_collector
         self.config_manager = get_config_manager()
+
+        # Initialize telemetry system
+        self.metrics_orchestrator = metrics_orchestrator
+        if self.metrics_orchestrator is None:
+            try:
+                db = AdversaryDatabase()
+                telemetry_service = TelemetryService(db)
+                self.metrics_orchestrator = MetricsCollectionOrchestrator(
+                    telemetry_service
+                )
+                logger.debug("Initialized telemetry system for scan engine")
+            except Exception as e:
+                logger.warning(f"Failed to initialize telemetry system: {e}")
+                self.metrics_orchestrator = None
+
         logger.debug("Initialized core components")
 
         # Load configuration
@@ -673,9 +693,55 @@ class ScanEngine:
         scan_start_time = time.time()
         file_path_abs = str(Path(file_path).resolve())
 
-        # Record scan start
+        # Record scan start (legacy metrics)
         if self.metrics_collector:
             self.metrics_collector.record_scan_start("code", file_count=1)
+
+        # Use telemetry context manager for comprehensive tracking
+        if self.metrics_orchestrator:
+            with self.metrics_orchestrator.track_scan_execution(
+                trigger_source="scan_engine",
+                scan_type="code",
+                target_path=file_path_abs,
+                semgrep_enabled=use_semgrep,
+                llm_enabled=use_llm,
+                validation_enabled=use_validation,
+                file_count=1,
+            ) as scan_context:
+                return await self._scan_code_with_context(
+                    scan_context,
+                    source_code,
+                    file_path_abs,
+                    use_llm,
+                    use_semgrep,
+                    use_validation,
+                    severity_threshold,
+                )
+        else:
+            # Fallback without telemetry tracking
+            return await self._scan_code_with_context(
+                None,
+                source_code,
+                file_path_abs,
+                use_llm,
+                use_semgrep,
+                use_validation,
+                severity_threshold,
+            )
+
+    async def _scan_code_with_context(
+        self,
+        scan_context,
+        source_code: str,
+        file_path: str,
+        use_llm: bool,
+        use_semgrep: bool,
+        use_validation: bool,
+        severity_threshold: Severity | None,
+    ) -> EnhancedScanResult:
+        """Internal scan code implementation with telemetry context."""
+        scan_start_time = time.time()
+        file_path_abs = str(Path(file_path).resolve())
 
         # Check cache first if enabled
         cached_result = await self._get_cached_scan_result(
@@ -2076,3 +2142,26 @@ class ScanEngine:
             result.stats = cached_data["stats"]
 
         return result
+
+    def clear_cache(self) -> None:
+        """Clear all caches used by the scan engine."""
+        logger.info("Clearing scan engine caches...")
+
+        # Clear main cache manager
+        if self.cache_manager:
+            self.cache_manager.clear()
+
+        # Clear semgrep scanner cache
+        if self.semgrep_scanner:
+            self.semgrep_scanner.clear_cache()
+
+        # Clear LLM analyzer cache if available
+        if self.llm_analyzer and hasattr(self.llm_analyzer, "clear_cache"):
+            self.llm_analyzer.clear_cache()
+
+        # Clear token estimator cache if available
+        if self.llm_analyzer and hasattr(self.llm_analyzer, "token_estimator"):
+            if hasattr(self.llm_analyzer.token_estimator, "clear_cache"):
+                self.llm_analyzer.token_estimator.clear_cache()
+
+        logger.info("Scan engine caches cleared successfully")

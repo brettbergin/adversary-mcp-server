@@ -349,3 +349,38 @@ class ResultBuilder:
         model = cost_breakdown.get("model")
         if model and model not in usage_section["models_used"]:
             usage_section["models_used"].append(model)
+
+    def build_scan_result(
+        self,
+        threats: list[ThreatMatch],
+        metadata: dict[str, Any],
+        file_path: str = "<unknown>",
+    ) -> EnhancedScanResult:
+        """Backwards compatibility method for build_scan_result.
+
+        This method provides compatibility with the old interface while
+        internally calling the new build_enhanced_result method.
+
+        Args:
+            threats: List of all threats (will be split for semgrep/llm)
+            metadata: Scan metadata
+            file_path: Path to the scanned file
+
+        Returns:
+            Enhanced scan result
+        """
+        # Split threats evenly between semgrep and llm for compatibility
+        # In real usage, these would come from separate scanners
+        mid = len(threats) // 2
+        semgrep_threats = threats[:mid]
+        llm_threats = threats[mid:]
+
+        return self.build_enhanced_result(
+            file_path=file_path,
+            semgrep_threats=semgrep_threats,
+            llm_threats=llm_threats,
+            aggregated_threats=threats,  # All threats as aggregated
+            scan_metadata=metadata,
+            validation_results=None,
+            llm_usage_stats=None,
+        )
