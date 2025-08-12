@@ -8,6 +8,7 @@ from functools import wraps
 from pathlib import Path
 
 import click
+import truststore
 from rich.console import Console
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
@@ -2141,6 +2142,13 @@ def clear_cache():
 
 def main():
     """Main entry point for the CLI."""
+    # SSL truststore injection for corporate environments
+    try:
+        truststore.inject_into_ssl()
+    except Exception as e:
+        logger.error(f"Failed to inject truststore into SSL context: {e}")
+        # Continue execution - some corporate environments may have alternative SSL config
+
     logger.info("=== Adversary MCP CLI Main Entry Point ===")
     try:
         cli()
