@@ -1,6 +1,6 @@
 [project]
 name = "adversary-mcp-server"
-version = "1.10.0"
+version = "1.10.1"
 description = "MCP server for security vulnerability scanning and detection"
 readme = "README.md"
 authors = [
@@ -40,6 +40,7 @@ dependencies = [
     "sqlalchemy>=2.0.0",
     "questionary>=2.0.0",
     "aiohttp>=3.9.0",
+    "truststore>=0.8.0",
 ]
 
 [project.optional-dependencies]
@@ -59,6 +60,7 @@ dev = [
 ]
 
 [project.scripts]
+adv = "adversary_mcp_server.cli:main"
 adversary-mcp-cli = "adversary_mcp_server.cli:main"
 adversary-mcp-server = "adversary_mcp_server.server:main"
 

@@ -10,6 +10,7 @@ import traceback
 from pathlib import Path
 from typing import Any
 
+import truststore
 from mcp import types
 from mcp.server import Server
 from mcp.server.models import InitializationOptions
@@ -3346,6 +3347,13 @@ async def async_main() -> None:
 
 def main() -> None:
     """Main entry point."""
+    # SSL truststore injection for corporate environments
+    try:
+        truststore.inject_into_ssl()
+    except Exception as e:
+        logger.error(f"Failed to inject truststore into SSL context: {e}")
+        # Continue execution - some corporate environments may have alternative SSL config
+
     try:
         asyncio.run(async_main())
     except KeyboardInterrupt:
