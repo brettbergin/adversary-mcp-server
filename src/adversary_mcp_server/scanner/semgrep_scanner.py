@@ -139,6 +139,206 @@ class OptimizedSemgrepScanner:
             except Exception as e:
                 logger.warning(f"Failed to initialize configuration tracker: {e}")
 
+        # Initialize pro user status tracking
+        self._pro_status = {
+            "is_pro_user": None,  # None = unknown, True/False = determined
+            "subscription_type": None,
+            "user_id": None,
+            "rules_available": 0,
+            "authentication_status": "unknown",
+            "last_updated": None,
+        }
+
+    def _extract_and_store_pro_status(self, semgrep_result: dict[str, Any]) -> None:
+        """Extract pro user information from Semgrep API response."""
+        try:
+            import time
+
+            # Check for user information in response
+            user_info = semgrep_result.get("user", {})
+            errors = semgrep_result.get("errors", [])
+
+            # Update pro status based on response
+            if user_info:
+                subscription = user_info.get("subscription_type", "").lower()
+                self._pro_status.update(
+                    {
+                        "is_pro_user": subscription in ["pro", "team", "enterprise"],
+                        "subscription_type": subscription,
+                        "user_id": user_info.get("id"),
+                        "authentication_status": "authenticated",
+                        "last_updated": int(time.time()),
+                    }
+                )
+            elif any("auth" in str(error).lower() for error in errors):
+                self._pro_status.update(
+                    {
+                        "is_pro_user": False,
+                        "authentication_status": "failed",
+                        "last_updated": int(time.time()),
+                    }
+                )
+            else:
+                # No user info but no auth errors = likely anonymous/free
+                self._pro_status.update(
+                    {
+                        "is_pro_user": False,
+                        "authentication_status": "anonymous",
+                        "last_updated": int(time.time()),
+                    }
+                )
+
+            # Count available rules if present
+            rules = semgrep_result.get("rules", [])
+            if rules:
+                self._pro_status["rules_available"] = len(rules)
+
+            logger.debug(f"Updated Semgrep pro status: {self._pro_status}")
+
+        except Exception as e:
+            logger.warning(
+                f"Failed to extract pro user status from Semgrep response: {e}"
+            )
+
+    def get_pro_status(self) -> dict[str, Any]:
+        """Get current pro user status information."""
+        return self._pro_status.copy()
+
+    async def validate_api_token(self) -> dict[str, Any]:
+        """Test API token validity by calling Semgrep with authentication info.
+
+        Returns:
+            Dictionary with validation results including auth status and user info
+        """
+        try:
+            semgrep_path = await self._find_semgrep()
+
+            # Use a simple command that requires authentication to test the token
+            cmd = [
+                semgrep_path,
+                "--version",
+                "--json",
+            ]
+
+            # Run with API token environment
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=self._get_clean_env(),
+            )
+
+            try:
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+            finally:
+                if proc.returncode is None:
+                    try:
+                        proc.terminate()
+                        await asyncio.wait_for(proc.wait(), timeout=5.0)
+                    except (TimeoutError, ProcessLookupError):
+                        pass
+
+            if proc.returncode == 0:
+                # Try to get user info with a minimal scan command
+                test_cmd = [
+                    semgrep_path,
+                    "--config=auto",
+                    "--json",
+                    "--dryrun",  # Don't actually run rules
+                    "--no-git-ignore",
+                ]
+
+                # Create a temporary test input
+                test_proc = await asyncio.create_subprocess_exec(
+                    *test_cmd,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env=self._get_clean_env(),
+                )
+
+                try:
+                    test_stdout, test_stderr = await asyncio.wait_for(
+                        test_proc.communicate(input=b"print('test')"), timeout=15
+                    )
+                finally:
+                    if test_proc.returncode is None:
+                        try:
+                            test_proc.terminate()
+                            await asyncio.wait_for(test_proc.wait(), timeout=5.0)
+                        except (TimeoutError, ProcessLookupError):
+                            pass
+
+                # Parse response for authentication info
+                validation_result = {
+                    "valid": True,
+                    "semgrep_available": True,
+                    "authentication_status": "unknown",
+                    "user_type": "unknown",
+                    "error_message": None,
+                }
+
+                if test_proc.returncode == 0:
+                    try:
+                        result = json.loads(test_stdout.decode())
+                        self._extract_and_store_pro_status(result)
+                        pro_status = self.get_pro_status()
+
+                        validation_result.update(
+                            {
+                                "authentication_status": pro_status[
+                                    "authentication_status"
+                                ],
+                                "user_type": (
+                                    "pro" if pro_status["is_pro_user"] else "free"
+                                ),
+                                "subscription_type": pro_status.get(
+                                    "subscription_type"
+                                ),
+                                "rules_available": pro_status.get("rules_available", 0),
+                            }
+                        )
+                    except json.JSONDecodeError:
+                        validation_result["authentication_status"] = (
+                            "response_parse_error"
+                        )
+                else:
+                    error_msg = test_stderr.decode() if test_stderr else "Unknown error"
+                    if "auth" in error_msg.lower() or "token" in error_msg.lower():
+                        validation_result.update(
+                            {
+                                "authentication_status": "failed",
+                                "user_type": "unauthenticated",
+                                "error_message": error_msg,
+                            }
+                        )
+                    else:
+                        validation_result["error_message"] = error_msg
+
+                logger.info(f"API token validation complete: {validation_result}")
+                return validation_result
+
+            else:
+                error_msg = stderr.decode() if stderr else "Unknown error"
+                logger.warning(
+                    f"Semgrep not available for token validation: {error_msg}"
+                )
+                return {
+                    "valid": False,
+                    "semgrep_available": False,
+                    "authentication_status": "semgrep_unavailable",
+                    "error_message": error_msg,
+                }
+
+        except Exception as e:
+            logger.error(f"API token validation failed: {e}")
+            return {
+                "valid": False,
+                "semgrep_available": False,
+                "authentication_status": "validation_error",
+                "error_message": str(e),
+            }
+
     async def _find_semgrep(self) -> str:
         """Find semgrep executable path (cached)."""
         if self._semgrep_path:
@@ -858,6 +1058,9 @@ class OptimizedSemgrepScanner:
                 result = json.loads(stdout.decode())
                 findings = result.get("results", [])
 
+                # Extract and store pro user information
+                self._extract_and_store_pro_status(result)
+
                 # Update file paths to logical path
                 for finding in findings:
                     finding["path"] = file_path
@@ -930,6 +1133,9 @@ class OptimizedSemgrepScanner:
                 # Parse results
                 result = json.loads(stdout.decode())
                 findings = result.get("results", [])
+
+                # Extract and store pro user information
+                self._extract_and_store_pro_status(result)
 
                 # Update file paths to logical path
                 for finding in findings:
@@ -1006,6 +1212,9 @@ class OptimizedSemgrepScanner:
                 # Parse results
                 result = json.loads(stdout.decode())
                 findings = result.get("results", [])
+
+                # Extract and store pro user information
+                self._extract_and_store_pro_status(result)
 
                 logger.info(f"Semgrep found {len(findings)} findings in directory")
                 return findings

@@ -70,6 +70,21 @@ benchmark-only: ## Run only the benchmark tests without any other tests
 benchmark-skip: ## Run all tests except benchmarks (this is the default behavior)
 	uv run pytest -m "not benchmark" -v
 
+test-validation: ## Run validation regression tests to prevent validation bugs
+	@echo "🔍 Running validation regression tests..."
+	uv run pytest tests/scanner/test_validation_regression.py tests/integration/test_validation_symmetry.py -v --tb=short -m "not slow"
+	@echo "✅ Validation regression tests completed!"
+
+test-validation-critical: ## Run critical validation tests (fast subset)
+	@echo "🚨 Running critical validation tests..."
+	uv run pytest tests/scanner/test_validation_regression.py -v --tb=short -k "test_directory_scan_validation_enabled_with_threats or test_file_scan_validation_enabled_with_threats"
+	@echo "✅ Critical validation tests completed!"
+
+test-validation-full: ## Run full validation test suite including slow integration tests
+	@echo "🔍 Running full validation test suite..."
+	uv run pytest tests/scanner/test_validation_regression.py tests/integration/test_validation_symmetry.py tests/scanner/test_llm_validator.py -v --tb=short
+	@echo "✅ Full validation test suite completed!"
+
 lint: ## Run all linting tools
 	python -m ruff check src/ tests/
 	python -m mypy src/

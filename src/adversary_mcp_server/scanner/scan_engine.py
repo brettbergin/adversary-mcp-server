@@ -955,9 +955,17 @@ class ScanEngine:
             all_threats_for_validation = llm_threats + semgrep_threats
 
             if all_threats_for_validation:
-                logger.info(
-                    f"Validating {len(all_threats_for_validation)} findings with LLM validator"
-                )
+                # Check if validator is fully functional or using fallback
+                if self.llm_validator.is_fully_functional():
+                    logger.info(
+                        f"Validating {len(all_threats_for_validation)} findings with LLM validator (full mode)"
+                    )
+                    scan_metadata["llm_validation_mode"] = "full"
+                else:
+                    logger.info(
+                        f"Validating {len(all_threats_for_validation)} findings with LLM validator (fallback mode)"
+                    )
+                    scan_metadata["llm_validation_mode"] = "fallback"
                 try:
                     validation_results = (
                         await self.llm_validator._validate_findings_async(
@@ -1340,47 +1348,118 @@ class ScanEngine:
             all_threats_for_validation = llm_threats + semgrep_threats
 
             if all_threats_for_validation:
-                logger.info(
-                    f"Validating {len(all_threats_for_validation)} findings with LLM validator"
-                )
+                # Check if validator is fully functional or using fallback
+                if self.llm_validator.is_fully_functional():
+                    logger.info(
+                        f"Validating {len(all_threats_for_validation)} findings with LLM validator (full mode)"
+                    )
+                    scan_metadata["llm_validation_mode"] = "full"
+                else:
+                    logger.info(
+                        f"Validating {len(all_threats_for_validation)} findings with LLM validator (fallback mode)"
+                    )
+                    scan_metadata["llm_validation_mode"] = "fallback"
+                # Read file content for validation
+                source_code = ""
                 try:
-                    # Read file content for validation using streaming reader
                     reader = StreamingFileReader()
                     chunks = []
                     async for chunk in reader.read_file_async(file_path):
                         chunks.append(chunk)
                     source_code = "".join(chunks)
-
-                    validation_results = (
-                        await self.llm_validator._validate_findings_async(
-                            findings=all_threats_for_validation,
-                            source_code=source_code,
-                            file_path=str(file_path),
-                            generate_exploits=True,
-                        )
-                    )
-
-                    # Filter false positives based on validation
-                    llm_threats = self._apply_validation_filter(
-                        llm_threats, validation_results
-                    )
-                    semgrep_threats = self._apply_validation_filter(
-                        semgrep_threats, validation_results
-                    )
-
-                    # Add validation stats to metadata
-                    scan_metadata["llm_validation_success"] = True
-                    scan_metadata["llm_validation_stats"] = (
-                        self.llm_validator.get_validation_stats(validation_results)
-                    )
-                    logger.info(
-                        f"Validation complete - filtered to {len(llm_threats) + len(semgrep_threats)} legitimate findings"
-                    )
-
                 except Exception as e:
-                    logger.error(f"LLM validation failed: {e}")
+                    logger.error(f"Failed to read file content for validation: {e}")
                     scan_metadata["llm_validation_success"] = False
-                    scan_metadata["llm_validation_error"] = str(e)
+                    scan_metadata["llm_validation_error"] = (
+                        f"File reading failed: {str(e)}"
+                    )
+                    # Continue with empty source_code for validation
+
+                # Perform validation
+                validation_results = {}  # Initialize to avoid NameError
+                if source_code or True:  # Allow validation even if file reading failed
+                    try:
+                        validation_results = (
+                            await self.llm_validator._validate_findings_async(
+                                findings=all_threats_for_validation,
+                                source_code=source_code,
+                                file_path=str(file_path),
+                                generate_exploits=True,
+                            )
+                        )
+                        logger.debug(
+                            f"Validation completed with {len(validation_results)} results"
+                        )
+                    except Exception as e:
+                        logger.error(f"LLM validation processing failed: {e}")
+                        scan_metadata["llm_validation_success"] = False
+                        scan_metadata["llm_validation_error"] = (
+                            f"Validation processing failed: {str(e)}"
+                        )
+                        # Keep validation_results as empty dict for graceful handling
+                        validation_results = {}
+
+                    # Apply filtering if validation was successful
+                    if validation_results:
+                        try:
+                            # Filter LLM threats
+                            try:
+                                llm_filtered = (
+                                    self.llm_validator.filter_false_positives(
+                                        llm_threats, validation_results
+                                    )
+                                )
+                            except Exception:
+                                llm_filtered = None
+
+                            if isinstance(llm_filtered, list):
+                                llm_threats = llm_filtered
+                            else:
+                                llm_threats = self._apply_validation_filter(
+                                    llm_threats, validation_results
+                                )
+
+                            # Filter Semgrep threats
+                            try:
+                                semgrep_filtered = (
+                                    self.llm_validator.filter_false_positives(
+                                        semgrep_threats, validation_results
+                                    )
+                                )
+                            except Exception:
+                                semgrep_filtered = None
+
+                            if isinstance(semgrep_filtered, list):
+                                semgrep_threats = semgrep_filtered
+                            else:
+                                semgrep_threats = self._apply_validation_filter(
+                                    semgrep_threats, validation_results
+                                )
+
+                            logger.info(
+                                f"Validation filtering complete - filtered to {len(llm_threats) + len(semgrep_threats)} legitimate findings"
+                            )
+                        except Exception as e:
+                            logger.error(f"Validation filtering failed: {e}")
+                            # Don't reset validation_results here - preserve them for the result
+
+                    # Add validation stats to metadata (separate try-catch to avoid losing validation_results)
+                    try:
+                        if validation_results and self.llm_validator:
+                            scan_metadata["llm_validation_success"] = True
+                            scan_metadata["llm_validation_stats"] = (
+                                self.llm_validator.get_validation_stats(
+                                    validation_results
+                                )
+                            )
+                        else:
+                            scan_metadata["llm_validation_success"] = False
+                    except Exception as e:
+                        logger.error(f"Failed to generate validation stats: {e}")
+                        scan_metadata["llm_validation_success"] = (
+                            True  # Still successful, just no stats
+                        )
+                        scan_metadata["llm_validation_stats_error"] = str(e)
         else:
             logger.debug("Validation conditions not met - entering else clause")
             scan_metadata["llm_validation_success"] = False
@@ -1711,6 +1790,163 @@ class ScanEngine:
                 }
             )
 
+        # Initialize validation results
+        validation_results = None
+
+        # LLM validation step - same logic as file scanning
+        if use_validation and self.enable_llm_validation and self.llm_validator:
+            # Combine all threats for validation
+            all_threats_for_validation = all_threats
+
+            if all_threats_for_validation:
+                # Check if validator is fully functional or using fallback
+                if self.llm_validator.is_fully_functional():
+                    logger.info(
+                        f"Validating {len(all_threats_for_validation)} findings with LLM validator (full mode) for directory scan"
+                    )
+                    semgrep_scan_metadata["llm_validation_mode"] = "full"
+                else:
+                    logger.info(
+                        f"Validating {len(all_threats_for_validation)} findings with LLM validator (fallback mode) for directory scan"
+                    )
+                    semgrep_scan_metadata["llm_validation_mode"] = "fallback"
+                try:
+                    # For directory scans, we need to read the directory contents for context
+                    # Create a concatenated source code context from all relevant files
+                    directory_context = f"Directory scan of: {directory_path}\n"
+                    directory_context += (
+                        f"Files scanned: {len(files_to_scan)} files\n\n"
+                    )
+
+                    # Add sample content from files with threats for context
+                    context_files_added = 0
+                    max_context_files = 5  # Limit context to avoid huge payloads
+                    for file_path in files_to_scan:
+                        if context_files_added >= max_context_files:
+                            break
+                        file_threat_count = sum(
+                            1
+                            for t in all_threats
+                            if hasattr(t, "file_path") and t.file_path == str(file_path)
+                        )
+                        if file_threat_count > 0:
+                            try:
+                                file_content = file_path.read_text(
+                                    encoding="utf-8", errors="replace"
+                                )
+                                directory_context += (
+                                    f"=== {file_path.name} ===\n{file_content}\n\n"
+                                )
+                                context_files_added += 1
+                            except Exception as e:
+                                logger.debug(
+                                    f"Could not read {file_path} for validation context: {e}"
+                                )
+
+                    validation_results = (
+                        await self.llm_validator._validate_findings_async(
+                            findings=all_threats_for_validation,
+                            source_code=directory_context,
+                            file_path=str(directory_path),
+                            generate_exploits=True,
+                        )
+                    )
+
+                    # Filter false positives based on validation
+                    if "all_llm_threats" in locals():
+                        try:
+                            llm_filtered = self.llm_validator.filter_false_positives(
+                                all_llm_threats, validation_results
+                            )
+                        except Exception:
+                            llm_filtered = None
+
+                        if isinstance(llm_filtered, list):
+                            all_llm_threats = llm_filtered
+                        else:
+                            all_llm_threats = self._apply_validation_filter(
+                                all_llm_threats, validation_results
+                            )
+
+                    if "all_semgrep_threats" in locals():
+                        try:
+                            semgrep_filtered = (
+                                self.llm_validator.filter_false_positives(
+                                    all_semgrep_threats, validation_results
+                                )
+                            )
+                        except Exception:
+                            semgrep_filtered = None
+
+                        if isinstance(semgrep_filtered, list):
+                            all_semgrep_threats = semgrep_filtered
+                        else:
+                            all_semgrep_threats = self._apply_validation_filter(
+                                all_semgrep_threats, validation_results
+                            )
+
+                    # Update combined threats list after filtering
+                    all_threats = []
+                    all_threats.extend(
+                        all_semgrep_threats if "all_semgrep_threats" in locals() else []
+                    )
+                    all_threats.extend(
+                        all_llm_threats
+                        if "all_llm_threats" in locals() and use_llm
+                        else []
+                    )
+
+                    # Add validation stats to metadata
+                    semgrep_scan_metadata["llm_validation_success"] = True
+                    semgrep_scan_metadata["llm_validation_stats"] = (
+                        self.llm_validator.get_validation_stats(validation_results)
+                    )
+                    logger.info(
+                        f"Directory validation complete - filtered to {len(all_threats)} legitimate findings"
+                    )
+
+                except Exception as e:
+                    logger.error(f"Directory LLM validation failed: {e}")
+                    semgrep_scan_metadata["llm_validation_success"] = False
+                    semgrep_scan_metadata["llm_validation_error"] = str(e)
+            else:
+                # No threats to validate
+                semgrep_scan_metadata["llm_validation_success"] = True
+                semgrep_scan_metadata["llm_validation_reason"] = (
+                    "no_threats_to_validate"
+                )
+        else:
+            logger.debug(
+                "Directory validation conditions not met - entering else clause"
+            )
+            semgrep_scan_metadata["llm_validation_success"] = False
+            if not use_validation:
+                logger.debug("Reason: use_validation=False")
+                semgrep_scan_metadata["llm_validation_reason"] = "disabled"
+            elif not self.enable_llm_validation:
+                logger.debug("Reason: self.enable_llm_validation=False")
+                semgrep_scan_metadata["llm_validation_reason"] = "disabled"
+            else:
+                logger.debug("Reason: self.llm_validator is None or falsy")
+                semgrep_scan_metadata["llm_validation_reason"] = "not_available"
+
+        # Recalculate files with threats after validation filtering
+        files_with_threats = set()
+        for threat in all_threats:
+            if hasattr(threat, "file_path"):
+                files_with_threats.add(threat.file_path)
+
+        # Update files_info with new threat counts after validation
+        for file_info in files_info:
+            file_path_str = file_info["file_path"]
+            file_threat_count = sum(
+                1
+                for t in all_threats
+                if hasattr(t, "file_path") and t.file_path == file_path_str
+            )
+            file_info["threat_count"] = file_threat_count
+            file_info["issues_identified"] = file_threat_count > 0
+
         # Create single directory-level result
         directory_result = EnhancedScanResult(
             file_path=str(directory_path),
@@ -1720,6 +1956,7 @@ class ScanEngine:
             llm_threats=(
                 all_llm_threats if "all_llm_threats" in locals() and use_llm else []
             ),
+            validation_results=validation_results,
             scan_metadata={
                 "directory_path": str(directory_path),
                 "directory_scan": True,
@@ -1832,9 +2069,17 @@ class ScanEngine:
                 all_threats_for_validation = file_llm_threats + file_semgrep_threats
 
                 if all_threats_for_validation:
-                    logger.debug(
-                        f"Validating {len(all_threats_for_validation)} findings for {file_path.name}"
-                    )
+                    # Check if validator is fully functional or using fallback
+                    if self.llm_validator.is_fully_functional():
+                        logger.debug(
+                            f"Validating {len(all_threats_for_validation)} findings for {file_path.name} (full mode)"
+                        )
+                        scan_metadata["llm_validation_mode"] = "full"
+                    else:
+                        logger.debug(
+                            f"Validating {len(all_threats_for_validation)} findings for {file_path.name} (fallback mode)"
+                        )
+                        scan_metadata["llm_validation_mode"] = "fallback"
                     try:
                         # Use streaming for large files, regular read for small files
                         config = self.credential_manager.load_config()

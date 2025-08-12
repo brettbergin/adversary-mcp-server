@@ -200,6 +200,14 @@ class LLMValidator:
 
         logger.debug("LLMValidator initialized successfully")
 
+    def is_fully_functional(self) -> bool:
+        """Check if the LLM validator has a functional LLM client.
+
+        Returns:
+            True if LLM client is available for full validation, False if using fallback mode
+        """
+        return self.llm_client is not None
+
     def validate_findings(
         self,
         findings: list[ThreatMatch],
