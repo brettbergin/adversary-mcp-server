@@ -101,6 +101,7 @@ class AdversaryMCPServer:
             metrics_collector=self.metrics_collector,
             enable_llm_analysis=config.enable_llm_analysis,
             enable_semgrep_analysis=config.enable_semgrep_scanning,
+            enable_llm_validation=config.enable_llm_validation,
         )
         logger.debug("Scan engine initialized")
 
@@ -1264,6 +1265,7 @@ class AdversaryMCPServer:
                 self.credential_manager,
                 enable_llm_analysis=config.enable_llm_analysis,
                 enable_semgrep_analysis=config.enable_semgrep_scanning,
+                enable_llm_validation=config.enable_llm_validation,
             )
             logger.info("Components reinitialized with new configuration")
 

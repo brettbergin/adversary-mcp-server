@@ -102,12 +102,25 @@ def prevent_network_calls():
             "Please mock this call to prevent accidental network requests."
         )
     )
-    mock_subprocess.Popen = Mock(
-        side_effect=RuntimeError(
-            "Real subprocess.Popen() calls are not allowed in tests! "
-            "Please mock this call to prevent accidental network requests."
-        )
-    )
+
+    # Create a special mock for Popen that supports type subscripting
+    class MockPopenMeta(type):
+        def __getitem__(cls, item):
+            # Support type subscripting like Popen[bytes]
+            return cls
+
+    class MockPopen(metaclass=MockPopenMeta):
+        def __init__(self, *args, **kwargs):
+            raise RuntimeError(
+                "Real subprocess.Popen() calls are not allowed in tests! "
+                "Please mock this call to prevent accidental network requests."
+            )
+
+        def __getitem__(self, item):
+            # Support type subscripting like Popen[bytes]
+            return self
+
+    mock_subprocess.Popen = MockPopen
 
     with (
         patch("subprocess.run", mock_subprocess.run),

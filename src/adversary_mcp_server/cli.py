@@ -605,10 +605,26 @@ def status():
         config_table.add_row(
             "Default Severity Threshold", str(config.severity_threshold)
         )
-        config_table.add_row(
-            "Semgrep Available",
-            "Yes" if scan_engine.semgrep_scanner.is_available() else "No",
-        )
+        # Enhanced Semgrep status with pro user information
+        semgrep_available = scan_engine.semgrep_scanner.is_available()
+        if semgrep_available:
+            # Get pro user status
+            pro_status = scan_engine.semgrep_scanner.get_pro_status()
+            if pro_status["is_pro_user"] is True:
+                semgrep_status = f"✓ Available (Pro User: {pro_status.get('subscription_type', 'Unknown').title()})"
+            elif pro_status["is_pro_user"] is False:
+                if pro_status["authentication_status"] == "authenticated":
+                    semgrep_status = "✓ Available (Free User)"
+                elif pro_status["authentication_status"] == "failed":
+                    semgrep_status = "✓ Available (Auth Failed)"
+                else:
+                    semgrep_status = "✓ Available (Anonymous)"
+            else:
+                semgrep_status = "✓ Available (Status Unknown)"
+        else:
+            semgrep_status = "✗ Not Available"
+
+        config_table.add_row("Semgrep Status", semgrep_status)
         # LLM Configuration details
         is_llm_valid, llm_error = config.validate_llm_configuration()
         if config.llm_provider:
@@ -655,15 +671,28 @@ def status():
         scanners_table.add_column("Status", style="green")
         scanners_table.add_column("Description", style="yellow")
 
-        scanners_table.add_row(
-            "Semgrep",
-            (
-                "Available"
-                if scan_engine.semgrep_scanner.is_available()
-                else "Unavailable"
-            ),
-            "Static analysis tool",
-        )
+        # Enhanced Semgrep scanner status with pro information
+        semgrep_scanner_available = scan_engine.semgrep_scanner.is_available()
+        if semgrep_scanner_available:
+            pro_status = scan_engine.semgrep_scanner.get_pro_status()
+            if pro_status["is_pro_user"] is True:
+                semgrep_scanner_status = f"Available (Pro: {pro_status.get('subscription_type', 'unknown').title()})"
+                semgrep_description = f"Static analysis with Pro rules ({pro_status.get('rules_available', 0)} rules)"
+            elif pro_status["is_pro_user"] is False:
+                if pro_status["authentication_status"] == "authenticated":
+                    semgrep_scanner_status = "Available (Free)"
+                    semgrep_description = "Static analysis with community rules"
+                else:
+                    semgrep_scanner_status = "Available (Community)"
+                    semgrep_description = "Static analysis with open-source rules"
+            else:
+                semgrep_scanner_status = "Available"
+                semgrep_description = "Static analysis tool (status unknown)"
+        else:
+            semgrep_scanner_status = "Unavailable"
+            semgrep_description = "Static analysis tool (not installed)"
+
+        scanners_table.add_row("Semgrep", semgrep_scanner_status, semgrep_description)
         scanners_table.add_row(
             "LLM",
             (
