@@ -895,33 +895,6 @@ class TestSemgrepScannerEdgeCases:
             assert len(hash1) == 64  # SHA256 hex length
 
     @pytest.mark.asyncio
-    async def test_perform_scan_timeout_error(self):
-        """Test _perform_scan with timeout."""
-        scanner = SemgrepScanner()
-
-        with patch.object(scanner, "_find_semgrep", return_value="semgrep"):
-            with patch("tempfile.NamedTemporaryFile") as mock_temp:
-                mock_file = MagicMock()
-                mock_file.name = "/tmp/test.py"
-                mock_temp.return_value.__enter__.return_value = mock_file
-
-                with patch("asyncio.create_subprocess_exec") as mock_create:
-                    mock_proc = AsyncMock()
-                    mock_proc.returncode = (
-                        None  # Process still running when timeout occurs
-                    )
-                    mock_create.return_value = mock_proc
-
-                    with patch("asyncio.wait_for", side_effect=[TimeoutError(), None]):
-                        findings = await scanner._perform_scan(
-                            "code", "test.py", "python", 30
-                        )
-
-                        assert findings == []
-                        # Should terminate the process on timeout
-                        mock_proc.terminate.assert_called_once()
-
-    @pytest.mark.asyncio
     async def test_perform_scan_json_decode_error(self):
         """Test _perform_scan with JSON parse error."""
         scanner = SemgrepScanner()

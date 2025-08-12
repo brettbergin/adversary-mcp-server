@@ -100,6 +100,7 @@ class AdversaryMCPServer:
         self.scan_engine = ScanEngine(
             self.credential_manager,
             metrics_collector=self.metrics_collector,
+            metrics_orchestrator=self.metrics_orchestrator,
             enable_llm_analysis=config.enable_llm_analysis,
             enable_semgrep_analysis=config.enable_semgrep_scanning,
             enable_llm_validation=config.enable_llm_validation,
@@ -1264,6 +1265,8 @@ class AdversaryMCPServer:
             self.exploit_generator = ExploitGenerator(self.credential_manager)
             self.scan_engine = ScanEngine(
                 self.credential_manager,
+                metrics_collector=self.metrics_collector,
+                metrics_orchestrator=self.metrics_orchestrator,
                 enable_llm_analysis=config.enable_llm_analysis,
                 enable_semgrep_analysis=config.enable_semgrep_scanning,
                 enable_llm_validation=config.enable_llm_validation,

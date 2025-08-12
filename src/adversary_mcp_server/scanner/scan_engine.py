@@ -699,6 +699,7 @@ class ScanEngine:
 
         # Use telemetry context manager for comprehensive tracking
         if self.metrics_orchestrator:
+            logger.debug("Using metrics orchestrator for code scan tracking")
             with self.metrics_orchestrator.track_scan_execution(
                 trigger_source="scan_engine",
                 scan_type="code",
@@ -708,6 +709,9 @@ class ScanEngine:
                 validation_enabled=use_validation,
                 file_count=1,
             ) as scan_context:
+                logger.debug(
+                    "Scan context created, executing scan with telemetry tracking"
+                )
                 return await self._scan_code_with_context(
                     scan_context,
                     source_code,
@@ -719,6 +723,9 @@ class ScanEngine:
                 )
         else:
             # Fallback without telemetry tracking
+            logger.debug(
+                "No metrics orchestrator available, executing scan without telemetry"
+            )
             return await self._scan_code_with_context(
                 None,
                 source_code,
@@ -830,7 +837,6 @@ class ScanEngine:
                         language=language,
                         config=config.semgrep_config,
                         rules=config.semgrep_rules,
-                        timeout=config.semgrep_timeout,
                         severity_threshold=severity_threshold,
                     )
                     logger.info(
@@ -1252,7 +1258,6 @@ class ScanEngine:
                         language=language,
                         config=config.semgrep_config,
                         rules=config.semgrep_rules,
-                        timeout=config.semgrep_timeout,
                         severity_threshold=severity_threshold,
                     )
                     logger.info(
@@ -1620,7 +1625,6 @@ class ScanEngine:
                         directory_path=str(directory_path),
                         config=config.semgrep_config,
                         rules=config.semgrep_rules,
-                        timeout=config.semgrep_timeout,
                         recursive=recursive,
                         severity_threshold=severity_threshold,
                     )

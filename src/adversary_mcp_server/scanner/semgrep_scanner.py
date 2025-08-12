@@ -568,7 +568,6 @@ class OptimizedSemgrepScanner:
         language: str,
         config: str | None = None,
         rules: str | None = None,
-        timeout: int = 60,
         severity_threshold: Severity | None = None,
     ) -> list[ThreatMatch]:
         """Scan source code for vulnerabilities with optimizations.
@@ -579,7 +578,6 @@ class OptimizedSemgrepScanner:
             language: Programming language
             config: Semgrep config to use (ignored, uses instance config)
             rules: Custom rules string or file path (ignored)
-            timeout: Timeout in seconds
             severity_threshold: Minimum severity threshold
 
         Returns:
@@ -611,7 +609,7 @@ class OptimizedSemgrepScanner:
         async def scan_operation():
             language_str = language
             raw_findings = await self._perform_scan(
-                source_code, file_path, language_str, timeout
+                source_code, file_path, language_str
             )
             return raw_findings
 
@@ -705,7 +703,6 @@ class OptimizedSemgrepScanner:
         language: str,
         config: str | None = None,
         rules: str | None = None,
-        timeout: int = 60,
         severity_threshold: Severity | None = None,
     ) -> list[ThreatMatch]:
         """Scan a file using the optimized Semgrep approach.
@@ -715,7 +712,6 @@ class OptimizedSemgrepScanner:
             language: Programming language
             config: Semgrep config to use (ignored, uses instance config)
             rules: Custom rules string or file path (ignored)
-            timeout: Timeout in seconds
             severity_threshold: Minimum severity threshold
 
         Returns:
@@ -763,7 +759,7 @@ class OptimizedSemgrepScanner:
         async def scan_operation():
             language_str = language
             raw_findings = await self._perform_scan(
-                source_code, file_path, language_str, timeout
+                source_code, file_path, language_str
             )
             return raw_findings
 
@@ -848,7 +844,6 @@ class OptimizedSemgrepScanner:
         directory_path: str,
         config: str | None = None,
         rules: str | None = None,
-        timeout: int = 120,
         recursive: bool = True,
         severity_threshold: Severity | None = None,
     ) -> list[ThreatMatch]:
@@ -858,7 +853,6 @@ class OptimizedSemgrepScanner:
             directory_path: Path to the directory to scan
             config: Semgrep config to use (ignored, uses instance config)
             rules: Custom rules string or file path (ignored)
-            timeout: Timeout in seconds
             recursive: Whether to scan recursively (always True with Semgrep)
             severity_threshold: Minimum severity threshold
 
@@ -902,9 +896,7 @@ class OptimizedSemgrepScanner:
 
         # Define the scan operation for resilience handling
         async def scan_operation():
-            raw_findings = await self._perform_directory_scan(
-                directory_path, timeout, recursive
-            )
+            raw_findings = await self._perform_directory_scan(directory_path, recursive)
             return raw_findings
 
         # Define fallback function for graceful degradation
@@ -986,7 +978,7 @@ class OptimizedSemgrepScanner:
             ).hexdigest()
 
     async def _perform_scan(
-        self, source_code: str, file_path: str, language: str | None, timeout: int
+        self, source_code: str, file_path: str, language: str | None
     ) -> list[dict[str, Any]]:
         """Perform the actual scan using async subprocess with streaming support."""
 
@@ -998,17 +990,13 @@ class OptimizedSemgrepScanner:
 
         if use_stdin:
             logger.debug("Using stdin streaming for large content")
-            return await self._perform_scan_stdin(
-                source_code, file_path, language, timeout
-            )
+            return await self._perform_scan_stdin(source_code, file_path, language)
         else:
             logger.debug("Using temp file for small content")
-            return await self._perform_scan_tempfile(
-                source_code, file_path, language, timeout
-            )
+            return await self._perform_scan_tempfile(source_code, file_path, language)
 
     async def _perform_scan_stdin(
-        self, source_code: str, file_path: str, language: str | None, timeout: int
+        self, source_code: str, file_path: str, language: str | None
     ) -> list[dict[str, Any]]:
         """Perform scan using stdin streaming."""
         semgrep_path = await self._find_semgrep()
@@ -1041,9 +1029,7 @@ class OptimizedSemgrepScanner:
 
             # Write to stdin and wait for completion
             try:
-                stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(input=source_code.encode("utf-8")), timeout=timeout
-                )
+                stdout, stderr = await proc.communicate(input=source_code.encode("utf-8"))
             finally:
                 # Ensure process is terminated
                 if proc.returncode is None:
@@ -1071,9 +1057,6 @@ class OptimizedSemgrepScanner:
                 logger.warning(f"Semgrep stdin scan failed: {error_msg}")
                 return []
 
-        except TimeoutError:
-            logger.warning(f"Stdin scan timed out after {timeout}s")
-            return []
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse Semgrep stdin output: {e}")
             return []
@@ -1082,7 +1065,7 @@ class OptimizedSemgrepScanner:
             return []
 
     async def _perform_scan_tempfile(
-        self, source_code: str, file_path: str, language: str | None, timeout: int
+        self, source_code: str, file_path: str, language: str | None
     ) -> list[dict[str, Any]]:
         """Perform scan using temporary file (fallback method)."""
         semgrep_path = await self._find_semgrep()
@@ -1115,11 +1098,9 @@ class OptimizedSemgrepScanner:
                 env=self._get_clean_env(),
             )
 
-            # Wait for completion with timeout
+            # Wait for completion
             try:
-                stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(), timeout=timeout
-                )
+                stdout, stderr = await proc.communicate()
             finally:
                 # Ensure process is terminated
                 if proc.returncode is None:
@@ -1145,10 +1126,6 @@ class OptimizedSemgrepScanner:
             else:
                 error_msg = stderr.decode() if stderr else "Unknown error"
                 return []
-
-        except TimeoutError:
-            logger.warning(f"Scan timed out after {timeout}s")
-            return []
 
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse Semgrep output: {e}")
@@ -1194,11 +1171,9 @@ class OptimizedSemgrepScanner:
                 env=self._get_clean_env(),
             )
 
-            # Wait for completion with timeout
+            # Wait for completion
             try:
-                stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(), timeout=timeout
-                )
+                stdout, stderr = await proc.communicate()
             finally:
                 # Ensure process is terminated
                 if proc.returncode is None:
@@ -1221,10 +1196,6 @@ class OptimizedSemgrepScanner:
             else:
                 error_msg = stderr.decode() if stderr else "Unknown error"
                 return []
-
-        except TimeoutError:
-            print(f"⏰ Directory scan timed out after {timeout}s")
-            return []
 
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse Semgrep output: {e}")
