@@ -72,7 +72,6 @@ class ResilienceConfig:
     # Timeout settings
     default_timeout_seconds: float = 30.0
     llm_timeout_seconds: float = 120.0
-    semgrep_timeout_seconds: float = 300.0
 
     # Error handling
     enable_graceful_degradation: bool = True

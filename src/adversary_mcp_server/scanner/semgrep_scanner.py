@@ -123,9 +123,6 @@ class OptimizedSemgrepScanner:
             ),  # Conservative retries for subprocess calls
             base_delay_seconds=self.config_manager.dynamic_limits.retry_base_delay,
             enable_graceful_degradation=True,
-            semgrep_timeout_seconds=float(
-                self.config_manager.dynamic_limits.scan_timeout_seconds
-            ),
         )
         self.error_handler = ErrorHandler(resilience_config)
         logger.info("Initialized ErrorHandler for Semgrep resilience")
@@ -1029,7 +1026,9 @@ class OptimizedSemgrepScanner:
 
             # Write to stdin and wait for completion
             try:
-                stdout, stderr = await proc.communicate(input=source_code.encode("utf-8"))
+                stdout, stderr = await proc.communicate(
+                    input=source_code.encode("utf-8")
+                )
             finally:
                 # Ensure process is terminated
                 if proc.returncode is None:
@@ -1139,7 +1138,7 @@ class OptimizedSemgrepScanner:
                 pass
 
     async def _perform_directory_scan(
-        self, directory_path: str, timeout: int, recursive: bool = True
+        self, directory_path: str, recursive: bool = True
     ) -> list[dict[str, Any]]:
         """Perform directory scan using async subprocess with Semgrep's native directory support."""
 

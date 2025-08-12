@@ -842,6 +842,11 @@ class ScanEngine:
                     logger.info(
                         f"Semgrep scan completed - found {len(semgrep_threats)} threats"
                     )
+
+                    # Record individual threat findings in telemetry
+                    for threat in semgrep_threats:
+                        scan_context.add_threat_finding(threat, "semgrep")
+
                     scan_metadata.update(
                         {
                             "semgrep_scan_success": True,
@@ -897,6 +902,11 @@ class ScanEngine:
                 logger.info(
                     f"LLM analysis completed - found {len(llm_threats)} threats"
                 )
+
+                # Record individual threat findings in telemetry
+                for threat in llm_threats:
+                    scan_context.add_threat_finding(threat, "llm")
+
                 scan_metadata["llm_scan_success"] = True
                 scan_metadata["llm_scan_reason"] = "analysis_completed"
 
@@ -1263,6 +1273,11 @@ class ScanEngine:
                     logger.info(
                         f"Semgrep scan completed - found {len(semgrep_threats)} threats"
                     )
+
+                    # Record individual threat findings in telemetry
+                    for threat in semgrep_threats:
+                        scan_context.add_threat_finding(threat, "semgrep")
+
                     scan_metadata.update(
                         {
                             "semgrep_scan_success": True,
@@ -1313,6 +1328,11 @@ class ScanEngine:
                 logger.info(
                     f"LLM analysis completed - found {len(llm_threats)} threats"
                 )
+
+                # Record individual threat findings in telemetry
+                for threat in llm_threats:
+                    scan_context.add_threat_finding(threat, "llm")
+
                 scan_metadata["llm_scan_success"] = True
                 scan_metadata["llm_scan_reason"] = "analysis_completed"
 
@@ -1643,6 +1663,15 @@ class ScanEngine:
                         f"✅ Semgrep optimization: Scanned entire directory once instead of {len(files_to_scan)} individual scans"
                     )
 
+                    # Record individual threat findings in telemetry
+                    if self.metrics_orchestrator:
+                        orchestrator = self.metrics_orchestrator
+                        scan_id = f"directory-{directory_path_abs}-{int(time.time())}"
+                        for threat in all_semgrep_threats:
+                            orchestrator.record_threat_finding_with_context(
+                                scan_id, threat, "semgrep"
+                            )
+
                     semgrep_scan_metadata = {
                         "semgrep_scan_success": True,
                         "semgrep_scan_reason": "directory_analysis_completed",
@@ -1723,6 +1752,15 @@ class ScanEngine:
                 logger.info(
                     f"Directory LLM analysis complete: found {len(all_llm_threats)} threats across {len(directory_llm_threats)} files"
                 )
+
+                # Record individual threat findings in telemetry
+                if self.metrics_orchestrator:
+                    orchestrator = self.metrics_orchestrator
+                    scan_id = f"directory-{directory_path_abs}-{int(time.time())}"
+                    for threat in all_llm_threats:
+                        orchestrator.record_threat_finding_with_context(
+                            scan_id, threat, "llm"
+                        )
 
                 llm_scan_metadata = {
                     "llm_scan_success": True,

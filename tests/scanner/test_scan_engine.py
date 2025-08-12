@@ -24,7 +24,6 @@ def create_mock_credential_manager():
     mock_config.enable_semgrep_scanning = True
     mock_config.semgrep_config = None
     mock_config.semgrep_rules = None
-    mock_config.semgrep_timeout = 60
     mock_config.max_file_size_mb = 10
     mock_config.llm_provider = None  # Set to None to avoid LLM client initialization
     mock_config.llm_api_key = None
