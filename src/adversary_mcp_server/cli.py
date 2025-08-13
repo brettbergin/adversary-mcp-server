@@ -1576,6 +1576,10 @@ def reset():
             else:
                 console.print("ℹ️  No Semgrep API key found to delete", style="yellow")
 
+            # Delete LLM API keys
+            credential_manager.clear_llm_configuration()
+            console.print("✅ LLM API keys cleared", style="green")
+
             console.print("✅ All configuration reset successfully!", style="green")
             logger.info("Configuration reset completed")
         except Exception as e:
@@ -2156,6 +2160,1233 @@ def clear_cache():
         logger.error(f"Cache clearing failed: {e}")
         logger.debug("Cache clearing error details", exc_info=True)
         console.print(f"❌ [red]Cache clearing failed: {e}[/red]")
+        sys.exit(1)
+
+
+@cli.command(name="migrate-data")
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Show what would be migrated without making changes",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Skip confirmation prompts and proceed with migration",
+)
+@click.option(
+    "--backup/--no-backup",
+    default=True,
+    help="Create backup before migration (default: enabled)",
+)
+@cli_command_monitor("migrate-data")
+def migrate_data(dry_run: bool, force: bool, backup: bool):
+    """Fix inconsistencies between summary fields and actual threat findings in database."""
+    logger.info("=== Starting data migration command ===")
+
+    try:
+        from .database.migrations import DataMigrationManager
+
+        logger.debug("Initializing database for data migration...")
+        telemetry_system = _initialize_telemetry_system()
+        db = telemetry_system.telemetry.db
+        logger.debug("Database initialized successfully")
+
+        if dry_run:
+            console.print("🔧 [bold]Database Data Migration (Dry Run)[/bold]")
+            console.print("Analyzing data inconsistencies without making changes...")
+        else:
+            console.print("🔧 [bold]Database Data Migration[/bold]")
+            console.print(
+                "Fixing inconsistencies between summary fields and actual threat findings..."
+            )
+        console.print()
+
+        # Initialize migration manager
+        migration_manager = DataMigrationManager(db)
+
+        # First, validate current state to show what would be changed
+        console.print("📋 [bold]Step 1: Analyzing current data state...[/bold]")
+        validation_results = migration_manager.validate_data_consistency()
+
+        if not validation_results["validation_success"]:
+            console.print(
+                f"❌ [red]Validation failed: {validation_results.get('error', 'Unknown error')}[/red]"
+            )
+            sys.exit(1)
+
+        total_inconsistencies = validation_results["total_inconsistencies"]
+
+        if total_inconsistencies == 0:
+            console.print(
+                "✅ [green]No data inconsistencies found. Migration not needed.[/green]"
+            )
+            return
+
+        # Display what will be fixed
+        console.print(
+            f"🔍 [yellow]Found {total_inconsistencies} inconsistencies to fix:[/yellow]"
+        )
+
+        for check_name, check_data in validation_results.items():
+            if isinstance(check_data, dict) and "inconsistencies_found" in check_data:
+                inconsistencies = check_data["inconsistencies_found"]
+                if inconsistencies > 0:
+                    console.print(
+                        f"  • {check_data.get('table', check_name)}: {inconsistencies} inconsistencies"
+                    )
+
+        console.print()
+
+        if dry_run:
+            console.print("🔍 [bold]Dry run complete - no changes made[/bold]")
+            console.print(
+                f"Would fix {total_inconsistencies} inconsistencies across multiple tables."
+            )
+            console.print("Run without --dry-run to apply these fixes.")
+            return
+
+        # Confirm before proceeding (unless forced)
+        if not force:
+            console.print(
+                "⚠️  [yellow]This operation will modify your database.[/yellow]"
+            )
+            if backup:
+                console.print("📦 A backup will be created automatically.")
+            else:
+                console.print(
+                    "🚨 [red]No backup will be created (--no-backup specified).[/red]"
+                )
+
+            if not Confirm.ask("Do you want to proceed with the migration?"):
+                console.print("❌ Migration cancelled by user.")
+                return
+
+        # Run actual migration
+        console.print("📋 [bold]Step 2: Running data migration...[/bold]")
+
+        with console.status("[bold green]Migrating data...") as status:
+            results = migration_manager.fix_summary_field_inconsistencies()
+
+        if results["migration_success"]:
+            console.print("✅ [green]Data migration completed successfully![/green]")
+            console.print()
+
+            # Display migration statistics
+            table = Table(
+                title="Migration Results", show_header=True, header_style="bold blue"
+            )
+            table.add_column("Table", style="cyan")
+            table.add_column("Records Checked", justify="right")
+            table.add_column("Inconsistencies Found", justify="right")
+            table.add_column("Records Updated", justify="right")
+
+            for fix_type in [
+                "mcp_tool_fixes",
+                "cli_command_fixes",
+                "scan_engine_fixes",
+            ]:
+                fix_data = results[fix_type]
+                table.add_row(
+                    fix_data["table"],
+                    str(fix_data["records_checked"]),
+                    str(fix_data["inconsistencies_found"]),
+                    str(fix_data["records_updated"]),
+                )
+
+            console.print(table)
+            console.print()
+            console.print(
+                f"📊 [bold]Total records fixed: {results['total_records_fixed']}[/bold]"
+            )
+
+            logger.info(
+                f"Data migration completed successfully: {results['total_records_fixed']} records fixed"
+            )
+
+        else:
+            console.print(f"❌ [red]Data migration failed: {results['error']}[/red]")
+            logger.error(f"Data migration failed: {results['error']}")
+            sys.exit(1)
+
+    except Exception as e:
+        logger.error(f"Data migration command failed: {e}")
+        logger.debug("Data migration error details", exc_info=True)
+        console.print(f"❌ [red]Data migration failed: {e}[/red]")
+        sys.exit(1)
+
+
+@cli.command(name="validate-data")
+@cli_command_monitor("validate-data")
+def validate_data():
+    """Validate data consistency across telemetry tables and report any inconsistencies."""
+    logger.info("=== Starting data validation command ===")
+
+    try:
+        from .database.migrations import DataMigrationManager
+
+        logger.debug("Initializing database for data validation...")
+        telemetry_system = _initialize_telemetry_system()
+        db = telemetry_system.telemetry.db
+        logger.debug("Database initialized successfully")
+
+        console.print("🔍 [bold]Database Data Validation[/bold]")
+        console.print(
+            "Checking consistency between summary fields and actual threat findings..."
+        )
+        console.print()
+
+        # Run data validation
+        migration_manager = DataMigrationManager(db)
+        results = migration_manager.validate_data_consistency()
+
+        if results["validation_success"]:
+            if results["data_consistent"]:
+                console.print(
+                    "✅ [green]All data is consistent! No inconsistencies found.[/green]"
+                )
+            else:
+                console.print(
+                    f"⚠️ [yellow]Found {results['total_inconsistencies']} inconsistencies in database.[/yellow]"
+                )
+                console.print()
+                console.print(
+                    "🔧 Run 'adversary-mcp-cli migrate-data' to fix these issues."
+                )
+
+            console.print()
+
+            # Display validation statistics
+            table = Table(
+                title="Validation Results", show_header=True, header_style="bold blue"
+            )
+            table.add_column("Table", style="cyan")
+            table.add_column("Records Checked", justify="right")
+            table.add_column(
+                "Inconsistencies Found",
+                justify="right",
+                style="red" if results["total_inconsistencies"] > 0 else "green",
+            )
+
+            for validation_type in [
+                "mcp_tool_validation",
+                "cli_command_validation",
+                "scan_engine_validation",
+            ]:
+                validation_data = results[validation_type]
+                table.add_row(
+                    validation_data["table"],
+                    str(validation_data["records_checked"]),
+                    str(validation_data["inconsistencies_found"]),
+                )
+
+            console.print(table)
+            console.print()
+            console.print(
+                f"📊 [bold]Total inconsistencies: {results['total_inconsistencies']}[/bold]"
+            )
+
+            logger.info(
+                f"Data validation completed: {results['total_inconsistencies']} inconsistencies found"
+            )
+
+        else:
+            console.print(f"❌ [red]Data validation failed: {results['error']}[/red]")
+            logger.error(f"Data validation failed: {results['error']}")
+            sys.exit(1)
+
+    except Exception as e:
+        logger.error(f"Data validation command failed: {e}")
+        logger.debug("Data validation error details", exc_info=True)
+        console.print(f"❌ [red]Data validation failed: {e}[/red]")
+        sys.exit(1)
+
+
+@cli.command(name="migrate-legacy")
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Show what would be migrated without making changes",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Skip confirmation prompts and proceed with migration",
+)
+@click.option(
+    "--backup/--no-backup",
+    default=True,
+    help="Create backup before migration (default: enabled)",
+)
+@click.option(
+    "--target-db",
+    type=click.Path(),
+    help="Target database path (default: standard location)",
+)
+@cli_command_monitor("migrate-legacy")
+def migrate_legacy(dry_run: bool, force: bool, backup: bool, target_db: str):
+    """Migrate from legacy SQLite files and JSON metrics to unified database."""
+    logger.info("=== Starting legacy migration command ===")
+
+    try:
+        from .migration.database_migration import DatabaseMigrationManager
+
+        if dry_run:
+            console.print("🔄 [bold]Legacy Database Migration (Dry Run)[/bold]")
+            console.print("Analyzing legacy files without making changes...")
+        else:
+            console.print("🔄 [bold]Legacy Database Migration[/bold]")
+            console.print("Migrating from legacy SQLite files and JSON metrics...")
+        console.print()
+
+        # Initialize migration manager
+        target_path = Path(target_db) if target_db else None
+        migration_manager = DatabaseMigrationManager(target_path)
+
+        # Check if migration is needed
+        console.print("📋 [bold]Step 1: Checking for legacy files...[/bold]")
+        check_results = migration_manager.check_migration_needed()
+
+        if not check_results["migration_needed"]:
+            console.print(
+                "✅ [green]No legacy migration needed - no legacy files found[/green]"
+            )
+            return
+
+        # Display what would be migrated
+        console.print("🔍 [yellow]Legacy files found:[/yellow]")
+        console.print(f"  • SQLite files: {len(check_results['legacy_sqlite_files'])}")
+        console.print(
+            f"  • JSON metrics files: {len(check_results['json_metrics_files'])}"
+        )
+        console.print(f"  • Estimated records: {check_results['estimated_records']:,}")
+        console.print(f"  • Target DB exists: {check_results['target_db_exists']}")
+        console.print()
+
+        if dry_run:
+            console.print("🔍 [bold]Dry run complete - no changes made[/bold]")
+            console.print("Run without --dry-run to migrate these legacy files.")
+            return
+
+        # Confirm before proceeding (unless forced)
+        if not force:
+            console.print(
+                "⚠️  [yellow]This operation will consolidate legacy database files.[/yellow]"
+            )
+            if backup:
+                console.print("📦 A backup will be created automatically.")
+            else:
+                console.print(
+                    "🚨 [red]No backup will be created (--no-backup specified).[/red]"
+                )
+
+            if not Confirm.ask("Do you want to proceed with legacy migration?"):
+                console.print("❌ Migration cancelled by user.")
+                return
+
+        # Run legacy migration
+        console.print("📋 [bold]Step 2: Running legacy migration...[/bold]")
+
+        with console.status("[bold green]Migrating legacy files...") as status:
+            results = migration_manager.run_full_migration(backup=backup)
+
+        if results.get("errors"):
+            console.print(
+                f"⚠️ [yellow]Migration completed with {len(results['errors'])} errors[/yellow]"
+            )
+            for error in results["errors"]:
+                console.print(f"  • {error}")
+        else:
+            console.print("✅ [green]Legacy migration completed successfully![/green]")
+
+        # Display migration statistics
+        console.print()
+        console.print("📊 [bold]Migration Summary:[/bold]")
+        console.print(f"  • Duration: {results.get('duration_seconds', 0):.2f}s")
+        console.print(f"  • Records migrated: {results.get('records_migrated', 0):,}")
+        console.print(
+            f"  • Legacy files processed: {len(results.get('legacy_sqlite_files', []))}"
+        )
+        console.print(
+            f"  • JSON files processed: {len(results.get('json_metrics_files', []))}"
+        )
+
+        if backup and results.get("backup_created"):
+            console.print(f"  • Backup location: {results.get('backup_path')}")
+
+        logger.info("Legacy migration command completed successfully")
+
+    except Exception as e:
+        logger.error(f"Legacy migration command failed: {e}")
+        logger.debug("Legacy migration error details", exc_info=True)
+        console.print(f"❌ [red]Legacy migration failed: {e}[/red]")
+        sys.exit(1)
+
+
+@cli.command(name="migrate-all")
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Show what would be migrated without making changes",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Skip confirmation prompts and proceed with migration",
+)
+@click.option(
+    "--backup/--no-backup",
+    default=True,
+    help="Create backup before migration (default: enabled)",
+)
+@click.option(
+    "--skip-legacy",
+    is_flag=True,
+    default=False,
+    help="Skip legacy system migration",
+)
+@click.option(
+    "--skip-constraints",
+    is_flag=True,
+    default=False,
+    help="Skip constraint installation",
+)
+@click.option(
+    "--target-db",
+    type=click.Path(),
+    help="Target database path (default: standard location)",
+)
+@cli_command_monitor("migrate-all")
+def migrate_all(
+    dry_run: bool,
+    force: bool,
+    backup: bool,
+    skip_legacy: bool,
+    skip_constraints: bool,
+    target_db: str,
+):
+    """Run complete migration workflow with proper dependency ordering."""
+    logger.info("=== Starting complete migration workflow ===")
+
+    try:
+        from .migration.orchestrator import MigrationOrchestrator
+
+        if dry_run:
+            console.print("🔄 [bold]Complete Migration Workflow (Dry Run)[/bold]")
+            console.print(
+                "Analyzing all migration requirements without making changes..."
+            )
+        else:
+            console.print("🔄 [bold]Complete Migration Workflow[/bold]")
+            console.print(
+                "Running comprehensive database migration with dependency checking..."
+            )
+        console.print()
+
+        # Initialize orchestrator
+        target_path = Path(target_db) if target_db else None
+        orchestrator = MigrationOrchestrator(target_path)
+
+        # Show migration plan
+        console.print("📋 [bold]Migration Plan:[/bold]")
+        console.print("  1. ✅ Pre-migration health assessment")
+        if not skip_legacy:
+            console.print("  2. 🔄 Legacy system migration (if needed)")
+        else:
+            console.print("  2. ⏭️  Legacy system migration (skipped)")
+        console.print("  3. 🔧 Data consistency migration")
+        if not skip_constraints:
+            console.print("  4. 🛡️  Database constraints installation")
+        else:
+            console.print("  4. ⏭️  Database constraints installation (skipped)")
+        console.print("  5. ✅ Post-migration validation")
+        console.print()
+
+        if dry_run:
+            # Run dry-run analysis
+            with console.status(
+                "[bold green]Analyzing migration requirements..."
+            ) as status:
+                results = orchestrator.run_complete_migration(
+                    backup=backup,
+                    skip_legacy=skip_legacy,
+                    skip_constraints=skip_constraints,
+                    dry_run=True,
+                )
+
+            console.print("🔍 [bold]Dry run analysis complete:[/bold]")
+
+            # Show what would be done in each phase
+            for phase_name, phase_data in results["phases"].items():
+                phase_title = phase_name.replace("_", " ").title()
+                console.print(f"\n📋 [bold]{phase_title}:[/bold]")
+
+                if phase_data.get("skipped"):
+                    console.print(f"  ⏭️  Skipped: {phase_data['reason']}")
+                elif phase_data.get("dry_run"):
+                    if "inconsistencies_found" in phase_data:
+                        console.print(
+                            f"  🔧 Would fix {phase_data['inconsistencies_found']} data inconsistencies"
+                        )
+                    if "legacy_files_found" in phase_data:
+                        console.print(
+                            f"  📁 Would migrate {phase_data['legacy_files_found']} legacy files"
+                        )
+                        console.print(
+                            f"  📊 Estimated {phase_data['estimated_records']} records to migrate"
+                        )
+                else:
+                    console.print("  ✅ No changes needed")
+
+            console.print(
+                f"\n⏱️  [bold]Estimated total duration: {results.get('total_duration', 0):.2f}s[/bold]"
+            )
+            console.print("Run without --dry-run to execute the migration workflow.")
+            return
+
+        # Confirm before proceeding (unless forced)
+        if not force:
+            console.print(
+                "⚠️  [yellow]This operation will run a comprehensive migration workflow.[/yellow]"
+            )
+            if backup:
+                console.print("📦 Backups will be created automatically.")
+            else:
+                console.print(
+                    "🚨 [red]No backups will be created (--no-backup specified).[/red]"
+                )
+
+            console.print(
+                "\nThis may take several minutes and will modify your database."
+            )
+            if not Confirm.ask("Do you want to proceed with the complete migration?"):
+                console.print("❌ Migration cancelled by user.")
+                return
+
+        # Run complete migration workflow
+        console.print("🚀 [bold]Starting migration workflow...[/bold]")
+
+        with console.status("[bold green]Running migration phases...") as status:
+            results = orchestrator.run_complete_migration(
+                backup=backup,
+                skip_legacy=skip_legacy,
+                skip_constraints=skip_constraints,
+                dry_run=False,
+            )
+
+        # Display results
+        if results["overall_success"]:
+            console.print("✅ [green]Complete migration workflow succeeded![/green]")
+        else:
+            console.print("❌ [red]Migration workflow completed with errors[/red]")
+            for error in results["errors"]:
+                console.print(f"  • {error}")
+
+        if results["warnings"]:
+            console.print("⚠️ [yellow]Warnings:[/yellow]")
+            for warning in results["warnings"]:
+                console.print(f"  • {warning}")
+
+        # Display comprehensive summary
+        console.print()
+        summary = results["summary"]
+        console.print("📊 [bold]Migration Summary:[/bold]")
+        console.print(f"  • Duration: {summary['total_duration_seconds']:.2f}s")
+        console.print(f"  • Phases completed: {summary['phases_completed']}")
+        console.print(f"  • Records processed: {summary['total_records_processed']:,}")
+        console.print(f"  • Files processed: {summary['total_files_processed']}")
+        console.print(
+            f"  • Final health: {summary.get('final_health_status', 'unknown')}"
+        )
+        console.print(
+            f"  • Data consistent: {summary.get('final_data_consistency', 'unknown')}"
+        )
+
+        if results["overall_success"]:
+            console.print(
+                "\n🎉 [green]Your database is now fully migrated and healthy![/green]"
+            )
+        else:
+            console.print(
+                "\n🚨 [red]Migration completed with issues. Review errors above.[/red]"
+            )
+            sys.exit(1)
+
+        logger.info("Complete migration workflow finished successfully")
+
+    except Exception as e:
+        logger.error(f"Complete migration workflow failed: {e}")
+        logger.debug("Migration workflow error details", exc_info=True)
+        console.print(f"❌ [red]Migration workflow failed: {e}[/red]")
+        sys.exit(1)
+
+
+@cli.command(name="migration-analysis")
+@click.option(
+    "--json-output",
+    is_flag=True,
+    default=False,
+    help="Output results in JSON format",
+)
+@click.option(
+    "--automated-plan",
+    is_flag=True,
+    default=False,
+    help="Generate automated migration plan only",
+)
+@cli_command_monitor("migration-analysis")
+def migration_analysis(json_output: bool, automated_plan: bool):
+    """Analyze migration needs and provide automated recommendations."""
+    logger.info("=== Starting migration analysis ===")
+
+    try:
+        from .migration.monitoring import MigrationRecommendationEngine
+
+        logger.debug("Initializing database for migration analysis...")
+        telemetry_system = _initialize_telemetry_system()
+        db = telemetry_system.telemetry.db
+        logger.debug("Database initialized successfully")
+
+        recommendation_engine = MigrationRecommendationEngine(db)
+
+        if automated_plan:
+            console.print("🤖 [bold]Automated Migration Plan[/bold]")
+            console.print("Generating safe automated migration plan...")
+            console.print()
+
+            with console.status(
+                "[bold green]Analyzing system for automated operations..."
+            ) as status:
+                plan = recommendation_engine.get_automated_migration_plan()
+
+            if json_output:
+                console.print(json.dumps(plan, indent=2, default=str))
+                return
+
+            # Display plan
+            if plan["safe_to_execute"]:
+                console.print(
+                    "✅ [green]Safe automated migration plan available[/green]"
+                )
+            else:
+                console.print(
+                    "⚠️ [yellow]Automated migration not recommended - manual intervention needed[/yellow]"
+                )
+
+            console.print(
+                f"📊 Estimated total time: {plan['estimated_total_time']} minutes"
+            )
+            console.print()
+
+            if plan["commands"]:
+                console.print("🤖 [bold]Automated commands to execute:[/bold]")
+                for i, cmd in enumerate(plan["commands"], 1):
+                    console.print(f"  {i}. {cmd['description']}")
+                    console.print(f"     Command: [cyan]{cmd['command']}[/cyan]")
+                    console.print(f"     Time: {cmd['estimated_time']}")
+                    console.print()
+
+            if plan["manual_steps"]:
+                console.print("👤 [bold]Manual steps required:[/bold]")
+                for step in plan["manual_steps"]:
+                    console.print(f"  • {step['description']}")
+                    console.print(f"    Priority: {step['priority']}")
+                    console.print()
+
+            if plan["warnings"]:
+                console.print("⚠️ [yellow]Warnings:[/yellow]")
+                for warning in plan["warnings"]:
+                    console.print(f"  • {warning['title']} (Risk: {warning['risk']})")
+
+        else:
+            console.print("🔍 [bold]Migration Needs Analysis[/bold]")
+            console.print("Analyzing system state and generating recommendations...")
+            console.print()
+
+            with console.status(
+                "[bold green]Analyzing migration requirements..."
+            ) as status:
+                analysis = recommendation_engine.analyze_and_recommend()
+
+            if json_output:
+                console.print(json.dumps(analysis, indent=2, default=str))
+                return
+
+            # Display analysis results
+            console.print("📊 [bold]System Analysis Results:[/bold]")
+
+            # Health status
+            health = analysis.get("system_health", {})
+            health_status = health.get("status", "unknown")
+            if health_status == "healthy":
+                console.print("  ✅ System Health: [green]Healthy[/green]")
+            elif health_status == "critical":
+                console.print("  🔴 System Health: [red]Critical[/red]")
+            else:
+                console.print(
+                    f"  ⚠️ System Health: [yellow]{health_status.title()}[/yellow]"
+                )
+
+            if health.get("total_issues", 0) > 0:
+                console.print(
+                    f"    Issues: {health['critical_issues']} critical, {health['warning_issues']} warnings"
+                )
+
+            # Data consistency
+            data_consistency = analysis.get("data_consistency", {})
+            if data_consistency.get("consistent", True):
+                console.print("  ✅ Data Consistency: [green]Consistent[/green]")
+            else:
+                inconsistencies = data_consistency.get("total_inconsistencies", 0)
+                console.print(
+                    f"  ❌ Data Consistency: [red]{inconsistencies} inconsistencies found[/red]"
+                )
+
+            # Legacy files
+            legacy = analysis.get("legacy_files", {})
+            if legacy.get("migration_needed", False):
+                total_files = legacy.get("legacy_sqlite_files", 0) + legacy.get(
+                    "json_metrics_files", 0
+                )
+                console.print(
+                    f"  📁 Legacy Files: [yellow]{total_files} files need migration[/yellow]"
+                )
+            else:
+                console.print("  ✅ Legacy Files: [green]No migration needed[/green]")
+
+            console.print()
+
+            # Display recommendations
+            recommendations = analysis.get("recommendations", [])
+            if recommendations:
+                console.print("💡 [bold]Recommendations:[/bold]")
+
+                for i, rec in enumerate(recommendations, 1):
+                    priority_color = {
+                        "critical": "red",
+                        "high": "yellow",
+                        "medium": "blue",
+                        "low": "green",
+                    }.get(rec["priority"], "white")
+
+                    console.print(
+                        f"\n  {i}. [{priority_color}]{rec['title']}[/{priority_color}]"
+                    )
+                    console.print(f"     {rec['description']}")
+                    console.print(f"     Action: {rec['action']}")
+                    console.print(
+                        f"     Priority: {rec['priority']} | Time: {rec['estimated_time']} | Risk: {rec['risk_level']}"
+                    )
+
+                    if rec.get("automated", False):
+                        console.print("     🤖 [green]Can be automated[/green]")
+                        if "command" in rec:
+                            console.print(
+                                f"     Command: [cyan]{rec['command']}[/cyan]"
+                            )
+                    else:
+                        console.print(
+                            "     👤 [yellow]Requires manual execution[/yellow]"
+                        )
+
+                console.print()
+
+            # Display priority actions
+            priority_actions = analysis.get("priority_actions", [])
+            if priority_actions:
+                console.print("🎯 [bold]Priority Action Plan:[/bold]")
+
+                for action in priority_actions[:5]:  # Show top 5
+                    order = action["execution_order"]
+                    console.print(
+                        f"  {order}. {action['title']} ({action['priority']} priority)"
+                    )
+
+                    if action.get("dependencies"):
+                        deps = ", ".join(action["dependencies"])
+                        console.print(f"     Dependencies: {deps}")
+
+                console.print()
+
+            # Display maintenance schedule
+            schedule = analysis.get("maintenance_schedule", {})
+            if schedule:
+                console.print("📅 [bold]Recommended Maintenance Schedule:[/bold]")
+
+                for period, tasks in schedule.items():
+                    if period != "automated_available" and tasks:
+                        console.print(f"  {period.title()}: {', '.join(tasks)}")
+
+                if "automated_available" in schedule:
+                    automated_tasks = schedule["automated_available"]
+                    safe_tasks = [t for t in automated_tasks if t["safe_to_automate"]]
+                    if safe_tasks:
+                        console.print(
+                            f"\n  🤖 {len(safe_tasks)} tasks can be safely automated"
+                        )
+
+            console.print(
+                f"\n⏱️  Analysis completed in {analysis['analysis_duration']:.2f} seconds"
+            )
+
+        logger.info("Migration analysis completed successfully")
+
+    except Exception as e:
+        logger.error(f"Migration analysis failed: {e}")
+        logger.debug("Migration analysis error details", exc_info=True)
+        console.print(f"❌ [red]Migration analysis failed: {e}[/red]")
+        sys.exit(1)
+
+
+@cli.command(name="health-check")
+@click.option(
+    "--detailed",
+    is_flag=True,
+    default=False,
+    help="Show detailed health information and recommendations",
+)
+@click.option(
+    "--json-output",
+    is_flag=True,
+    default=False,
+    help="Output results in JSON format",
+)
+@cli_command_monitor("health-check")
+def health_check(detailed: bool, json_output: bool):
+    """Run comprehensive database health checks and report any issues."""
+    logger.info("=== Starting database health check command ===")
+
+    try:
+        from .database.health_checks import DatabaseHealthChecker
+
+        logger.debug("Initializing database for health check...")
+        telemetry_system = _initialize_telemetry_system()
+        db = telemetry_system.telemetry.db
+        logger.debug("Database initialized successfully")
+
+        console.print("🏥 [bold]Database Health Check[/bold]")
+        console.print("Running comprehensive health checks on telemetry database...")
+        console.print()
+
+        # Run health check
+        console.print("📋 [bold]Running comprehensive health checks...[/bold]")
+
+        with console.status("[bold green]Analyzing database health...") as status:
+            health_checker = DatabaseHealthChecker(db)
+            results = health_checker.run_comprehensive_health_check()
+
+        # Handle JSON output
+        if json_output:
+            console.print(json.dumps(results, indent=2, default=str))
+            return
+
+        # Display overall health status
+        health_status = results["overall_health"]
+        if health_status == "healthy":
+            console.print("✅ [green]Database is healthy![/green]")
+        elif health_status == "fair":
+            console.print(
+                "⚠️ [yellow]Database health is fair - minor issues found[/yellow]"
+            )
+        elif health_status == "warning":
+            console.print(
+                "🟡 [yellow]Database health warning - attention needed[/yellow]"
+            )
+        elif health_status == "critical":
+            console.print(
+                "🔴 [red]Database health is critical - immediate action required[/red]"
+            )
+        else:
+            console.print(f"❓ [blue]Database health status: {health_status}[/blue]")
+
+        console.print()
+
+        # Display summary statistics
+        summary_table = Table(
+            title="Health Check Summary", show_header=True, header_style="bold blue"
+        )
+        summary_table.add_column("Metric", style="cyan")
+        summary_table.add_column("Count", justify="right")
+
+        summary_table.add_row("Total Issues", str(results["total_issues"]))
+        summary_table.add_row(
+            "Critical Issues",
+            str(results["critical_issues"]),
+            style="red" if results["critical_issues"] > 0 else "green",
+        )
+        summary_table.add_row(
+            "Warning Issues",
+            str(results["warning_issues"]),
+            style="yellow" if results["warning_issues"] > 0 else "green",
+        )
+        summary_table.add_row(
+            "Info Issues",
+            str(results["info_issues"]),
+            style="blue" if results["info_issues"] > 0 else "green",
+        )
+
+        console.print(summary_table)
+        console.print()
+
+        # Display detailed check results
+        if results["total_issues"] > 0:
+            console.print("📋 [bold]Detailed Issues:[/bold]")
+            console.print()
+
+            for check_name, check_results in results["checks"].items():
+                if check_results.get("issues"):
+                    console.print(
+                        f"🔍 [bold]{check_name.replace('_', ' ').title()}[/bold]"
+                    )
+
+                    for issue in check_results["issues"]:
+                        severity_style = {
+                            "critical": "red",
+                            "warning": "yellow",
+                            "info": "blue",
+                        }.get(issue["severity"], "white")
+
+                        severity_icon = {
+                            "critical": "🚨",
+                            "warning": "⚠️",
+                            "info": "ℹ️",
+                        }.get(issue["severity"], "•")
+
+                        console.print(
+                            f"  {severity_icon} [{severity_style}]{issue['description']}[/{severity_style}]"
+                        )
+                        console.print(f"    💡 {issue['recommendation']}")
+
+                    console.print()
+
+        # Display recommendations
+        if results["recommendations"]:
+            console.print("📝 [bold]Recommendations:[/bold]")
+            for i, recommendation in enumerate(results["recommendations"], 1):
+                console.print(f"  {i}. {recommendation}")
+            console.print()
+
+        # Display performance metrics if available
+        performance_metrics = (
+            results["checks"].get("performance", {}).get("metrics", {})
+        )
+        if performance_metrics:
+            console.print("📊 [bold]Performance Metrics:[/bold]")
+
+            metrics_table = Table(show_header=True, header_style="bold blue")
+            metrics_table.add_column("Metric", style="cyan")
+            metrics_table.add_column("Value", justify="right")
+
+            for metric, value in performance_metrics.items():
+                if isinstance(value, float):
+                    formatted_value = f"{value:.2f}"
+                elif isinstance(value, int):
+                    formatted_value = f"{value:,}"
+                else:
+                    formatted_value = str(value)
+
+                metrics_table.add_row(metric.replace("_", " ").title(), formatted_value)
+
+            console.print(metrics_table)
+            console.print()
+
+        # Set exit code based on health status
+        if health_status == "critical":
+            logger.warning(
+                f"Health check completed with critical issues: {results['critical_issues']}"
+            )
+            sys.exit(2)  # Critical issues
+        elif health_status in ["warning", "fair"]:
+            logger.info(
+                f"Health check completed with warnings: {results['warning_issues']}"
+            )
+            sys.exit(1)  # Warning issues
+        else:
+            logger.info("Health check completed successfully - database is healthy")
+            sys.exit(0)  # Healthy
+
+    except Exception as e:
+        logger.error(f"Health check command failed: {e}")
+        logger.debug("Health check error details", exc_info=True)
+        console.print(f"❌ [red]Health check failed: {e}[/red]")
+        sys.exit(1)
+
+
+@cli.command(name="cleanup-orphaned")
+@cli_command_monitor("cleanup-orphaned")
+def cleanup_orphaned():
+    """Clean up orphaned records in the database (threat findings without scan executions)."""
+    logger.info("=== Starting orphaned records cleanup command ===")
+
+    try:
+        from .database.migrations import cleanup_orphaned_records
+
+        logger.debug("Initializing database for orphaned records cleanup...")
+        console.print("🧹 [bold]Orphaned Records Cleanup[/bold]")
+        console.print(
+            "Removing threat findings that reference non-existent scan executions..."
+        )
+        console.print()
+
+        # Run cleanup
+        results = cleanup_orphaned_records()
+
+        if results["cleanup_success"]:
+            console.print(
+                "✅ [green]Orphaned records cleanup completed successfully![/green]"
+            )
+            console.print()
+            console.print("📊 [bold]Cleanup Results:[/bold]")
+            console.print(
+                f"  • Orphaned threat findings deleted: {results['orphaned_threats_deleted']}"
+            )
+            console.print(
+                f"  • Total records cleaned: {results['total_records_cleaned']}"
+            )
+
+            if results["total_records_cleaned"] > 0:
+                console.print()
+                console.print(
+                    "💡 [blue]Recommendation: Run 'adversary-mcp-cli health-check' to verify database health[/blue]"
+                )
+
+            logger.info(
+                f"Orphaned records cleanup completed: {results['total_records_cleaned']} records cleaned"
+            )
+
+        else:
+            console.print(
+                f"❌ [red]Orphaned records cleanup failed: {results['error']}[/red]"
+            )
+            logger.error(f"Orphaned records cleanup failed: {results['error']}")
+            sys.exit(1)
+
+    except Exception as e:
+        logger.error(f"Orphaned records cleanup command failed: {e}")
+        logger.debug("Cleanup error details", exc_info=True)
+        console.print(f"❌ [red]Cleanup failed: {e}[/red]")
+        sys.exit(1)
+
+
+@cli.command(name="cleanup-stale")
+@cli_command_monitor("cleanup-stale")
+def cleanup_stale():
+    """Mark stale/hanging executions as failed (operations started >24h ago without completion)."""
+    logger.info("=== Starting stale executions cleanup command ===")
+
+    try:
+        from .database.migrations import mark_stale_executions_as_failed
+
+        logger.debug("Initializing database for stale executions cleanup...")
+        console.print("⏰ [bold]Stale Executions Cleanup[/bold]")
+        console.print(
+            "Marking executions started >24h ago without completion as failed..."
+        )
+        console.print()
+
+        # Run cleanup
+        results = mark_stale_executions_as_failed()
+
+        if results["cleanup_success"]:
+            console.print(
+                "✅ [green]Stale executions cleanup completed successfully![/green]"
+            )
+            console.print()
+
+            # Display cleanup statistics
+            table = Table(
+                title="Cleanup Results", show_header=True, header_style="bold blue"
+            )
+            table.add_column("Execution Type", style="cyan")
+            table.add_column("Marked as Failed", justify="right")
+
+            table.add_row("MCP Tool Executions", str(results["stale_mcp_executions"]))
+            table.add_row(
+                "CLI Command Executions", str(results["stale_cli_executions"])
+            )
+            table.add_row(
+                "Scan Engine Executions", str(results["stale_scan_executions"])
+            )
+
+            console.print(table)
+            console.print()
+            console.print(
+                f"📊 [bold]Total executions fixed: {results['total_executions_fixed']}[/bold]"
+            )
+
+            if results["total_executions_fixed"] > 0:
+                console.print()
+                console.print(
+                    "💡 [blue]Recommendation: Run 'adversary-mcp-cli health-check' to verify improvements[/blue]"
+                )
+
+            logger.info(
+                f"Stale executions cleanup completed: {results['total_executions_fixed']} executions marked as failed"
+            )
+
+        else:
+            console.print(
+                f"❌ [red]Stale executions cleanup failed: {results['error']}[/red]"
+            )
+            logger.error(f"Stale executions cleanup failed: {results['error']}")
+            sys.exit(1)
+
+    except Exception as e:
+        logger.error(f"Stale executions cleanup command failed: {e}")
+        logger.debug("Cleanup error details", exc_info=True)
+        console.print(f"❌ [red]Cleanup failed: {e}[/red]")
+        sys.exit(1)
+
+
+@cli.command(name="install-constraints")
+@cli_command_monitor("install-constraints")
+def install_constraints():
+    """Install database constraints and triggers to prevent future data inconsistencies."""
+    logger.info("=== Starting database constraints installation command ===")
+
+    try:
+        from .database.constraints import install_database_constraints
+
+        logger.debug("Installing database constraints and triggers...")
+        console.print("🔧 [bold]Database Constraints Installation[/bold]")
+        console.print(
+            "Installing constraints and triggers to maintain data consistency..."
+        )
+        console.print()
+
+        # Install constraints
+        results = install_database_constraints()
+
+        if results["installation_success"]:
+            console.print(
+                "✅ [green]Database constraints installation completed successfully![/green]"
+            )
+            console.print()
+
+            # Display installation results
+            if results["constraints_installed"]:
+                console.print("📋 [bold]Constraints Installed:[/bold]")
+                for constraint in results["constraints_installed"]:
+                    console.print(
+                        f"  • {constraint['name']}: {constraint['description']}"
+                    )
+                console.print()
+
+            if results["triggers_installed"]:
+                console.print("⚡ [bold]Triggers Installed:[/bold]")
+                for trigger in results["triggers_installed"]:
+                    console.print(f"  • {trigger['name']}: {trigger['description']}")
+                console.print()
+
+            if results["errors"]:
+                console.print("⚠️ [yellow]Warnings during installation:[/yellow]")
+                for error in results["errors"]:
+                    console.print(f"  • {error}")
+                console.print()
+
+            console.print(
+                "💡 [blue]Recommendation: Run 'adversary-mcp-cli validate-constraints' to verify installation[/blue]"
+            )
+
+            logger.info(
+                f"Constraints installation completed: {len(results['constraints_installed'])} constraints, {len(results['triggers_installed'])} triggers"
+            )
+
+        else:
+            console.print("❌ [red]Database constraints installation failed[/red]")
+            for error in results["errors"]:
+                console.print(f"  • [red]{error}[/red]")
+            logger.error(f"Constraints installation failed: {results['errors']}")
+            sys.exit(1)
+
+    except Exception as e:
+        logger.error(f"Constraints installation command failed: {e}")
+        logger.debug("Installation error details", exc_info=True)
+        console.print(f"❌ [red]Installation failed: {e}[/red]")
+        sys.exit(1)
+
+
+@cli.command(name="validate-constraints")
+@cli_command_monitor("validate-constraints")
+def validate_constraints():
+    """Validate that database constraints are active and working correctly."""
+    logger.info("=== Starting database constraints validation command ===")
+
+    try:
+        from .database.constraints import validate_database_constraints
+
+        logger.debug("Validating database constraints...")
+        console.print("🔍 [bold]Database Constraints Validation[/bold]")
+        console.print(
+            "Checking that constraints and triggers are active and working..."
+        )
+        console.print()
+
+        # Validate constraints
+        results = validate_database_constraints()
+
+        if results["validation_success"]:
+            # Display foreign keys status
+            if results["foreign_keys_enabled"]:
+                console.print("✅ [green]Foreign key constraints are enabled[/green]")
+            else:
+                console.print(
+                    "⚠️ [yellow]Foreign key constraints are not enabled[/yellow]"
+                )
+
+            # Display active triggers
+            if results["triggers_active"]:
+                console.print("⚡ [bold]Active Triggers:[/bold]")
+                for trigger in results["triggers_active"]:
+                    console.print(f"  • {trigger}")
+            else:
+                console.print(
+                    "⚠️ [yellow]No count maintenance triggers are active[/yellow]"
+                )
+
+            console.print()
+
+            # Display constraint violations if any
+            if results["constraint_violations"]:
+                console.print("🚨 [red]Constraint Violations Found:[/red]")
+                for violation in results["constraint_violations"]:
+                    console.print(f"  • {violation['description']}")
+                console.print()
+                console.print(
+                    "💡 [blue]Recommendation: Run data migration to fix violations[/blue]"
+                )
+            else:
+                console.print("✅ [green]No constraint violations found[/green]")
+
+            # Overall status
+            total_violations = len(results["constraint_violations"])
+            if total_violations == 0:
+                console.print()
+                console.print(
+                    "🎉 [green]All database constraints are working correctly![/green]"
+                )
+
+            logger.info(
+                f"Constraints validation completed: {len(results['triggers_active'])} triggers active, {total_violations} violations"
+            )
+
+        else:
+            console.print("❌ [red]Database constraints validation failed[/red]")
+            for error in results["errors"]:
+                console.print(f"  • [red]{error}[/red]")
+            logger.error(f"Constraints validation failed: {results['errors']}")
+            sys.exit(1)
+
+    except Exception as e:
+        logger.error(f"Constraints validation command failed: {e}")
+        logger.debug("Validation error details", exc_info=True)
+        console.print(f"❌ [red]Validation failed: {e}[/red]")
         sys.exit(1)
 
 
