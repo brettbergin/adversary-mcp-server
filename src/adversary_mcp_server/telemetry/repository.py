@@ -21,12 +21,6 @@ class ComprehensiveTelemetryRepository:
 
     def __init__(self, session: Session):
         self.session = session
-        self._auto_commit = True  # Default to auto-commit for backward compatibility
-
-    def _maybe_commit(self):
-        """Commit the session if auto-commit is enabled."""
-        if self._auto_commit:
-            self.session.commit()
 
     # === MCP TOOL TRACKING ===
 
@@ -43,27 +37,9 @@ class ComprehensiveTelemetryRepository:
             llm_enabled=kwargs.get("llm_enabled", False),
         )
         self.session.add(execution)
-        self.session.flush()  # Ensure object is in DB before refresh
+        self.session.commit()
         self.session.refresh(execution)
-        self._maybe_commit()
-
-        # Create a new detached object with the same data to avoid DetachedInstanceError
-        detached_execution = MCPToolExecution(
-            tool_name=execution.tool_name,
-            session_id=execution.session_id,
-            request_params=execution.request_params,
-            execution_start=execution.execution_start,
-            validation_enabled=execution.validation_enabled,
-            llm_enabled=execution.llm_enabled,
-            execution_end=execution.execution_end,
-            success=execution.success,
-            findings_count=execution.findings_count,
-            error_message=execution.error_message,
-        )
-        detached_execution.id = execution.id
-        detached_execution.created_at = execution.created_at
-
-        return detached_execution
+        return execution
 
     def complete_mcp_tool_execution(
         self,
@@ -81,7 +57,7 @@ class ComprehensiveTelemetryRepository:
             execution.success = success
             execution.findings_count = findings_count
             execution.error_message = error_message
-            self._maybe_commit()
+            self.session.commit()
 
     # === CLI COMMAND TRACKING ===
 
@@ -97,27 +73,9 @@ class ComprehensiveTelemetryRepository:
             validation_enabled=kwargs.get("validation_enabled", False),
         )
         self.session.add(execution)
-        self.session.flush()  # Ensure object is in DB before refresh
+        self.session.commit()
         self.session.refresh(execution)
-        self._maybe_commit()
-
-        # Create a new detached object with the same data to avoid DetachedInstanceError
-        detached_execution = CLICommandExecution(
-            command_name=execution.command_name,
-            subcommand=execution.subcommand,
-            args=execution.args,
-            execution_start=execution.execution_start,
-            validation_enabled=execution.validation_enabled,
-            execution_end=execution.execution_end,
-            exit_code=execution.exit_code,
-            stdout_lines=execution.stdout_lines,
-            stderr_lines=execution.stderr_lines,
-            findings_count=execution.findings_count,
-        )
-        detached_execution.id = execution.id
-        detached_execution.created_at = execution.created_at
-
-        return detached_execution
+        return execution
 
     def complete_cli_command_execution(
         self,
@@ -137,7 +95,7 @@ class ComprehensiveTelemetryRepository:
             execution.stdout_lines = stdout_lines
             execution.stderr_lines = stderr_lines
             execution.findings_count = findings_count
-            self._maybe_commit()
+            self.session.commit()
 
     # === CACHE OPERATIONS ===
 
@@ -164,26 +122,9 @@ class ComprehensiveTelemetryRepository:
             timestamp=time.time(),
         )
         self.session.add(metric)
-        self.session.flush()  # Ensure object is in DB before refresh
+        self.session.commit()
         self.session.refresh(metric)
-        self._maybe_commit()
-
-        # Create a new detached object with the same data to avoid DetachedInstanceError
-        detached_metric = CacheOperationMetric(
-            operation_type=metric.operation_type,
-            cache_name=metric.cache_name,
-            key_hash=metric.key_hash,
-            key_metadata=metric.key_metadata,
-            size_bytes=metric.size_bytes,
-            access_time_ms=metric.access_time_ms,
-            ttl_seconds=metric.ttl_seconds,
-            eviction_reason=metric.eviction_reason,
-            timestamp=metric.timestamp,
-        )
-        detached_metric.id = metric.id
-        detached_metric.created_at = metric.created_at
-
-        return detached_metric
+        return metric
 
     # === SCAN ENGINE TRACKING ===
 
@@ -210,40 +151,9 @@ class ComprehensiveTelemetryRepository:
             execution_start=time.time(),
         )
         self.session.add(execution)
-        self.session.flush()  # Ensure object is in DB before refresh
+        self.session.commit()
         self.session.refresh(execution)
-        self._maybe_commit()
-
-        # Create a new detached object with the same data to avoid DetachedInstanceError
-        detached_execution = ScanEngineExecution(
-            scan_id=execution.scan_id,
-            trigger_source=execution.trigger_source,
-            scan_type=execution.scan_type,
-            target_path=execution.target_path,
-            file_count=execution.file_count,
-            language_detected=execution.language_detected,
-            file_size_bytes=execution.file_size_bytes,
-            semgrep_enabled=execution.semgrep_enabled,
-            llm_enabled=execution.llm_enabled,
-            validation_enabled=execution.validation_enabled,
-            execution_start=execution.execution_start,
-            execution_end=execution.execution_end,
-            total_duration_ms=execution.total_duration_ms,
-            semgrep_duration_ms=execution.semgrep_duration_ms,
-            llm_duration_ms=execution.llm_duration_ms,
-            validation_duration_ms=execution.validation_duration_ms,
-            cache_lookup_ms=execution.cache_lookup_ms,
-            threats_found=execution.threats_found,
-            threats_validated=execution.threats_validated,
-            false_positives_filtered=execution.false_positives_filtered,
-            cache_hit=execution.cache_hit,
-            success=execution.success,
-            error_message=execution.error_message,
-        )
-        detached_execution.id = execution.id
-        detached_execution.created_at = execution.created_at
-
-        return detached_execution
+        return execution
 
     def complete_scan_execution(self, scan_id: str, success: bool = True, **kwargs):
         """Complete scan execution with results."""
@@ -265,7 +175,7 @@ class ComprehensiveTelemetryRepository:
             execution.cache_hit = kwargs.get("cache_hit", False)
             execution.success = success
             execution.error_message = kwargs.get("error_message")
-            self._maybe_commit()
+            self.session.commit()
 
     # === THREAT FINDINGS ===
 
@@ -308,68 +218,9 @@ class ComprehensiveTelemetryRepository:
             timestamp=time.time(),
         )
         self.session.add(finding)
-        self.session.flush()  # Ensure object is in DB before refresh
+        self.session.commit()
         self.session.refresh(finding)
-        self._maybe_commit()
-
-        # Create a new detached object with the same data to avoid DetachedInstanceError
-        detached_finding = ThreatFinding(
-            scan_id=finding.scan_id,
-            finding_uuid=finding.finding_uuid,
-            scanner_source=finding.scanner_source,
-            rule_id=finding.rule_id,
-            category=finding.category,
-            severity=finding.severity,
-            confidence=finding.confidence,
-            file_path=finding.file_path,
-            line_start=finding.line_start,
-            line_end=finding.line_end,
-            column_start=finding.column_start,
-            column_end=finding.column_end,
-            code_snippet=finding.code_snippet,
-            title=finding.title,
-            description=finding.description,
-            remediation=finding.remediation,
-            references=finding.references,
-            is_validated=finding.is_validated,
-            is_false_positive=finding.is_false_positive,
-            validation_reason=finding.validation_reason,
-            marked_by=finding.marked_by,
-            timestamp=finding.timestamp,
-        )
-        detached_finding.id = finding.id
-        detached_finding.created_at = finding.created_at
-
-        return detached_finding
-
-    def update_threat_finding_validation(
-        self,
-        finding_uuid: str,
-        is_validated: bool,
-        validation_confidence: float | None,
-        validation_reasoning: str | None,
-        is_false_positive: bool | None = None,
-        validation_reason: str | None = None,
-        exploitation_vector: str | None = None,
-    ):
-        """Update threat finding with validation results."""
-        finding = (
-            self.session.query(ThreatFinding)
-            .filter_by(finding_uuid=finding_uuid)
-            .first()
-        )
-        if finding:
-            finding.is_validated = is_validated
-            finding.validation_confidence = validation_confidence
-            finding.validation_reasoning = validation_reasoning
-            if is_false_positive is not None:
-                finding.is_false_positive = is_false_positive
-            if validation_reason is not None:
-                finding.validation_reason = validation_reason
-            # Note: exploitation_vector could be added to ThreatFinding model if needed
-            self._maybe_commit()
-            return finding
-        return None
+        return finding
 
     # === SYSTEM HEALTH ===
 
@@ -391,30 +242,9 @@ class ComprehensiveTelemetryRepository:
             error_rate_1h=metrics.get("error_rate_1h"),
         )
         self.session.add(health)
-        self.session.flush()  # Ensure object is in DB before refresh
+        self.session.commit()
         self.session.refresh(health)
-        self._maybe_commit()
-
-        # Create a new detached object with the same data to avoid DetachedInstanceError
-        detached_health = SystemHealth(
-            timestamp=health.timestamp,
-            cpu_percent=health.cpu_percent,
-            memory_percent=health.memory_percent,
-            memory_used_mb=health.memory_used_mb,
-            disk_usage_percent=health.disk_usage_percent,
-            db_size_mb=health.db_size_mb,
-            db_connections=health.db_connections,
-            cache_size_mb=health.cache_size_mb,
-            cache_hit_rate_1h=health.cache_hit_rate_1h,
-            cache_entries_count=health.cache_entries_count,
-            avg_scan_duration_1h=health.avg_scan_duration_1h,
-            scans_per_hour=health.scans_per_hour,
-            error_rate_1h=health.error_rate_1h,
-        )
-        detached_health.id = health.id
-        detached_health.created_at = health.created_at
-
-        return detached_health
+        return health
 
     # === COMPREHENSIVE ANALYTICS QUERIES ===
 

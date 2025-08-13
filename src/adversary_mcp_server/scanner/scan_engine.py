@@ -992,14 +992,6 @@ class ScanEngine:
                         )
                     )
 
-                    # Store validation results in scan context for atomic database updates
-                    if (
-                        "scan_context" in locals()
-                        and scan_context
-                        and validation_results
-                    ):
-                        scan_context.set_validation_results(validation_results)
-
                     # Filter false positives based on validation
                     # Call validator (for side effects/mocking in tests) and use its return if valid,
                     # otherwise fall back to internal filter for robustness
@@ -1423,14 +1415,6 @@ class ScanEngine:
                         logger.debug(
                             f"Validation completed with {len(validation_results)} results"
                         )
-
-                        # Store validation results in scan context for atomic database updates
-                        if (
-                            "scan_context" in locals()
-                            and scan_context
-                            and validation_results
-                        ):
-                            scan_context.set_validation_results(validation_results)
                     except Exception as e:
                         logger.error(f"LLM validation processing failed: {e}")
                         scan_metadata["llm_validation_success"] = False
@@ -1612,61 +1596,7 @@ class ScanEngine:
 
         if not directory_path_obj.exists():
             logger.error(f"Directory not found: {directory_path_abs}")
-            raise FileNotFoundError(f"Directory not found: {directory_path_abs}")
-
-        # Use telemetry context manager for comprehensive tracking
-        if self.metrics_orchestrator:
-            logger.debug("Using metrics orchestrator for directory scan tracking")
-            with self.metrics_orchestrator.track_scan_execution(
-                trigger_source="scan_engine",
-                scan_type="directory",
-                target_path=directory_path_abs,
-                semgrep_enabled=use_semgrep,
-                llm_enabled=use_llm,
-                validation_enabled=use_validation,
-                file_count=0,  # Will be updated when files are discovered
-            ) as scan_context:
-                logger.debug(
-                    "Scan context created for directory scan with telemetry tracking"
-                )
-
-                # Continue with directory scan logic - scan_context is now available for threat recording
-                return await self._execute_directory_scan(
-                    directory_path_obj,
-                    scan_context,
-                    recursive,
-                    use_llm,
-                    use_semgrep,
-                    use_validation,
-                    severity_threshold,
-                )
-        else:
-            # Fallback without telemetry tracking - use None as scan_context
-            logger.debug(
-                "No metrics orchestrator available, running directory scan without telemetry"
-            )
-            return await self._execute_directory_scan(
-                directory_path_obj,
-                None,
-                recursive,
-                use_llm,
-                use_semgrep,
-                use_validation,
-                severity_threshold,
-            )
-
-    async def _execute_directory_scan(
-        self,
-        directory_path_obj: Path,
-        scan_context,  # Can be None if telemetry is not available
-        recursive: bool,
-        use_llm: bool,
-        use_semgrep: bool,
-        use_validation: bool,
-        severity_threshold: Severity | None,
-    ) -> list[EnhancedScanResult]:
-        """Execute directory scan with optional telemetry tracking."""
-        directory_path_abs = str(directory_path_obj)
+            raise FileNotFoundError(f"Directory not found: {directory_path}")
 
         # Initialize file filter with smart exclusions
         config = self.credential_manager.load_config()
@@ -1712,7 +1642,7 @@ class ScanEngine:
 
                     # Use semgrep's directory scanning capability
                     all_semgrep_threats = await self.semgrep_scanner.scan_directory(
-                        directory_path=directory_path_abs,
+                        directory_path=str(directory_path),
                         config=config.semgrep_config,
                         rules=config.semgrep_rules,
                         recursive=recursive,
@@ -1733,10 +1663,14 @@ class ScanEngine:
                         f"✅ Semgrep optimization: Scanned entire directory once instead of {len(files_to_scan)} individual scans"
                     )
 
-                    # Record individual threat findings in telemetry using scan context
-                    if scan_context:
+                    # Record individual threat findings in telemetry
+                    if self.metrics_orchestrator:
+                        orchestrator = self.metrics_orchestrator
+                        scan_id = f"directory-{directory_path_abs}-{int(time.time())}"
                         for threat in all_semgrep_threats:
-                            scan_context.add_threat_finding(threat, "semgrep")
+                            orchestrator.record_threat_finding_with_context(
+                                scan_id, threat, "semgrep"
+                            )
 
                     semgrep_scan_metadata = {
                         "semgrep_scan_success": True,
@@ -1819,10 +1753,14 @@ class ScanEngine:
                     f"Directory LLM analysis complete: found {len(all_llm_threats)} threats across {len(directory_llm_threats)} files"
                 )
 
-                # Record individual threat findings in telemetry using scan context
-                if scan_context:
+                # Record individual threat findings in telemetry
+                if self.metrics_orchestrator:
+                    orchestrator = self.metrics_orchestrator
+                    scan_id = f"directory-{directory_path_abs}-{int(time.time())}"
                     for threat in all_llm_threats:
-                        scan_context.add_threat_finding(threat, "llm")
+                        orchestrator.record_threat_finding_with_context(
+                            scan_id, threat, "llm"
+                        )
 
                 llm_scan_metadata = {
                     "llm_scan_success": True,
@@ -1917,7 +1855,7 @@ class ScanEngine:
                 try:
                     # For directory scans, we need to read the directory contents for context
                     # Create a concatenated source code context from all relevant files
-                    directory_context = f"Directory scan of: {directory_path_abs}\n"
+                    directory_context = f"Directory scan of: {directory_path}\n"
                     directory_context += (
                         f"Files scanned: {len(files_to_scan)} files\n\n"
                     )
@@ -1951,18 +1889,10 @@ class ScanEngine:
                         await self.llm_validator._validate_findings_async(
                             findings=all_threats_for_validation,
                             source_code=directory_context,
-                            file_path=directory_path_abs,
+                            file_path=str(directory_path),
                             generate_exploits=True,
                         )
                     )
-
-                    # Store validation results in scan context for atomic database updates
-                    if (
-                        "scan_context" in locals()
-                        and scan_context
-                        and validation_results
-                    ):
-                        scan_context.set_validation_results(validation_results)
 
                     # Filter false positives based on validation
                     if "all_llm_threats" in locals():
@@ -2061,7 +1991,7 @@ class ScanEngine:
 
         # Create single directory-level result
         directory_result = EnhancedScanResult(
-            file_path=directory_path_abs,
+            file_path=str(directory_path),
             semgrep_threats=(
                 all_semgrep_threats if "all_semgrep_threats" in locals() else []
             ),
@@ -2070,7 +2000,7 @@ class ScanEngine:
             ),
             validation_results=validation_results,
             scan_metadata={
-                "directory_path": directory_path_abs,
+                "directory_path": str(directory_path),
                 "directory_scan": True,
                 "total_files_discovered": len(all_files),
                 "files_filtered_for_scan": len(files_to_scan),
@@ -2311,7 +2241,7 @@ class ScanEngine:
 
         if not directory_path_obj.exists():
             logger.error(f"Directory not found: {directory_path_abs}")
-            raise FileNotFoundError(f"Directory not found: {directory_path_abs}")
+            raise FileNotFoundError(f"Directory not found: {directory_path}")
 
         # Initialize file filter with smart exclusions
         config = self.credential_manager.load_config()

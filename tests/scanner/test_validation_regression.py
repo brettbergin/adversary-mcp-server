@@ -170,31 +170,9 @@ class TestValidationRegression:
                 ]  # Only first threat is legitimate
                 mock_validator.filter_false_positives.return_value = legitimate_threats
 
-                # Create isolated test database
-                import tempfile as temp_module
-                from pathlib import Path as PathType
-
-                from adversary_mcp_server.database.models import AdversaryDatabase
-                from adversary_mcp_server.telemetry.integration import (
-                    MetricsCollectionOrchestrator,
-                )
-                from adversary_mcp_server.telemetry.service import TelemetryService
-
-                with temp_module.NamedTemporaryFile(
-                    suffix=".db", delete=False
-                ) as tmp_db:
-                    test_db_path = PathType(tmp_db.name)
-
-                test_db = AdversaryDatabase(test_db_path)
-                test_telemetry = TelemetryService(test_db)
-                test_metrics_orchestrator = MetricsCollectionOrchestrator(
-                    test_telemetry
-                )
-
                 # Create ScanEngine and run file scan
                 scan_engine = ScanEngine(
                     credential_manager=mock_cm,
-                    metrics_orchestrator=test_metrics_orchestrator,  # Provide explicit test database
                     enable_llm_analysis=False,
                     enable_semgrep_analysis=True,
                     enable_llm_validation=True,
@@ -338,27 +316,9 @@ class TestValidationRegression:
             legitimate_threats = all_threats[:2]  # First 2 threats are legitimate
             mock_validator.filter_false_positives.return_value = legitimate_threats
 
-            # Create isolated test database
-            import tempfile as temp_module
-            from pathlib import Path as PathType
-
-            from adversary_mcp_server.database.models import AdversaryDatabase
-            from adversary_mcp_server.telemetry.integration import (
-                MetricsCollectionOrchestrator,
-            )
-            from adversary_mcp_server.telemetry.service import TelemetryService
-
-            with temp_module.NamedTemporaryFile(suffix=".db", delete=False) as tmp_db:
-                test_db_path = PathType(tmp_db.name)
-
-            test_db = AdversaryDatabase(test_db_path)
-            test_telemetry = TelemetryService(test_db)
-            test_metrics_orchestrator = MetricsCollectionOrchestrator(test_telemetry)
-
             # Create ScanEngine and run directory scan
             scan_engine = ScanEngine(
                 credential_manager=mock_cm,
-                metrics_orchestrator=test_metrics_orchestrator,  # Provide explicit test database
                 enable_llm_analysis=False,
                 enable_semgrep_analysis=True,
                 enable_llm_validation=True,
@@ -447,31 +407,9 @@ class TestValidationRegression:
                 mock_validator.is_fully_functional.return_value = True
                 mock_validator_cls.return_value = mock_validator
 
-                # Create isolated test database
-                import tempfile as temp_module
-                from pathlib import Path as PathType
-
-                from adversary_mcp_server.database.models import AdversaryDatabase
-                from adversary_mcp_server.telemetry.integration import (
-                    MetricsCollectionOrchestrator,
-                )
-                from adversary_mcp_server.telemetry.service import TelemetryService
-
-                with temp_module.NamedTemporaryFile(
-                    suffix=".db", delete=False
-                ) as tmp_db:
-                    test_db_path = PathType(tmp_db.name)
-
-                test_db = AdversaryDatabase(test_db_path)
-                test_telemetry = TelemetryService(test_db)
-                test_metrics_orchestrator = MetricsCollectionOrchestrator(
-                    test_telemetry
-                )
-
                 # Create ScanEngine and run file scan with validation disabled
                 scan_engine = ScanEngine(
                     credential_manager=mock_cm,
-                    metrics_orchestrator=test_metrics_orchestrator,  # Provide explicit test database
                     enable_llm_analysis=False,
                     enable_semgrep_analysis=True,
                     enable_llm_validation=True,
@@ -539,27 +477,9 @@ class TestValidationRegression:
             mock_validator.is_fully_functional.return_value = True
             mock_validator_cls.return_value = mock_validator
 
-            # Create isolated test database
-            import tempfile as temp_module
-            from pathlib import Path as PathType
-
-            from adversary_mcp_server.database.models import AdversaryDatabase
-            from adversary_mcp_server.telemetry.integration import (
-                MetricsCollectionOrchestrator,
-            )
-            from adversary_mcp_server.telemetry.service import TelemetryService
-
-            with temp_module.NamedTemporaryFile(suffix=".db", delete=False) as tmp_db:
-                test_db_path = PathType(tmp_db.name)
-
-            test_db = AdversaryDatabase(test_db_path)
-            test_telemetry = TelemetryService(test_db)
-            test_metrics_orchestrator = MetricsCollectionOrchestrator(test_telemetry)
-
             # Create ScanEngine and run directory scan with validation disabled
             scan_engine = ScanEngine(
                 credential_manager=mock_cm,
-                metrics_orchestrator=test_metrics_orchestrator,  # Provide explicit test database
                 enable_llm_analysis=False,
                 enable_semgrep_analysis=True,
                 enable_llm_validation=True,
@@ -633,31 +553,9 @@ class TestValidationRegression:
                 # Make validator return None (unavailable)
                 mock_validator_cls.return_value = None
 
-                # Create isolated test database
-                import tempfile as temp_module
-                from pathlib import Path as PathType
-
-                from adversary_mcp_server.database.models import AdversaryDatabase
-                from adversary_mcp_server.telemetry.integration import (
-                    MetricsCollectionOrchestrator,
-                )
-                from adversary_mcp_server.telemetry.service import TelemetryService
-
-                with temp_module.NamedTemporaryFile(
-                    suffix=".db", delete=False
-                ) as tmp_db:
-                    test_db_path = PathType(tmp_db.name)
-
-                test_db = AdversaryDatabase(test_db_path)
-                test_telemetry = TelemetryService(test_db)
-                test_metrics_orchestrator = MetricsCollectionOrchestrator(
-                    test_telemetry
-                )
-
                 # Create ScanEngine
                 scan_engine = ScanEngine(
                     credential_manager=mock_cm,
-                    metrics_orchestrator=test_metrics_orchestrator,  # Provide explicit test database
                     enable_llm_analysis=False,
                     enable_semgrep_analysis=True,
                     enable_llm_validation=True,
@@ -743,31 +641,9 @@ class TestValidationRegression:
                 }
                 mock_validator.filter_false_positives.return_value = sample_threats[:2]
 
-                # Create isolated test database
-                import tempfile as temp_module
-                from pathlib import Path as PathType
-
-                from adversary_mcp_server.database.models import AdversaryDatabase
-                from adversary_mcp_server.telemetry.integration import (
-                    MetricsCollectionOrchestrator,
-                )
-                from adversary_mcp_server.telemetry.service import TelemetryService
-
-                with temp_module.NamedTemporaryFile(
-                    suffix=".db", delete=False
-                ) as tmp_db:
-                    test_db_path = PathType(tmp_db.name)
-
-                test_db = AdversaryDatabase(test_db_path)
-                test_telemetry = TelemetryService(test_db)
-                test_metrics_orchestrator = MetricsCollectionOrchestrator(
-                    test_telemetry
-                )
-
                 # Create ScanEngine
                 scan_engine = ScanEngine(
                     credential_manager=mock_cm,
-                    metrics_orchestrator=test_metrics_orchestrator,  # Provide explicit test database
                     enable_llm_analysis=False,
                     enable_semgrep_analysis=True,
                     enable_llm_validation=True,

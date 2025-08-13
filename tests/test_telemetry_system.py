@@ -352,9 +352,7 @@ class TestMetricsCollectionOrchestrator:
 
         # Create a mock function to wrap
         @metrics_orchestrator.mcp_tool_wrapper("test_tool")
-        async def mock_mcp_tool(
-            content="test", use_llm=False, use_validation=True, **kwargs
-        ):
+        async def mock_mcp_tool(content="test", use_llm=False, use_validation=True):
             return {"findings": ["finding1", "finding2"]}
 
         # Execute the wrapped function
@@ -526,7 +524,7 @@ class TestTelemetryIntegration:
 
         @metrics_orchestrator.mcp_tool_wrapper("adv_scan_file")
         async def mock_scan_file(
-            path="/test/file.py", use_llm=True, use_validation=True, **kwargs
+            path="/test/file.py", use_llm=True, use_validation=True
         ):
             # Simulate scan execution with context
             with metrics_orchestrator.track_scan_execution(

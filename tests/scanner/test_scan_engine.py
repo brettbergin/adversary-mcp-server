@@ -549,27 +549,8 @@ class TestScanEngine:
             return_value=[]
         )  # Client-based approach returns empty list
 
-        # Create test database with proper schema
-        import tempfile
-        from pathlib import Path
-
-        from adversary_mcp_server.database.models import AdversaryDatabase
-        from adversary_mcp_server.telemetry.integration import (
-            MetricsCollectionOrchestrator,
-        )
-        from adversary_mcp_server.telemetry.service import TelemetryService
-
-        # Create isolated test database
-        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp_file:
-            test_db_path = Path(tmp_file.name)
-
-        test_db = AdversaryDatabase(test_db_path)
-        test_telemetry = TelemetryService(test_db)
-        test_metrics_orchestrator = MetricsCollectionOrchestrator(test_telemetry)
-
         scanner = ScanEngine(
             credential_manager=mock_credential_manager,
-            metrics_orchestrator=test_metrics_orchestrator,  # Provide explicit test database
             enable_llm_analysis=True,
             enable_semgrep_analysis=True,
             enable_llm_validation=False,  # Disable validation for this test
@@ -595,14 +576,6 @@ class TestScanEngine:
         assert result.scan_metadata["llm_scan_success"] is True
         # Verify LLM scan was completed successfully with analysis completed
         assert result.scan_metadata.get("llm_scan_reason") == "analysis_completed"
-
-        # Cleanup test database
-        import os
-
-        try:
-            os.unlink(test_db_path)
-        except OSError:
-            pass  # File might not exist or be locked
 
         # Verify the scanners were set up correctly
         mock_semgrep_instance.scan_code.assert_called_once()
@@ -1231,26 +1204,8 @@ class TestScanEngine:
         mock_llm_instance.analyze_file = AsyncMock(return_value=[mock_finding])
         mock_llm_scanner.return_value = mock_llm_instance
 
-        # Create isolated test database
-        import tempfile
-        from pathlib import Path
-
-        from adversary_mcp_server.database.models import AdversaryDatabase
-        from adversary_mcp_server.telemetry.integration import (
-            MetricsCollectionOrchestrator,
-        )
-        from adversary_mcp_server.telemetry.service import TelemetryService
-
-        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp_file:
-            test_db_path = Path(tmp_file.name)
-
-        test_db = AdversaryDatabase(test_db_path)
-        test_telemetry = TelemetryService(test_db)
-        test_metrics_orchestrator = MetricsCollectionOrchestrator(test_telemetry)
-
         scanner = ScanEngine(
             credential_manager=mock_credential_manager,
-            metrics_orchestrator=test_metrics_orchestrator,  # Provide explicit test database
             cache_manager=None,  # Disable cache for this test
             enable_llm_analysis=True,
             enable_llm_validation=False,  # Disable validation for this test
@@ -1339,26 +1294,8 @@ class TestScanEngine:
         )
         mock_llm_scanner.return_value = mock_llm_instance
 
-        # Create isolated test database
-        import tempfile
-        from pathlib import Path
-
-        from adversary_mcp_server.database.models import AdversaryDatabase
-        from adversary_mcp_server.telemetry.integration import (
-            MetricsCollectionOrchestrator,
-        )
-        from adversary_mcp_server.telemetry.service import TelemetryService
-
-        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp_file:
-            test_db_path = Path(tmp_file.name)
-
-        test_db = AdversaryDatabase(test_db_path)
-        test_telemetry = TelemetryService(test_db)
-        test_metrics_orchestrator = MetricsCollectionOrchestrator(test_telemetry)
-
         scanner = ScanEngine(
             credential_manager=mock_credential_manager,
-            metrics_orchestrator=test_metrics_orchestrator,  # Provide explicit test database
             cache_manager=None,  # Disable cache
             enable_llm_analysis=True,
             enable_llm_validation=False,  # Disable validation
@@ -1542,26 +1479,8 @@ class TestScanEngine:
             mock_llm_instance.analyze_files = AsyncMock(return_value=[mock_finding])
             mock_llm_instance.analyze_code = AsyncMock(return_value=[mock_finding])
 
-            # Create isolated test database
-            import tempfile as temp_module
-            from pathlib import Path as PathType
-
-            from adversary_mcp_server.database.models import AdversaryDatabase
-            from adversary_mcp_server.telemetry.integration import (
-                MetricsCollectionOrchestrator,
-            )
-            from adversary_mcp_server.telemetry.service import TelemetryService
-
-            with temp_module.NamedTemporaryFile(suffix=".db", delete=False) as tmp_file:
-                test_db_path = PathType(tmp_file.name)
-
-            test_db = AdversaryDatabase(test_db_path)
-            test_telemetry = TelemetryService(test_db)
-            test_metrics_orchestrator = MetricsCollectionOrchestrator(test_telemetry)
-
             scanner = ScanEngine(
                 credential_manager=mock_credential_manager,
-                metrics_orchestrator=test_metrics_orchestrator,  # Provide explicit test database
                 enable_llm_analysis=True,
                 enable_llm_validation=False,  # Disable validation for this test
             )
@@ -2383,26 +2302,8 @@ class TestScanEngineValidation:
         }
         mock_llm_validator_class.return_value = mock_validator_instance
 
-        # Create isolated test database
-        import tempfile as temp_module
-        from pathlib import Path as PathType
-
-        from adversary_mcp_server.database.models import AdversaryDatabase
-        from adversary_mcp_server.telemetry.integration import (
-            MetricsCollectionOrchestrator,
-        )
-        from adversary_mcp_server.telemetry.service import TelemetryService
-
-        with temp_module.NamedTemporaryFile(suffix=".db", delete=False) as tmp_file:
-            test_db_path = PathType(tmp_file.name)
-
-        test_db = AdversaryDatabase(test_db_path)
-        test_telemetry = TelemetryService(test_db)
-        test_metrics_orchestrator = MetricsCollectionOrchestrator(test_telemetry)
-
         scanner = ScanEngine(
             credential_manager=mock_credential_manager,
-            metrics_orchestrator=test_metrics_orchestrator,  # Provide explicit test database
             enable_llm_analysis=False,
             enable_semgrep_analysis=True,
             enable_llm_validation=True,
@@ -2486,27 +2387,9 @@ class TestScanEngineModularArchitecture:
         mock_semgrep_instance.scan_code = AsyncMock(return_value=realistic_threats)
         mock_semgrep_scanner.return_value = mock_semgrep_instance
 
-        # Create isolated test database
-        import tempfile as temp_module
-        from pathlib import Path as PathType
-
-        from adversary_mcp_server.database.models import AdversaryDatabase
-        from adversary_mcp_server.telemetry.integration import (
-            MetricsCollectionOrchestrator,
-        )
-        from adversary_mcp_server.telemetry.service import TelemetryService
-
-        with temp_module.NamedTemporaryFile(suffix=".db", delete=False) as tmp_file:
-            test_db_path = PathType(tmp_file.name)
-
-        test_db = AdversaryDatabase(test_db_path)
-        test_telemetry = TelemetryService(test_db)
-        test_metrics_orchestrator = MetricsCollectionOrchestrator(test_telemetry)
-
         # Create ScanEngine (which should internally create modular components)
         scanner = ScanEngine(
             credential_manager=mock_credential_manager,
-            metrics_orchestrator=test_metrics_orchestrator,  # Provide explicit test database
             enable_llm_analysis=False,
             enable_semgrep_analysis=True,
             enable_llm_validation=False,
@@ -2617,26 +2500,8 @@ class TestScanEngineModularArchitecture:
         mock_semgrep_instance.scan_code = AsyncMock(return_value=mixed_threats)
         mock_semgrep_scanner.return_value = mock_semgrep_instance
 
-        # Create isolated test database
-        import tempfile as temp_module
-        from pathlib import Path as PathType
-
-        from adversary_mcp_server.database.models import AdversaryDatabase
-        from adversary_mcp_server.telemetry.integration import (
-            MetricsCollectionOrchestrator,
-        )
-        from adversary_mcp_server.telemetry.service import TelemetryService
-
-        with temp_module.NamedTemporaryFile(suffix=".db", delete=False) as tmp_file:
-            test_db_path = PathType(tmp_file.name)
-
-        test_db = AdversaryDatabase(test_db_path)
-        test_telemetry = TelemetryService(test_db)
-        test_metrics_orchestrator = MetricsCollectionOrchestrator(test_telemetry)
-
         scanner = ScanEngine(
             credential_manager=mock_credential_manager,
-            metrics_orchestrator=test_metrics_orchestrator,  # Provide explicit test database
             enable_llm_analysis=False,
             enable_semgrep_analysis=True,
             enable_llm_validation=False,
@@ -2726,26 +2591,8 @@ def xss_function(user_data):
         mock_semgrep_instance.scan_file = AsyncMock(return_value=file_threats)
         mock_semgrep_scanner.return_value = mock_semgrep_instance
 
-        # Create isolated test database
-        import tempfile as temp_module
-        from pathlib import Path as PathType
-
-        from adversary_mcp_server.database.models import AdversaryDatabase
-        from adversary_mcp_server.telemetry.integration import (
-            MetricsCollectionOrchestrator,
-        )
-        from adversary_mcp_server.telemetry.service import TelemetryService
-
-        with temp_module.NamedTemporaryFile(suffix=".db", delete=False) as tmp_file:
-            test_db_path = PathType(tmp_file.name)
-
-        test_db = AdversaryDatabase(test_db_path)
-        test_telemetry = TelemetryService(test_db)
-        test_metrics_orchestrator = MetricsCollectionOrchestrator(test_telemetry)
-
         scanner = ScanEngine(
             credential_manager=mock_credential_manager,
-            metrics_orchestrator=test_metrics_orchestrator,  # Provide explicit test database
             enable_llm_analysis=False,
             enable_semgrep_analysis=True,
             enable_llm_validation=False,
@@ -2866,26 +2713,8 @@ def xss_function(user_data):
         )
         mock_llm_validator_class.return_value = mock_validator_instance
 
-        # Create isolated test database
-        import tempfile as temp_module
-        from pathlib import Path as PathType
-
-        from adversary_mcp_server.database.models import AdversaryDatabase
-        from adversary_mcp_server.telemetry.integration import (
-            MetricsCollectionOrchestrator,
-        )
-        from adversary_mcp_server.telemetry.service import TelemetryService
-
-        with temp_module.NamedTemporaryFile(suffix=".db", delete=False) as tmp_file:
-            test_db_path = PathType(tmp_file.name)
-
-        test_db = AdversaryDatabase(test_db_path)
-        test_telemetry = TelemetryService(test_db)
-        test_metrics_orchestrator = MetricsCollectionOrchestrator(test_telemetry)
-
         scanner = ScanEngine(
             credential_manager=mock_credential_manager,
-            metrics_orchestrator=test_metrics_orchestrator,  # Provide explicit test database
             enable_llm_analysis=False,
             enable_semgrep_analysis=True,
             enable_llm_validation=True,
@@ -2960,26 +2789,8 @@ def xss_function(user_data):
         mock_semgrep_instance.scan_code = AsyncMock(return_value=cache_threats)
         mock_semgrep_scanner.return_value = mock_semgrep_instance
 
-        # Create isolated test database
-        import tempfile as temp_module
-        from pathlib import Path as PathType
-
-        from adversary_mcp_server.database.models import AdversaryDatabase
-        from adversary_mcp_server.telemetry.integration import (
-            MetricsCollectionOrchestrator,
-        )
-        from adversary_mcp_server.telemetry.service import TelemetryService
-
-        with temp_module.NamedTemporaryFile(suffix=".db", delete=False) as tmp_file:
-            test_db_path = PathType(tmp_file.name)
-
-        test_db = AdversaryDatabase(test_db_path)
-        test_telemetry = TelemetryService(test_db)
-        test_metrics_orchestrator = MetricsCollectionOrchestrator(test_telemetry)
-
         scanner = ScanEngine(
             credential_manager=mock_credential_manager,
-            metrics_orchestrator=test_metrics_orchestrator,  # Provide explicit test database
             enable_llm_analysis=False,
             enable_semgrep_analysis=True,
             enable_llm_validation=False,
@@ -3682,27 +3493,7 @@ class TestScanEngineErrorHandling:
             mock_semgrep.scan_code.return_value = []
             mock_semgrep_class.return_value = mock_semgrep
 
-            # Create isolated test database
-            import tempfile as temp_module
-            from pathlib import Path as PathType
-
-            from adversary_mcp_server.database.models import AdversaryDatabase
-            from adversary_mcp_server.telemetry.integration import (
-                MetricsCollectionOrchestrator,
-            )
-            from adversary_mcp_server.telemetry.service import TelemetryService
-
-            with temp_module.NamedTemporaryFile(suffix=".db", delete=False) as tmp_file:
-                test_db_path = PathType(tmp_file.name)
-
-            test_db = AdversaryDatabase(test_db_path)
-            test_telemetry = TelemetryService(test_db)
-            test_metrics_orchestrator = MetricsCollectionOrchestrator(test_telemetry)
-
-            engine = ScanEngine(
-                credential_manager=mock_cm,
-                metrics_orchestrator=test_metrics_orchestrator,  # Provide explicit test database
-            )
+            engine = ScanEngine(mock_cm)
             result = await engine.scan_code("test code", "test.py", use_validation=True)
 
             assert isinstance(result, EnhancedScanResult)

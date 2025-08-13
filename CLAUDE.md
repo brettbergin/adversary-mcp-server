@@ -304,5 +304,3 @@ Full command-line interface with validation support:
 - use your Bash and my MCP tools as part of the testing when I call for a symmetry test.
 
 - Please do not use any inline import statement. All imports should go at the top of the file and be ordered with pythonic order.
-
-- No raw SQL statements are allowed in this codebase. every database interaction must use sqlalchemy.

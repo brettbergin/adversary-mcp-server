@@ -646,12 +646,6 @@ class AdversaryMCPServer:
                 f"Code scan completed - found {len(scan_result.all_threats)} threats"
             )
 
-            # Report findings count to telemetry if context is available
-            if "_telemetry_context" in arguments:
-                arguments["_telemetry_context"].report_findings_count(
-                    len(scan_result.all_threats)
-                )
-
             # Generate exploits if requested
             if include_exploits:
                 logger.info("Generating exploits for discovered threats...")
@@ -783,19 +777,6 @@ class AdversaryMCPServer:
             logger.info(
                 f"File scan completed - found {len(scan_result.all_threats)} threats"
             )
-
-            # Report findings count to telemetry if context is available
-            if "_telemetry_context" in arguments:
-                logger.info(
-                    f"Reporting {len(scan_result.all_threats)} findings to telemetry context"
-                )
-                arguments["_telemetry_context"].report_findings_count(
-                    len(scan_result.all_threats)
-                )
-            else:
-                logger.warning(
-                    "No telemetry context available in file scan - findings count will not be tracked"
-                )
 
             # Generate exploits if requested
             if include_exploits:
@@ -945,10 +926,6 @@ class AdversaryMCPServer:
 
             logger.info(f"Total threats found across all files: {len(all_threats)}")
 
-            # Report findings count to telemetry if context is available
-            if "_telemetry_context" in arguments:
-                arguments["_telemetry_context"].report_findings_count(len(all_threats))
-
             # Generate exploits if requested (limited for directory scans)
             if include_exploits:
                 logger.info(
@@ -1089,14 +1066,6 @@ class AdversaryMCPServer:
             for file_path, file_scan_results in scan_results.items():
                 for scan_result in file_scan_results:
                     all_threats.extend(scan_result.all_threats)
-
-            logger.info(
-                f"Diff scan completed - found {len(all_threats)} threats in changes"
-            )
-
-            # Report findings count to telemetry if context is available
-            if "_telemetry_context" in arguments:
-                arguments["_telemetry_context"].report_findings_count(len(all_threats))
 
             # Generate exploits if requested
             if include_exploits:
@@ -1326,9 +1295,7 @@ class AdversaryMCPServer:
         )
         return await wrapped_handler()
 
-    async def _handle_get_status_impl(
-        self, _telemetry_context=None
-    ) -> list[types.TextContent]:
+    async def _handle_get_status_impl(self) -> list[types.TextContent]:
         """Handle get status request."""
         try:
             logger.info("Getting server status")
@@ -1377,9 +1344,7 @@ class AdversaryMCPServer:
         )
         return await wrapped_handler()
 
-    async def _handle_get_version_impl(
-        self, _telemetry_context=None
-    ) -> list[types.TextContent]:
+    async def _handle_get_version_impl(self) -> list[types.TextContent]:
         """Handle get version request."""
         try:
             version = self._get_version()
@@ -1412,9 +1377,7 @@ class AdversaryMCPServer:
         )
         return await wrapped_handler()
 
-    async def _handle_clear_cache_impl(
-        self, _telemetry_context=None
-    ) -> list[types.TextContent]:
+    async def _handle_clear_cache_impl(self) -> list[types.TextContent]:
         """Handle clear cache request."""
         try:
             logger.info("Starting cache clearing process")
