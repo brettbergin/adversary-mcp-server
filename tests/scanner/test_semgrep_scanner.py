@@ -895,33 +895,6 @@ class TestSemgrepScannerEdgeCases:
             assert len(hash1) == 64  # SHA256 hex length
 
     @pytest.mark.asyncio
-    async def test_perform_scan_timeout_error(self):
-        """Test _perform_scan with timeout."""
-        scanner = SemgrepScanner()
-
-        with patch.object(scanner, "_find_semgrep", return_value="semgrep"):
-            with patch("tempfile.NamedTemporaryFile") as mock_temp:
-                mock_file = MagicMock()
-                mock_file.name = "/tmp/test.py"
-                mock_temp.return_value.__enter__.return_value = mock_file
-
-                with patch("asyncio.create_subprocess_exec") as mock_create:
-                    mock_proc = AsyncMock()
-                    mock_proc.returncode = (
-                        None  # Process still running when timeout occurs
-                    )
-                    mock_create.return_value = mock_proc
-
-                    with patch("asyncio.wait_for", side_effect=[TimeoutError(), None]):
-                        findings = await scanner._perform_scan(
-                            "code", "test.py", "python", 30
-                        )
-
-                        assert findings == []
-                        # Should terminate the process on timeout
-                        mock_proc.terminate.assert_called_once()
-
-    @pytest.mark.asyncio
     async def test_perform_scan_json_decode_error(self):
         """Test _perform_scan with JSON parse error."""
         scanner = SemgrepScanner()
@@ -935,15 +908,12 @@ class TestSemgrepScannerEdgeCases:
                 with patch("asyncio.create_subprocess_exec") as mock_create:
                     mock_proc = AsyncMock()
                     mock_proc.returncode = 0
+                    mock_proc.communicate.return_value = (b"invalid json", b"")
                     mock_create.return_value = mock_proc
 
-                    # Return invalid JSON
-                    with patch("asyncio.wait_for", return_value=(b"invalid json", b"")):
-                        findings = await scanner._perform_scan(
-                            "code", "test.py", "python", 30
-                        )
+                    findings = await scanner._perform_scan("code", "test.py", "python")
 
-                        assert findings == []
+                    assert findings == []
 
     @pytest.mark.asyncio
     async def test_perform_scan_nonzero_returncode(self):
@@ -959,16 +929,12 @@ class TestSemgrepScannerEdgeCases:
                 with patch("asyncio.create_subprocess_exec") as mock_create:
                     mock_proc = AsyncMock()
                     mock_proc.returncode = 1
+                    mock_proc.communicate.return_value = (b"", b"Error occurred")
                     mock_create.return_value = mock_proc
 
-                    with patch(
-                        "asyncio.wait_for", return_value=(b"", b"Error occurred")
-                    ):
-                        findings = await scanner._perform_scan(
-                            "code", "test.py", "python", 30
-                        )
+                    findings = await scanner._perform_scan("code", "test.py", "python")
 
-                        assert findings == []
+                    assert findings == []
 
     @pytest.mark.asyncio
     async def test_perform_scan_temp_file_cleanup(self):
@@ -986,18 +952,16 @@ class TestSemgrepScannerEdgeCases:
                     with patch("asyncio.create_subprocess_exec") as mock_create:
                         mock_proc = AsyncMock()
                         mock_proc.returncode = 0
+                        mock_proc.communicate.return_value = (b"invalid json", b"")
                         mock_create.return_value = mock_proc
 
                         # Simulate JSON decode error which is caught
-                        with patch(
-                            "asyncio.wait_for", return_value=(b"invalid json", b"")
-                        ):
-                            findings = await scanner._perform_scan(
-                                "code", "test.py", "python", 30
-                            )
+                        findings = await scanner._perform_scan(
+                            "code", "test.py", "python"
+                        )
 
-                            assert findings == []
-                            mock_unlink.assert_called_with("/tmp/test.py")
+                        assert findings == []
+                        mock_unlink.assert_called_with("/tmp/test.py")
 
     @pytest.mark.asyncio
     async def test_perform_scan_unlink_oserror(self):
@@ -1013,37 +977,33 @@ class TestSemgrepScannerEdgeCases:
                 with patch("asyncio.create_subprocess_exec") as mock_create:
                     mock_proc = AsyncMock()
                     mock_proc.returncode = 0
+                    mock_proc.communicate.return_value = (b'{"results": []}', b"")
                     mock_create.return_value = mock_proc
 
-                    with patch(
-                        "asyncio.wait_for", return_value=(b'{"results": []}', b"")
-                    ):
-                        with patch("os.unlink", side_effect=OSError("Delete failed")):
-                            # Should not raise exception even if unlink fails
-                            findings = await scanner._perform_scan(
-                                "code", "test.py", "python", 30
-                            )
+                    with patch("os.unlink", side_effect=OSError("Delete failed")):
+                        # Should not raise exception even if unlink fails
+                        findings = await scanner._perform_scan(
+                            "code", "test.py", "python"
+                        )
 
-                            assert findings == []
+                        assert findings == []
 
     @pytest.mark.asyncio
-    async def test_perform_directory_scan_timeout(self):
-        """Test _perform_directory_scan with timeout."""
+    async def test_perform_directory_scan_process_termination(self):
+        """Test _perform_directory_scan handles process termination correctly."""
         scanner = SemgrepScanner()
 
         with patch.object(scanner, "_find_semgrep", return_value="semgrep"):
             with patch("asyncio.create_subprocess_exec") as mock_create:
                 mock_proc = AsyncMock()
-                mock_proc.returncode = None  # Process still running when timeout occurs
+                mock_proc.returncode = None  # Process still running
+                mock_proc.communicate.return_value = (b'{"results": []}', b"")
                 mock_create.return_value = mock_proc
 
-                with patch("asyncio.wait_for", side_effect=[TimeoutError(), None]):
-                    findings = await scanner._perform_directory_scan(
-                        "/test/dir", 60, True
-                    )
+                findings = await scanner._perform_directory_scan("/test/dir", True)
 
-                    assert findings == []
-                    mock_proc.terminate.assert_called_once()
+                assert findings == []
+                mock_proc.terminate.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_perform_directory_scan_json_error(self):
@@ -1054,14 +1014,12 @@ class TestSemgrepScannerEdgeCases:
             with patch("asyncio.create_subprocess_exec") as mock_create:
                 mock_proc = AsyncMock()
                 mock_proc.returncode = 0
+                mock_proc.communicate.return_value = (b"malformed json", b"")
                 mock_create.return_value = mock_proc
 
-                with patch("asyncio.wait_for", return_value=(b"malformed json", b"")):
-                    findings = await scanner._perform_directory_scan(
-                        "/test/dir", 60, True
-                    )
+                findings = await scanner._perform_directory_scan("/test/dir", True)
 
-                    assert findings == []
+                assert findings == []
 
     @pytest.mark.asyncio
     async def test_perform_directory_scan_recursive_flag(self):
@@ -1072,15 +1030,15 @@ class TestSemgrepScannerEdgeCases:
             with patch("asyncio.create_subprocess_exec") as mock_create:
                 mock_proc = AsyncMock()
                 mock_proc.returncode = 0
+                mock_proc.communicate.return_value = (b'{"results": []}', b"")
                 mock_create.return_value = mock_proc
 
-                with patch("asyncio.wait_for", return_value=(b'{"results": []}', b"")):
-                    # Test non-recursive scan
-                    await scanner._perform_directory_scan("/test/dir", 60, False)
+                # Test non-recursive scan
+                await scanner._perform_directory_scan("/test/dir", False)
 
-                    # Should include --max-depth=1 in command
-                    call_args = mock_create.call_args[0]  # Get positional args
-                    assert "--max-depth=1" in call_args
+                # Should include --max-depth=1 in command
+                call_args = mock_create.call_args[0]  # Get positional args
+                assert "--max-depth=1" in call_args
 
     def test_get_extension_for_language_edge_cases(self):
         """Test _get_extension_for_language with edge cases."""

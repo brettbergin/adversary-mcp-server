@@ -314,9 +314,6 @@ class ConfigManager:
         config.semgrep_rules = os.getenv(
             "ADVERSARY_SEMGREP_RULES", config.semgrep_rules
         )
-        config.semgrep_timeout = self._get_env_int(
-            "ADVERSARY_SEMGREP_TIMEOUT", config.semgrep_timeout
-        )
         config.semgrep_api_key = os.getenv(
             "ADVERSARY_SEMGREP_API_KEY", config.semgrep_api_key
         )

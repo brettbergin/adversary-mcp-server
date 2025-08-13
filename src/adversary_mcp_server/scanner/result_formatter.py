@@ -911,13 +911,17 @@ class ScanResultFormatter:
             }
 
         try:
-            # Get recent dashboard data (last hour for current scan context)
-            dashboard_data = self.telemetry_service.get_dashboard_data(hours=1)
+            # Get recent dashboard data (last 24 hours for better coverage)
+            dashboard_data = self.telemetry_service.get_dashboard_data(hours=24)
+            logger.debug(
+                f"Retrieved dashboard data: scan_engine={dashboard_data.get('scan_engine', {})}"
+            )
 
             # Extract LLM metrics from scan engine data
             scan_engine = dashboard_data.get("scan_engine", {})
 
             total_scans = scan_engine.get("total_scans", 0)
+            logger.debug(f"Found {total_scans} total scans in telemetry data")
 
             # If no recent scans, return disabled state
             if total_scans == 0:
@@ -1017,8 +1021,9 @@ class ScanResultFormatter:
             }
 
         try:
-            dashboard_data = self.telemetry_service.get_dashboard_data(hours=1)
+            dashboard_data = self.telemetry_service.get_dashboard_data(hours=24)
             scan_engine = dashboard_data.get("scan_engine", {})
+            logger.debug(f"Semgrep summary: scan_engine data = {scan_engine}")
 
             total_scans = scan_engine.get("total_scans", 0)
             avg_semgrep_duration = scan_engine.get("avg_semgrep_duration_ms", 0)
@@ -1056,7 +1061,7 @@ class ScanResultFormatter:
             }
 
         try:
-            dashboard_data = self.telemetry_service.get_dashboard_data(hours=1)
+            dashboard_data = self.telemetry_service.get_dashboard_data(hours=24)
             scan_engine = dashboard_data.get("scan_engine", {})
 
             total_scans = scan_engine.get("total_scans", 0)

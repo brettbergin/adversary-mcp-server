@@ -25,7 +25,6 @@ def create_mock_credential_manager_with_validation():
     mock_config.enable_llm_validation = True  # Enable validation
     mock_config.semgrep_config = None
     mock_config.semgrep_rules = None
-    mock_config.semgrep_timeout = 60
     mock_config.max_file_size_mb = 10
     mock_config.llm_provider = "anthropic"
     mock_config.llm_api_key = "test-key"

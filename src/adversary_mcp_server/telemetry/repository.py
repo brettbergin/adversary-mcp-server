@@ -336,11 +336,13 @@ class ComprehensiveTelemetryRepository:
                     "avg_total_duration"
                 ),
                 func.avg(ScanEngineExecution.semgrep_duration_ms).label(
-                    "avg_semgrep_duration"
+                    "avg_semgrep_duration_ms"
                 ),
-                func.avg(ScanEngineExecution.llm_duration_ms).label("avg_llm_duration"),
+                func.avg(ScanEngineExecution.llm_duration_ms).label(
+                    "avg_llm_duration_ms"
+                ),
                 func.avg(ScanEngineExecution.validation_duration_ms).label(
-                    "avg_validation_duration"
+                    "avg_validation_duration_ms"
                 ),
                 func.sum(ScanEngineExecution.threats_found).label("total_threats"),
                 func.sum(ScanEngineExecution.threats_validated).label(
@@ -426,10 +428,12 @@ class ComprehensiveTelemetryRepository:
             "scan_engine": {
                 "total_scans": scan_stats.total_scans or 0,
                 "avg_total_duration_ms": float(scan_stats.avg_total_duration or 0),
-                "avg_semgrep_duration_ms": float(scan_stats.avg_semgrep_duration or 0),
-                "avg_llm_duration_ms": float(scan_stats.avg_llm_duration or 0),
+                "avg_semgrep_duration_ms": float(
+                    scan_stats.avg_semgrep_duration_ms or 0
+                ),
+                "avg_llm_duration_ms": float(scan_stats.avg_llm_duration_ms or 0),
                 "avg_validation_duration_ms": float(
-                    scan_stats.avg_validation_duration or 0
+                    scan_stats.avg_validation_duration_ms or 0
                 ),
                 "total_threats_found": scan_stats.total_threats or 0,
                 "total_threats_validated": scan_stats.total_validated or 0,

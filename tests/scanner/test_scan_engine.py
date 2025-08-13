@@ -24,7 +24,6 @@ def create_mock_credential_manager():
     mock_config.enable_semgrep_scanning = True
     mock_config.semgrep_config = None
     mock_config.semgrep_rules = None
-    mock_config.semgrep_timeout = 60
     mock_config.max_file_size_mb = 10
     mock_config.llm_provider = None  # Set to None to avoid LLM client initialization
     mock_config.llm_api_key = None
@@ -508,7 +507,6 @@ class TestScanEngine:
         mock_config.enable_semgrep_scanning = True
         mock_config.semgrep_config = None
         mock_config.semgrep_rules = None
-        mock_config.semgrep_timeout = 60
         mock_config.max_file_size_mb = 10  # Add required attribute for FileFilter
         mock_credential_manager.load_config.return_value = mock_config
 
@@ -610,7 +608,6 @@ class TestScanEngine:
         mock_config.enable_semgrep_scanning = True
         mock_config.semgrep_config = None
         mock_config.semgrep_rules = None
-        mock_config.semgrep_timeout = 60
         mock_config.max_file_size_mb = 10  # Add required attribute for FileFilter
         # Add caching configuration for test
         mock_config.enable_caching = False  # Disable caching in tests
@@ -671,7 +668,6 @@ class TestScanEngine:
         mock_config.enable_semgrep_scanning = True
         mock_config.semgrep_config = None
         mock_config.semgrep_rules = None
-        mock_config.semgrep_timeout = 60
         mock_config.max_file_size_mb = 10  # Add required attribute for FileFilter
         mock_credential_manager.load_config.return_value = mock_config
 
@@ -763,7 +759,6 @@ class TestScanEngine:
         mock_config.enable_semgrep_scanning = True
         mock_config.semgrep_config = None
         mock_config.semgrep_rules = None
-        mock_config.semgrep_timeout = 60
         mock_config.max_file_size_mb = 10  # Add required attribute for FileFilter
         mock_config.enable_caching = False  # Disable caching to prevent hangs
         mock_credential_manager.load_config.return_value = mock_config
@@ -861,7 +856,6 @@ class TestScanEngine:
         mock_config.enable_semgrep_scanning = True
         mock_config.semgrep_config = None
         mock_config.semgrep_rules = None
-        mock_config.semgrep_timeout = 60
         mock_config.max_file_size_mb = 10  # Add required attribute for FileFilter
         mock_credential_manager.load_config.return_value = mock_config
 
@@ -1597,7 +1591,6 @@ class TestScanEngine:
         mock_config.enable_semgrep_scanning = True
         mock_config.semgrep_config = None
         mock_config.semgrep_rules = None
-        mock_config.semgrep_timeout = 60
         mock_config.max_file_size_mb = 10  # Add required attribute for FileFilter
         mock_credential_manager.load_config.return_value = mock_config
 
@@ -1783,7 +1776,6 @@ class TestScanEngine:
         mock_config.enable_semgrep_scanning = True
         mock_config.semgrep_config = None
         mock_config.semgrep_rules = None
-        mock_config.semgrep_timeout = 60
         mock_config.max_file_size_mb = 10  # Add required attribute for FileFilter
         mock_credential_manager.load_config.return_value = mock_config
 
@@ -2183,7 +2175,6 @@ class TestScanEngine:
         mock_config.enable_semgrep_scanning = True
         mock_config.semgrep_config = None
         mock_config.semgrep_rules = None
-        mock_config.semgrep_timeout = 60
         mock_config.max_file_size_mb = 10  # Add required attribute for FileFilter
         mock_credential_manager.load_config.return_value = mock_config
 
@@ -2255,7 +2246,6 @@ class TestScanEngineValidation:
         mock_config.enable_semgrep_scanning = True
         mock_config.semgrep_config = None
         mock_config.semgrep_rules = None
-        mock_config.semgrep_timeout = 60
         mock_config.max_file_size_mb = 10  # Add required attribute for FileFilter
         mock_credential_manager.load_config.return_value = mock_config
 
@@ -2360,7 +2350,6 @@ class TestScanEngineModularArchitecture:
         mock_config.enable_semgrep_scanning = True
         mock_config.semgrep_config = None
         mock_config.semgrep_rules = None
-        mock_config.semgrep_timeout = 60
         mock_config.max_file_size_mb = 10
         mock_credential_manager.load_config.return_value = mock_config
 
@@ -2455,7 +2444,6 @@ class TestScanEngineModularArchitecture:
         mock_config.exploit_safety_mode = True
         mock_config.llm_provider = None
         mock_config.enable_semgrep_scanning = True
-        mock_config.semgrep_timeout = 60
         mock_config.max_file_size_mb = 10
         mock_credential_manager.load_config.return_value = mock_config
 
@@ -2553,7 +2541,6 @@ class TestScanEngineModularArchitecture:
         mock_config.exploit_safety_mode = True
         mock_config.llm_provider = None
         mock_config.enable_semgrep_scanning = True
-        mock_config.semgrep_timeout = 60
         mock_config.max_file_size_mb = 10
         mock_credential_manager.load_config.return_value = mock_config
 
@@ -2660,7 +2647,6 @@ def xss_function(user_data):
         mock_config.llm_batch_size = 5
         mock_config.llm_max_tokens = 4000
         mock_config.enable_semgrep_scanning = True
-        mock_config.semgrep_timeout = 60
         mock_config.max_file_size_mb = 10
         mock_credential_manager.load_config.return_value = mock_config
 
@@ -2777,7 +2763,6 @@ def xss_function(user_data):
         mock_config.exploit_safety_mode = True
         mock_config.llm_provider = None
         mock_config.enable_semgrep_scanning = True
-        mock_config.semgrep_timeout = 60
         mock_config.max_file_size_mb = 10
         mock_credential_manager.load_config.return_value = mock_config
 
@@ -3266,7 +3251,7 @@ class TestScanEngineStreamingIntegration:
             mock_tempfile.return_value = []
 
             # Large content should use stdin streaming
-            asyncio.run(scanner._perform_scan(large_content, "test.py", "python", 60))
+            asyncio.run(scanner._perform_scan(large_content, "test.py", "python"))
             mock_stdin.assert_called_once()
             mock_tempfile.assert_not_called()
 
@@ -3275,7 +3260,7 @@ class TestScanEngineStreamingIntegration:
             mock_tempfile.reset_mock()
 
             # Small content should use temp file
-            asyncio.run(scanner._perform_scan(small_content, "test.py", "python", 60))
+            asyncio.run(scanner._perform_scan(small_content, "test.py", "python"))
             mock_tempfile.assert_called_once()
             mock_stdin.assert_not_called()
 

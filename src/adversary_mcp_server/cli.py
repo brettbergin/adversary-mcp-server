@@ -626,6 +626,25 @@ def status():
             semgrep_status = "✗ Not Available"
 
         config_table.add_row("Semgrep Status", semgrep_status)
+
+        # Add dedicated Semgrep capability row
+        if semgrep_available:
+            pro_status = scan_engine.semgrep_scanner.get_pro_status()
+            if pro_status["is_pro_user"] is True:
+                capability = f"Professional ({pro_status.get('subscription_type', 'Unknown').title()})"
+            elif pro_status["is_pro_user"] is False:
+                if pro_status["authentication_status"] == "authenticated":
+                    capability = "Community (Authenticated)"
+                elif pro_status["authentication_status"] == "failed":
+                    capability = "Community (Auth Failed)"
+                else:
+                    capability = "Community (Anonymous)"
+            else:
+                capability = "Unknown"
+        else:
+            capability = "Not Available"
+
+        config_table.add_row("Semgrep Capability", capability)
         # LLM Configuration details
         is_llm_valid, llm_error = config.validate_llm_configuration()
         if config.llm_provider:

@@ -76,7 +76,6 @@ class SecurityConfig:
     # Semgrep configuration (auto-detects from environment)
     semgrep_config: str | None = None  # Custom config path (optional)
     semgrep_rules: str | None = None  # Specific rules (default: auto)
-    semgrep_timeout: int = 60  # Timeout per scan in seconds
     semgrep_api_key: str | None = None  # For Semgrep Pro features (optional)
 
     # ========== EXPLOIT GENERATION ==========
