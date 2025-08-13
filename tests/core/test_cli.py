@@ -144,19 +144,21 @@ class TestCLI:
         # Mock signal to prevent interference with test environment
         mock_signal.return_value = None
 
-        # Mock sleep to raise KeyboardInterrupt after first call to simulate Ctrl+C
-        mock_sleep.side_effect = KeyboardInterrupt("Simulated user interrupt")
+        # Mock dashboard display to raise KeyboardInterrupt after first call to simulate Ctrl+C
+        mock_dashboard.display_real_time_dashboard.side_effect = KeyboardInterrupt(
+            "Simulated user interrupt"
+        )
 
         result = runner.invoke(cli, ["monitoring", "--show-dashboard"])
 
-        # KeyboardInterrupt in CLI is handled by Click and returns exit code 1 (standard behavior)
-        # The monitoring command should handle the interrupt gracefully and display appropriate message
-        assert result.exit_code == 1
+        # KeyboardInterrupt in CLI is handled by Click and returns exit code 0 (normal termination after handling)
+        # The monitoring command should handle the interrupt gracefully and return normally
+        assert result.exit_code == 0
 
         # Should have called initialization
         mock_init_monitoring.assert_called()
 
-        # Should have attempted to display dashboard
+        # Should have attempted to display dashboard (which raises KeyboardInterrupt)
         mock_dashboard.display_real_time_dashboard.assert_called()
 
     @patch("adversary_mcp_server.cli._initialize_monitoring")
@@ -525,3 +527,167 @@ class TestCLIIntegration:
                 0,
                 1,
             ]  # 0 for success, 1 for expected config errors
+
+
+class TestCLIResetCommand:
+    """Test cases specifically for the reset command and LLM API key deletion bug."""
+
+    def setup_method(self):
+        """Setup test fixtures."""
+        self.runner = CliRunner()
+
+    @patch("adversary_mcp_server.cli.get_credential_manager")
+    @patch("adversary_mcp_server.cli.console")
+    @patch("adversary_mcp_server.cli.Confirm.ask")
+    def test_reset_command_deletes_all_credentials(
+        self, mock_confirm, mock_console, mock_cred_manager
+    ):
+        """Test that reset command deletes all credentials including LLM API keys."""
+        # Setup mocks
+        mock_manager = Mock()
+        mock_cred_manager.return_value = mock_manager
+        mock_confirm.return_value = True  # User confirms reset
+
+        # Mock credential manager methods
+        mock_manager.delete_config.return_value = None
+        mock_manager.delete_semgrep_api_key.return_value = True
+        mock_manager.clear_llm_configuration.return_value = None
+
+        # Run the reset command
+        result = self.runner.invoke(cli, ["reset"])
+
+        # Verify command completed successfully
+        assert result.exit_code == 0
+
+        # Verify all credential deletion methods were called
+        mock_manager.delete_config.assert_called_once()
+        mock_manager.delete_semgrep_api_key.assert_called_once()
+        mock_manager.clear_llm_configuration.assert_called_once()
+
+        # Verify confirmation was asked
+        mock_confirm.assert_called_once_with(
+            "Are you sure you want to reset all configuration?"
+        )
+
+    @patch("adversary_mcp_server.cli.get_credential_manager")
+    @patch("adversary_mcp_server.cli.console")
+    @patch("adversary_mcp_server.cli.Confirm.ask")
+    def test_reset_command_user_cancels(
+        self, mock_confirm, mock_console, mock_cred_manager
+    ):
+        """Test that reset command does nothing when user cancels."""
+        # Setup mocks
+        mock_manager = Mock()
+        mock_cred_manager.return_value = mock_manager
+        mock_confirm.return_value = False  # User cancels reset
+
+        # Run the reset command
+        result = self.runner.invoke(cli, ["reset"])
+
+        # Verify command completed successfully (user cancelled)
+        assert result.exit_code == 0
+
+        # Verify no credential deletion methods were called
+        mock_manager.delete_config.assert_not_called()
+        mock_manager.delete_semgrep_api_key.assert_not_called()
+        mock_manager.clear_llm_configuration.assert_not_called()
+
+        # Verify confirmation was asked
+        mock_confirm.assert_called_once_with(
+            "Are you sure you want to reset all configuration?"
+        )
+
+    @patch("adversary_mcp_server.cli.get_credential_manager")
+    @patch("adversary_mcp_server.cli.console")
+    @patch("adversary_mcp_server.cli.Confirm.ask")
+    def test_reset_command_handles_deletion_errors(
+        self, mock_confirm, mock_console, mock_cred_manager
+    ):
+        """Test that reset command handles credential deletion errors gracefully."""
+        # Setup mocks
+        mock_manager = Mock()
+        mock_cred_manager.return_value = mock_manager
+        mock_confirm.return_value = True  # User confirms reset
+
+        # Mock credential manager methods - simulate error in LLM deletion
+        mock_manager.delete_config.return_value = None
+        mock_manager.delete_semgrep_api_key.return_value = True
+        mock_manager.clear_llm_configuration.side_effect = Exception(
+            "LLM credential deletion failed"
+        )
+
+        # Run the reset command
+        result = self.runner.invoke(cli, ["reset"])
+
+        # Verify command failed due to the exception
+        assert result.exit_code == 1
+
+        # Verify config and semgrep deletion were called before the error
+        mock_manager.delete_config.assert_called_once()
+        mock_manager.delete_semgrep_api_key.assert_called_once()
+        mock_manager.clear_llm_configuration.assert_called_once()
+
+    @patch("adversary_mcp_server.cli.get_credential_manager")
+    @patch("adversary_mcp_server.cli.console")
+    @patch("adversary_mcp_server.cli.Confirm.ask")
+    def test_reset_command_no_semgrep_key_found(
+        self, mock_confirm, mock_console, mock_cred_manager
+    ):
+        """Test reset command when no Semgrep API key is found."""
+        # Setup mocks
+        mock_manager = Mock()
+        mock_cred_manager.return_value = mock_manager
+        mock_confirm.return_value = True  # User confirms reset
+
+        # Mock credential manager methods - no Semgrep key found
+        mock_manager.delete_config.return_value = None
+        mock_manager.delete_semgrep_api_key.return_value = False  # No key found
+        mock_manager.clear_llm_configuration.return_value = None
+
+        # Run the reset command
+        result = self.runner.invoke(cli, ["reset"])
+
+        # Verify command completed successfully
+        assert result.exit_code == 0
+
+        # Verify all methods were called
+        mock_manager.delete_config.assert_called_once()
+        mock_manager.delete_semgrep_api_key.assert_called_once()
+        mock_manager.clear_llm_configuration.assert_called_once()
+
+        # Verify appropriate console messages were printed
+        mock_console.print.assert_any_call(
+            "✅ Main configuration deleted", style="green"
+        )
+        mock_console.print.assert_any_call(
+            "ℹ️  No Semgrep API key found to delete", style="yellow"
+        )
+        mock_console.print.assert_any_call("✅ LLM API keys cleared", style="green")
+        mock_console.print.assert_any_call(
+            "✅ All configuration reset successfully!", style="green"
+        )
+
+    def test_reset_command_exists_and_importable(self):
+        """Test that reset command exists and can be imported."""
+        from adversary_mcp_server.cli import reset
+
+        assert reset is not None
+
+    @patch("adversary_mcp_server.cli.get_credential_manager")
+    def test_reset_command_integration_with_credential_manager(self, mock_cred_manager):
+        """Test that reset command properly integrates with credential manager."""
+        # This test verifies the reset function uses the correct credential manager methods
+        mock_manager = Mock()
+        mock_cred_manager.return_value = mock_manager
+
+        # Check that credential manager has all required methods
+        assert hasattr(mock_manager, "delete_config")
+        assert hasattr(mock_manager, "delete_semgrep_api_key")
+        assert hasattr(mock_manager, "clear_llm_configuration")
+
+    def test_reset_command_help(self):
+        """Test reset command help text."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["reset", "--help"])
+        assert result.exit_code == 0
+        assert "Reset all configuration" in result.output

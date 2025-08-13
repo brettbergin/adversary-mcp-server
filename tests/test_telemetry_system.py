@@ -216,6 +216,14 @@ class TestTelemetryService:
 
     def test_threat_finding_recording(self, telemetry_service):
         """Test threat finding recording."""
+        # First create a scan execution to satisfy foreign key constraint
+        scan_exec = telemetry_service.start_scan_tracking(
+            scan_id="scan_123",
+            trigger_source="test",
+            scan_type="file",
+            target_path="/test/vulnerable.py",
+        )
+
         finding = telemetry_service.record_threat_finding(
             scan_id="scan_123",
             finding_uuid="finding_456",
@@ -352,7 +360,9 @@ class TestMetricsCollectionOrchestrator:
 
         # Create a mock function to wrap
         @metrics_orchestrator.mcp_tool_wrapper("test_tool")
-        async def mock_mcp_tool(content="test", use_llm=False, use_validation=True):
+        async def mock_mcp_tool(
+            content="test", use_llm=False, use_validation=True, **kwargs
+        ):
             return {"findings": ["finding1", "finding2"]}
 
         # Execute the wrapped function
@@ -478,6 +488,14 @@ class TestMetricsCollectionOrchestrator:
 
     def test_threat_finding_recording(self, metrics_orchestrator):
         """Test threat finding recording with context."""
+        # First create a scan execution to satisfy foreign key constraint
+        scan_exec = metrics_orchestrator.telemetry.start_scan_tracking(
+            scan_id="test_scan_123",
+            trigger_source="test",
+            scan_type="file",
+            target_path="/test/file.py",
+        )
+
         threat_finding = ThreatMatch(
             rule_id="test-rule-001",
             rule_name="Test Vulnerability",
@@ -524,7 +542,7 @@ class TestTelemetryIntegration:
 
         @metrics_orchestrator.mcp_tool_wrapper("adv_scan_file")
         async def mock_scan_file(
-            path="/test/file.py", use_llm=True, use_validation=True
+            path="/test/file.py", use_llm=True, use_validation=True, **kwargs
         ):
             # Simulate scan execution with context
             with metrics_orchestrator.track_scan_execution(
