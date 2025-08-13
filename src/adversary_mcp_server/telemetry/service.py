@@ -23,6 +23,24 @@ class TelemetryService:
         finally:
             session.close()
 
+    @contextmanager
+    def transaction(self):
+        """Create a transaction context for multiple related operations."""
+        session = self.db.get_session()
+        try:
+            repo = ComprehensiveTelemetryRepository(session)
+            # Disable auto-commit in repository for transaction mode
+            repo._auto_commit = False
+            yield repo
+            # Commit all operations at the end of the transaction
+            session.commit()
+        except Exception:
+            # Rollback on any error
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
     # === MCP Tool Telemetry ===
 
     def start_mcp_tool_tracking(
@@ -127,6 +145,76 @@ class TelemetryService:
         """Record system health snapshot."""
         with self.get_repository() as repo:
             return repo.record_system_health_snapshot(**metrics)
+
+    # === TRANSACTIONAL OPERATIONS ===
+
+    def record_scan_results_atomic(
+        self,
+        scan_id: str,
+        threat_findings: list[dict],
+        scan_success: bool = True,
+        validation_results: dict | None = None,
+        **scan_completion_kwargs,
+    ):
+        """Atomically record multiple threat findings, apply validation results, and update scan execution summary."""
+        with self.transaction() as repo:
+            # Record all threat findings
+            for finding_data in threat_findings:
+                repo.record_threat_finding(scan_id=scan_id, **finding_data)
+
+            # Apply validation results if provided
+            if validation_results:
+                for finding_uuid, validation_result in validation_results.items():
+                    repo.update_threat_finding_validation(
+                        finding_uuid=finding_uuid,
+                        is_validated=True,
+                        validation_confidence=validation_result.confidence,
+                        validation_reasoning=validation_result.reasoning,
+                        is_false_positive=not validation_result.is_legitimate,
+                        exploitation_vector=validation_result.exploitation_vector,
+                    )
+
+            # Update scan execution with final counts
+            repo.complete_scan_execution(
+                scan_id=scan_id,
+                success=scan_success,
+                threats_found=len(threat_findings),
+                **scan_completion_kwargs,
+            )
+
+    def record_mcp_results_atomic(
+        self,
+        execution_id: int,
+        threat_findings: list[dict],
+        success: bool = True,
+        **completion_kwargs,
+    ):
+        """Atomically record threat findings and update MCP tool execution summary."""
+        with self.transaction() as repo:
+            # Record all threat findings if any
+            for finding_data in threat_findings:
+                repo.record_threat_finding(**finding_data)
+
+            # Update MCP execution with final counts
+            repo.complete_mcp_tool_execution(
+                execution_id=execution_id,
+                success=success,
+                findings_count=len(threat_findings),
+                **completion_kwargs,
+            )
+
+    def update_validation_results_atomic(self, validation_results: dict):
+        """Atomically update multiple threat findings with validation results."""
+        with self.transaction() as repo:
+            for finding_uuid, validation_result in validation_results.items():
+                repo.update_threat_finding_validation(
+                    finding_uuid=finding_uuid,
+                    is_validated=True,
+                    validation_confidence=validation_result.confidence,
+                    validation_reasoning=validation_result.reasoning,
+                    is_false_positive=not validation_result.is_legitimate,
+                    exploitation_vector=validation_result.exploitation_vector,
+                )
 
     # === Dashboard Data ===
 

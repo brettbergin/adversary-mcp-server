@@ -336,7 +336,7 @@ class DatabaseMaintenanceManager:
             ("mcp_tool_executions", "execution_start"),
             ("cli_command_executions", "execution_start"),
             ("cache_operation_metrics", "timestamp"),
-            ("scan_engine_executions", "execution_start"),
+            ("scan_executions", "execution_start"),
             ("threat_findings", "timestamp"),
             ("system_health", "timestamp"),
         ]

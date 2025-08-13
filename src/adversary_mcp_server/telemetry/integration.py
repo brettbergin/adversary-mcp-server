@@ -45,17 +45,41 @@ class MetricsCollectionOrchestrator:
                         validation_enabled=kwargs.get("use_validation", False),
                         llm_enabled=kwargs.get("use_llm", False),
                     )
-                    execution_id = execution.id
+                    # Try to get ID, use cached version if object is detached
+                    try:
+                        execution_id = execution.id
+                    except Exception:
+                        # If object is detached, use cached ID
+                        execution_id = getattr(execution, "_cached_id", None)
+                        if execution_id is None:
+                            raise RuntimeError(
+                                "Unable to get execution ID from telemetry tracking"
+                            )
+
+                    # Create telemetry context for the tool to use
+                    telemetry_context = MCPToolTelemetryContext(
+                        execution_id, self.telemetry
+                    )
+
+                    # Add telemetry context to the arguments dict for MCP server methods
+                    if args and isinstance(args[0], dict):
+                        # If first argument is arguments dict, add telemetry context to it
+                        args[0]["_telemetry_context"] = telemetry_context
+                    else:
+                        # Otherwise add it as a keyword argument
+                        kwargs["_telemetry_context"] = telemetry_context
 
                     # Execute the actual tool
                     result = await func(*args, **kwargs)
 
-                    # Extract findings count from result
-                    findings_count = 0
-                    if hasattr(result, "findings") and result.findings:
-                        findings_count = len(result.findings)
-                    elif isinstance(result, dict) and "findings" in result:
-                        findings_count = len(result["findings"])
+                    # Use findings count from telemetry context if provided, otherwise extract from result
+                    findings_count = telemetry_context.findings_count
+                    if findings_count == 0:
+                        # Fallback to old extraction logic for backwards compatibility
+                        if hasattr(result, "findings") and result.findings:
+                            findings_count = len(result.findings)
+                        elif isinstance(result, dict) and "findings" in result:
+                            findings_count = len(result["findings"])
 
                     # Complete tracking
                     self.telemetry.complete_mcp_tool_tracking(
@@ -103,7 +127,16 @@ class MetricsCollectionOrchestrator:
                         subcommand=kwargs.get("path") or kwargs.get("file_path"),
                         validation_enabled=kwargs.get("use_validation", False),
                     )
-                    execution_id = execution.id
+                    # Try to get ID, use cached version if object is detached
+                    try:
+                        execution_id = execution.id
+                    except Exception:
+                        # If object is detached, use cached ID
+                        execution_id = getattr(execution, "_cached_id", None)
+                        if execution_id is None:
+                            raise RuntimeError(
+                                "Unable to get execution ID from CLI tracking"
+                            )
 
                     # Execute command
                     result = func(*args, **kwargs)
@@ -163,26 +196,29 @@ class MetricsCollectionOrchestrator:
         try:
             yield scan_context
 
-            # Complete successful scan
-            self.telemetry.complete_scan_tracking(
+            # Complete successful scan atomically with threat findings and validation results
+            self.telemetry.record_scan_results_atomic(
                 scan_id=scan_id,
-                success=True,
+                threat_findings=scan_context._pending_threat_data,
+                scan_success=True,
+                validation_results=scan_context._validation_results,
                 total_duration_ms=scan_context.get_total_duration(),
                 semgrep_duration_ms=scan_context.semgrep_duration,
                 llm_duration_ms=scan_context.llm_duration,
                 validation_duration_ms=scan_context.validation_duration,
                 cache_lookup_ms=scan_context.cache_lookup_duration,
-                threats_found=scan_context.threats_found,
                 threats_validated=scan_context.threats_validated,
                 false_positives_filtered=scan_context.false_positives_filtered,
                 cache_hit=scan_context.cache_hit,
             )
 
         except Exception as e:
-            # Complete failed scan
-            self.telemetry.complete_scan_tracking(
+            # Complete failed scan atomically (but still record any collected threat findings)
+            self.telemetry.record_scan_results_atomic(
                 scan_id=scan_id,
-                success=False,
+                threat_findings=scan_context._pending_threat_data,
+                scan_success=False,
+                validation_results=scan_context._validation_results,
                 error_message=str(e)[:500],
                 total_duration_ms=scan_context.get_total_duration(),
             )
@@ -380,6 +416,8 @@ class ScanTrackingContext:
         self.false_positives_filtered = 0
         self.cache_hit = False
         self._threat_findings = []
+        self._pending_threat_data = []  # Store threat data for atomic recording
+        self._validation_results = {}  # Store validation results for later application
 
     def time_semgrep_scan(self):
         """Context manager for timing Semgrep operations."""
@@ -408,14 +446,36 @@ class ScanTrackingContext:
             setattr(self, duration_attr, duration_ms)
 
     def add_threat_finding(self, finding: Any, scanner_source: str):
-        """Add a threat finding to this scan."""
-        from .integration import MetricsCollectionOrchestrator
+        """Add a threat finding to this scan for atomic recording later."""
+        import uuid
 
-        orchestrator = MetricsCollectionOrchestrator(self.telemetry)
-        threat_record = orchestrator.record_threat_finding_with_context(
-            self.scan_id, finding, scanner_source
-        )
-        self._threat_findings.append(threat_record)
+        # Generate UUID for the finding
+        finding_uuid = str(uuid.uuid4())
+
+        # Collect threat data for atomic recording when scan completes
+        threat_data = {
+            "finding_uuid": finding_uuid,
+            "scanner_source": scanner_source,
+            "category": getattr(finding, "category", "unknown"),
+            "severity": getattr(finding, "severity", "medium"),
+            "file_path": getattr(finding, "file_path", ""),
+            "line_start": getattr(finding, "line_start", 0),
+            "line_end": getattr(finding, "line_end", 0),
+            "title": getattr(finding, "title", "Security Finding"),
+            "rule_id": getattr(finding, "rule_id", None),
+            "confidence": getattr(finding, "confidence", None),
+            "column_start": getattr(finding, "column_start", None),
+            "column_end": getattr(finding, "column_end", None),
+            "code_snippet": getattr(finding, "code_snippet", None),
+            "description": getattr(finding, "description", None),
+            "remediation": getattr(finding, "remediation", None),
+            "references": getattr(finding, "references", None),
+            "is_validated": getattr(finding, "is_validated", False),
+            "is_false_positive": getattr(finding, "is_false_positive", False),
+            "validation_reason": getattr(finding, "validation_reason", None),
+        }
+
+        self._pending_threat_data.append(threat_data)
         self.threats_found += 1
 
         # Track validation status
@@ -428,12 +488,29 @@ class ScanTrackingContext:
         """Mark this scan as a cache hit."""
         self.cache_hit = True
 
+    def set_validation_results(self, validation_results: dict):
+        """Store validation results for applying to threat findings."""
+        self._validation_results = validation_results
+
     def get_total_duration(self) -> float:
         """Get total scan duration in milliseconds."""
         return (time.time() - self.start_time) * 1000
 
 
 # === INTEGRATION POINTS ===
+
+
+class MCPToolTelemetryContext:
+    """Context object for MCP tools to report telemetry data."""
+
+    def __init__(self, execution_id: int, telemetry_service):
+        self.execution_id = execution_id
+        self.telemetry = telemetry_service
+        self.findings_count = 0
+
+    def report_findings_count(self, count: int):
+        """Report the number of findings discovered by the tool."""
+        self.findings_count = count
 
 
 class MetricsIntegrationMixin:

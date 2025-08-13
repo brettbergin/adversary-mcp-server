@@ -62,7 +62,7 @@ def temp_db_path():
 
     cursor.execute(
         """
-        CREATE TABLE scan_engine_executions (
+        CREATE TABLE scan_executions (
             id INTEGER PRIMARY KEY,
             file_path TEXT,
             execution_start REAL,
