@@ -60,9 +60,9 @@ dev = [
 ]
 
 [project.scripts]
-adv = "adversary_mcp_server.cli:main"
-adversary-mcp-cli = "adversary_mcp_server.cli:main"
-adversary-mcp-server = "adversary_mcp_server.server:main"
+adv = "adversary_mcp_server.application.cli.clean_cli:main"
+adversary-mcp-cli = "adversary_mcp_server.application.cli.clean_cli:main"
+adversary-mcp-server = "adversary_mcp_server.sync_main:main"
 
 [project.urls]
 Homepage = "https://github.com/brettbergin/adversary-mcp-server"

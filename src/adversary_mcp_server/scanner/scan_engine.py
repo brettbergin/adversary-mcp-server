@@ -438,17 +438,19 @@ class ScanEngine:
         logger.info("=== ScanEngine initialization complete ===")
 
     def _detect_language(self, file_path: Path) -> str:
-        """Simple language detection for compatibility (semgrep handles this internally).
+        """Detect programming language from file extension using language mapping.
 
         Args:
             file_path: Path to the file
 
         Returns:
-            Generic language string (not used for actual analysis)
+            Programming language name (e.g., 'python', 'javascript') or 'generic' for unknown
         """
-        # Simplified: return generic for all files since semgrep handles language detection internally
-        # and we don't want users to think about language selection
-        return "generic"
+        from .language_mapping import LanguageMapper
+
+        detected_language = LanguageMapper.detect_language_from_extension(file_path)
+        logger.debug(f"Language detected for {file_path}: {detected_language}")
+        return detected_language
 
     def _filter_by_severity(
         self,

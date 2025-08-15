@@ -5,7 +5,7 @@ implementing sophisticated deduplication based on proximity and similarity.
 """
 
 from ...logger import get_logger
-from ...scanner.types import ThreatMatch
+from ..entities.threat_match import ThreatMatch
 
 logger = get_logger("threat_aggregator")
 
@@ -201,7 +201,7 @@ class ThreatAggregator:
             threats,
             key=lambda t: (
                 t.line_number,  # Primary sort by line number
-                t.severity.value,  # Secondary sort by severity value
+                t.severity.get_numeric_value(),  # Secondary sort by severity value (domain method)
                 t.category,  # Tertiary sort by category for stability
             ),
         )
@@ -243,12 +243,12 @@ class ThreatAggregator:
         by_line_range = {"1-50": 0, "51-100": 0, "101-500": 0, "500+": 0}
 
         for threat in threats:
-            # Count by severity
-            severity_name = threat.severity.name
+            # Count by severity (domain SeverityLevel)
+            severity_name = str(threat.severity)  # SeverityLevel has __str__ method
             by_severity[severity_name] = by_severity.get(severity_name, 0) + 1
 
-            # Count by category
-            category_name = threat.category.value
+            # Count by category (domain category is string)
+            category_name = threat.category
             by_category[category_name] = by_category.get(category_name, 0) + 1
 
             # Count by line range

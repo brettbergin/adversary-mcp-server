@@ -314,9 +314,7 @@ class ConfigManager:
         config.semgrep_rules = os.getenv(
             "ADVERSARY_SEMGREP_RULES", config.semgrep_rules
         )
-        config.semgrep_api_key = os.getenv(
-            "ADVERSARY_SEMGREP_API_KEY", config.semgrep_api_key
-        )
+        # Note: semgrep_api_key is managed through CLI keyring, not environment variables
 
         # Use dynamic limits
         config.max_file_size_mb = self.dynamic_limits.max_file_size_mb

@@ -38,143 +38,219 @@ source .venv/bin/activate
 - `make build` - Build package for distribution
 - `make clean` - Clean build artifacts and cache files
 
-## Architecture Overview
+## Clean Architecture Overview
 
-This is a security analysis MCP (Model Context Protocol) server that provides vulnerability scanning capabilities through Cursor IDE integration. The system uses a **hybrid multi-engine approach** combining static analysis (Semgrep), AI-powered analysis (LLM), and intelligent validation for comprehensive security scanning.
+This is a security analysis MCP (Model Context Protocol) server that provides vulnerability scanning capabilities through Cursor IDE integration. The system follows **Clean Architecture principles** with a **hybrid multi-engine approach** combining static analysis (Semgrep), AI-powered analysis (LLM), and intelligent validation for comprehensive security scanning.
 
-## System Architecture
+## Clean Architecture Structure
+
+The system is organized in layers following Clean Architecture principles:
+
+### 🔵 **Domain Layer** (Core Business Logic)
+- **Entities**: `ScanRequest`, `ScanResult`, `ThreatMatch` - Rich domain objects with business behavior
+- **Value Objects**: `ScanContext`, `SeverityLevel`, `ConfidenceScore`, `FilePath` - Immutable domain concepts
+- **Domain Services**: `ScanOrchestrator`, `ThreatAggregator`, `ValidationService` - Pure business orchestration
+- **Interfaces**: `IScanStrategy`, `IValidationStrategy`, `IThreatAggregator` - Domain contracts
+
+### 🟢 **Application Layer** (Use Cases & Coordination)
+- **Adapters**: `SemgrepScanStrategy`, `LLMScanStrategy`, `LLMValidationStrategy` - Infrastructure adapters
+- **Bootstrap**: `CleanArchitectureBootstrap` - Dependency injection and service configuration
+- **MCP Server**: `CleanMCPServer` - Model Context Protocol implementation
+- **CLI**: `CleanCLI` - Command-line interface implementation
+
+### 🟡 **Infrastructure Layer** (External Concerns)
+- **Scanners**: `SemgrepScanner`, `LLMScanner` - External security analysis engines
+- **Validators**: `LLMValidator` - AI-powered validation services
+- **Storage**: Database, cache, and persistence implementations
+- **External APIs**: Credential management, telemetry, logging
+
+## Clean Architecture Data Flow
 
 ```mermaid
 graph TB
-    subgraph "Client Layer"
-        A[Cursor IDE]
-        B[CLI Interface]
+    subgraph "🔵 Domain Layer (Core)"
+        subgraph "Domain Entities"
+            DE1[ScanRequest]
+            DE2[ScanResult]
+            DE3[ThreatMatch]
+        end
+
+        subgraph "Domain Services"
+            DS1[ScanOrchestrator]
+            DS2[ThreatAggregator]
+            DS3[ValidationService]
+        end
+
+        subgraph "Domain Interfaces"
+            DI1[IScanStrategy]
+            DI2[IValidationStrategy]
+            DI3[IThreatAggregator]
+        end
     end
 
-    subgraph "Protocol Layer"
-        C[MCP Server]
-        D[CLI Commands]
+    subgraph "🟢 Application Layer (Use Cases)"
+        subgraph "Adapters"
+            A1[SemgrepScanStrategy]
+            A2[LLMScanStrategy]
+            A3[LLMValidationStrategy]
+        end
+
+        subgraph "Application Services"
+            AS1[CleanMCPServer]
+            AS2[CleanCLI]
+            AS3[Bootstrap]
+        end
     end
 
-    A -->|MCP Protocol| C
-    B --> D
+    subgraph "🟡 Infrastructure Layer (External)"
+        subgraph "Security Engines"
+            I1[SemgrepScanner]
+            I2[LLMScanner]
+            I3[LLMValidator]
+        end
 
-    subgraph "Core Engine"
-        E[ScanEngine]
-        F[GitDiffScanner]
+        subgraph "External Services"
+            I4[Database]
+            I5[FileSystem]
+            I6[CredentialManager]
+        end
     end
 
-    C --> E
-    D --> E
-    C --> F
-    D --> F
-
-    subgraph "Security Scanners"
-        G[SemgrepScanner]
-        H[LLMScanner]
+    subgraph "🔴 Interface Layer (Entry Points)"
+        INT1[Cursor IDE via MCP]
+        INT2[Command Line]
+        INT3[Direct API]
     end
 
-    E --> G
-    E --> H
-    F --> E
+    %% Interface to Application
+    INT1 --> AS1
+    INT2 --> AS2
+    INT3 --> AS3
 
-    subgraph "Validation & Enhancement"
-        I[LLMValidator]
-        J[ExploitGenerator]
-    end
+    %% Application to Domain (via Interfaces)
+    AS1 --> DS1
+    AS2 --> DS1
+    A1 -.->|implements| DI1
+    A2 -.->|implements| DI1
+    A3 -.->|implements| DI2
 
-    E --> I
-    I --> J
+    %% Domain Services Coordination
+    DS1 --> DS2
+    DS1 --> DS3
+    DS1 --> DE1
+    DS1 --> DE2
+    DS2 --> DE3
+    DS3 --> DE3
 
-    subgraph "Support Services"
-        K[FalsePositiveManager]
-        L[CredentialManager]
-    end
+    %% Adapters to Infrastructure
+    A1 --> I1
+    A2 --> I2
+    A3 --> I3
 
-    E --> K
-    E --> L
-    I --> L
+    %% Infrastructure Dependencies
+    I1 --> I5
+    I2 --> I6
+    I3 --> I6
+    AS3 --> I4
 
-    subgraph "Data Flow"
-        M[ThreatMatch Objects]
-        N[ValidationResults]
-        O[EnhancedScanResult]
-    end
-
-    G --> M
-    H --> M
-    M --> I
-    I --> N
-    N --> O
-
-    style E fill:#e1f5fe
-    style I fill:#f3e5f5
-    style G fill:#e8f5e8
-    style H fill:#fff3e0
+    style DE1 fill:#e3f2fd
+    style DE2 fill:#e3f2fd
+    style DE3 fill:#e3f2fd
+    style DS1 fill:#1976d2,color:#fff
+    style DS2 fill:#1976d2,color:#fff
+    style DS3 fill:#1976d2,color:#fff
+    style A1 fill:#4caf50,color:#fff
+    style A2 fill:#4caf50,color:#fff
+    style A3 fill:#4caf50,color:#fff
 ```
 
-### Core Components
+## Clean Architecture Implementation Details
 
-#### MCP Server (`server.py`)
-- Main MCP server implementation providing `adv_*` tools for Cursor IDE
-- Tools include: `adv_scan_code`, `adv_scan_file`, `adv_diff_scan`, `adv_generate_exploit`
-- Handles tool registration, parameter validation, and error handling
-- Supports both standard scanning and git diff-aware scanning
+### 🔵 **Domain Layer Components** (Pure Business Logic)
 
-#### Enhanced Scanning Architecture
+#### **Domain Entities** (`src/adversary_mcp_server/domain/entities/`)
+Rich objects with business behavior and invariants:
 
-**ScanEngine** (`scan_engine.py`) - Central orchestration layer that:
-- Manages **SemgrepScanner** and **LLMScanner** execution
-- Integrates **LLMValidator** for false positive filtering
-- Provides unified results through **EnhancedScanResult**
-- Supports file, directory, and code snippet scanning
-- Handles severity filtering and threat deduplication
+- **`ScanRequest`** - Encapsulates scan parameters and context with validation rules
+- **`ScanResult`** - Aggregates scan results with statistics and domain methods
+- **`ThreatMatch`** - Domain model for security vulnerabilities with business operations
 
-**LLMValidator** (`llm_validator.py`) - **NEW** validation system that:
-- Validates findings from all scanners to reduce false positives
-- Generates confidence scores (0.0-1.0) for each finding
-- Creates exploitation vectors for confirmed vulnerabilities
-- Integrates with **ExploitGenerator** for proof-of-concept creation
-- Provides client-based LLM prompts for validation analysis
+#### **Value Objects** (`src/adversary_mcp_server/domain/value_objects/`)
+Immutable domain concepts with built-in validation:
 
-#### Security Scanner Engines
+- **`ScanContext`** - Complete scan context with factory methods for different scan types
+- **`SeverityLevel`** - Type-safe severity levels with comparison and threshold operations
+- **`ConfidenceScore`** - Confidence scoring with quality levels and threshold checking
+- **`FilePath`** - Path handling with validation, normalization, and security checks
+- **`ScanMetadata`** - Structured metadata with execution statistics and target information
 
-**SemgrepScanner** (`semgrep_scanner.py`) - Static analysis engine:
-- Industry-standard rule-based scanning
-- Language-agnostic pattern matching
-- High-performance subprocess execution
-- Configurable rulesets and timeouts
-- Automatic result categorization and severity assignment
+#### **Domain Services** (`src/adversary_mcp_server/domain/services/`)
+Pure business logic orchestration without infrastructure dependencies:
 
-**LLMScanner** (`llm_scanner.py`) - AI-powered analysis engine:
-- Client-based LLM integration (no API keys needed)
-- Context-aware vulnerability detection
-- Business logic flaw identification
-- Generates structured prompts for external LLM analysis
-- Provides detailed explanations and remediation guidance
+- **`ScanOrchestrator`** - Coordinates multiple scan strategies following domain rules
+- **`ThreatAggregator`** - Aggregates and deduplicates threats using configurable strategies
+- **`ValidationService`** - Orchestrates threat validation with confidence filtering
 
-#### Specialized Components
+#### **Domain Interfaces** (`src/adversary_mcp_server/domain/interfaces.py`)
+Contracts defining behavior without implementation details:
 
-**GitDiffScanner** (`diff_scanner.py`) - Git-aware scanning:
-- Analyzes only newly added lines between branches
-- Prevents false positives from existing code
-- Ideal for CI/CD pipeline integration
-- Supports branch comparison and commit analysis
-- Maps findings back to original line numbers
+- **`IScanStrategy`** - Contract for security analysis strategies (Semgrep, LLM, etc.)
+- **`IValidationStrategy`** - Contract for threat validation implementations
+- **`IThreatAggregator`** - Contract for threat aggregation and deduplication
 
-**ExploitGenerator** (`exploit_generator.py`) - Educational exploit creation:
-- Template-based exploit generation
-- LLM-enhanced exploitation scenarios
-- Safety warnings and educational context
-- Multiple exploit variations per vulnerability
-- Integration with validation workflow
+### 🟢 **Application Layer Components** (Use Cases & Coordination)
 
-**FalsePositiveManager** (`false_positive_manager.py`) - Noise reduction:
-- UUID-based finding tracking
-- Persistent SQLite storage
-- Reviewer attribution system
-- Batch operations support
-- Cross-scanner false positive filtering
+#### **Adapters** (`src/adversary_mcp_server/application/adapters/`)
+Bridge domain interfaces with infrastructure implementations:
+
+- **`SemgrepScanStrategy`** - Adapts SemgrepScanner to domain IScanStrategy interface
+- **`LLMScanStrategy`** - Adapts LLMScanner to domain IScanStrategy interface
+- **`LLMValidationStrategy`** - Adapts LLMValidator to domain IValidationStrategy interface
+- **`TelemetryAdapter`** - Extracts telemetry from domain objects for metrics collection
+
+#### **Application Services** (`src/adversary_mcp_server/application/`)
+Coordinate use cases and handle cross-cutting concerns:
+
+- **`CleanMCPServer`** (`mcp/clean_server.py`) - MCP protocol implementation using Clean Architecture
+- **`CleanCLI`** (`cli/clean_cli.py`) - Command-line interface using domain services
+- **`CleanArchitectureBootstrap`** (`bootstrap_clean.py`) - Dependency injection configuration
+
+### 🟡 **Infrastructure Layer Components** (External Systems)
+
+#### **Security Analysis Engines** (`src/adversary_mcp_server/scanner/`)
+External tools wrapped by adapters:
+
+- **`SemgrepScanner`** - Static analysis using Semgrep with Pro/Community rule detection
+- **`LLMScanner`** - AI-powered analysis with client-side LLM integration
+- **`LLMValidator`** - AI validation for false positive reduction and threat enhancement
+
+#### **External Services Integration**
+- **Database Layer** - SQLite/SQLAlchemy for persistence (false positive tracking, telemetry)
+- **File System** - Secure file access with path validation and permission checking
+- **Credential Management** - API key and secret management for external services
+- **Telemetry Services** - Metrics collection and performance monitoring
+
+### **Clean Architecture Benefits Achieved**
+
+#### ✅ **Dependency Inversion**
+- Domain layer has no dependencies on external frameworks
+- Infrastructure depends on domain interfaces, not concrete implementations
+- Adapters translate between domain concepts and external systems
+
+#### ✅ **Separation of Concerns**
+- Business rules isolated in domain services
+- Infrastructure concerns separated from business logic
+- UI/API concerns handled at application boundaries
+
+#### ✅ **Testability**
+- Domain logic tested independently with unit tests
+- Integration tests validate adapter and infrastructure layers
+- Mock strategies enable fast, reliable testing
+
+#### ✅ **Flexibility & Maintainability**
+- Easy to swap infrastructure implementations (different scanners, databases)
+- Domain logic changes don't require infrastructure modifications
+- Clear boundaries make understanding and modification easier
 
 ### Data Flow Architecture
 

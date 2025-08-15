@@ -76,7 +76,7 @@ class SecurityConfig:
     # Semgrep configuration (auto-detects from environment)
     semgrep_config: str | None = None  # Custom config path (optional)
     semgrep_rules: str | None = None  # Specific rules (default: auto)
-    semgrep_api_key: str | None = None  # For Semgrep Pro features (optional)
+    # Note: semgrep_api_key is managed through CLI keyring, not environment variables
 
     # ========== EXPLOIT GENERATION ==========
     # Educational exploit generation settings
@@ -166,7 +166,6 @@ class SecurityConfig:
             "llm_configuration_error": error_message if not is_valid else None,
             "llm_api_key_configured": bool(self.llm_api_key),
             "semgrep_scanning_enabled": self.enable_semgrep_scanning,
-            "semgrep_api_key_configured": bool(self.semgrep_api_key),
             "exploit_generation_enabled": self.enable_exploit_generation,
             "exploit_safety_mode": self.exploit_safety_mode,
             "severity_threshold": self.severity_threshold,

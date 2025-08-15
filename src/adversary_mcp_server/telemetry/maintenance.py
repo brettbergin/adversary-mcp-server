@@ -536,21 +536,45 @@ def get_maintenance_recommendations(db_info: dict[str, Any]) -> list[str]:
     """Get maintenance recommendations based on database info."""
     recommendations = []
 
-    if not db_info.get("exists"):
+    # Check if database info indicates failure
+    if db_info.get("success") is False:
+        return []  # No recommendations for failed database info
+
+    # Only check exists if it's explicitly set to False
+    if db_info.get("exists") is False:
         return ["Database does not exist"]
 
     # Size-based recommendations
     size_mb = db_info.get("size_mb", 0)
+    # Also check file_size_bytes for different test data formats
+    file_size_bytes = db_info.get("file_size_bytes", 0)
+    if file_size_bytes > 0:
+        size_mb = file_size_bytes / (1024 * 1024)
+
     if size_mb > 100:
         recommendations.append(
             "Database is large (>100MB) - consider running VACUUM to reclaim space"
         )
 
-    # Record count recommendations
+    # Record count recommendations - support multiple data formats
     total_records = db_info.get("total_records", 0)
+    total_rows = db_info.get("total_rows", 0)
+    if total_rows > 0:
+        total_records = total_rows
+
     if total_records > 100000:
         recommendations.append(
             "High record count (>100k) - consider cleanup of old data"
+        )
+
+    # Index analysis recommendations
+    table_count = db_info.get("table_count", len(db_info.get("tables", {})))
+    index_count = db_info.get("index_count", 0)
+
+    # Recommend index analysis if few indexes relative to tables
+    if table_count > 5 and index_count < (table_count * 0.5):
+        recommendations.append(
+            "Few indexes relative to table count - consider index analysis"
         )
 
     # Settings recommendations

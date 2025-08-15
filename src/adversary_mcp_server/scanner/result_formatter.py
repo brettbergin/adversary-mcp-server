@@ -272,8 +272,8 @@ class ScanResultFormatter:
             "llm_usage_summary": llm_usage_summary,
             "telemetry_insights": self._get_telemetry_insights(),
             "scanner_execution_summary": {
-                "semgrep_scanner": self._get_telemetry_semgrep_summary(),
-                "llm_scanner": self._get_telemetry_llm_summary(),
+                "semgrep_scanner": self._get_telemetry_semgrep_summary(scan_results),
+                "llm_scanner": self._get_telemetry_llm_summary(scan_results),
                 "telemetry_based": True,
                 "classic_summary": {
                     "semgrep_scanner": self._get_semgrep_summary(scan_results),
@@ -1010,9 +1010,17 @@ class ScanResultFormatter:
                 "error": str(e),
             }
 
-    def _get_telemetry_semgrep_summary(self) -> dict[str, Any]:
-        """Get Semgrep execution summary from telemetry system."""
+    def _get_telemetry_semgrep_summary(
+        self, scan_results: list[EnhancedScanResult] = None
+    ) -> dict[str, Any]:
+        """Get Semgrep execution summary from telemetry system with fallback to scan results."""
         if not self.telemetry_service:
+            # Fallback to scan results data if available
+            if scan_results:
+                classic_summary = self._get_semgrep_summary(scan_results)
+                classic_summary["status"] = "fallback_to_classic"
+                return classic_summary
+
             return {
                 "files_processed": 0,
                 "files_failed": 0,
@@ -1029,6 +1037,12 @@ class ScanResultFormatter:
             avg_semgrep_duration = scan_engine.get("avg_semgrep_duration_ms", 0)
             total_threats = scan_engine.get("total_threats", 0)
 
+            # If telemetry has no recent data, fall back to scan results
+            if total_scans == 0 and scan_results:
+                classic_summary = self._get_semgrep_summary(scan_results)
+                classic_summary["status"] = "fallback_to_classic"
+                return classic_summary
+
             # Estimate processed/failed based on performance data
             estimated_processed = total_scans if avg_semgrep_duration > 0 else 0
             estimated_failed = 0  # Telemetry tracks successful scans primarily
@@ -1042,6 +1056,13 @@ class ScanResultFormatter:
             }
         except Exception as e:
             logger.debug(f"Failed to get Semgrep summary from telemetry: {e}")
+            # Fallback to scan results data if available
+            if scan_results:
+                classic_summary = self._get_semgrep_summary(scan_results)
+                classic_summary["status"] = "fallback_to_classic"
+                classic_summary["telemetry_error"] = str(e)
+                return classic_summary
+
             return {
                 "files_processed": 0,
                 "files_failed": 0,
@@ -1050,9 +1071,17 @@ class ScanResultFormatter:
                 "error": str(e),
             }
 
-    def _get_telemetry_llm_summary(self) -> dict[str, Any]:
-        """Get LLM scanner execution summary from telemetry system."""
+    def _get_telemetry_llm_summary(
+        self, scan_results: list[EnhancedScanResult] = None
+    ) -> dict[str, Any]:
+        """Get LLM scanner execution summary from telemetry system with fallback to scan results."""
         if not self.telemetry_service:
+            # Fallback to scan results data if available
+            if scan_results:
+                classic_summary = self._get_llm_summary(scan_results)
+                classic_summary["status"] = "fallback_to_classic"
+                return classic_summary
+
             return {
                 "files_processed": 0,
                 "files_failed": 0,
@@ -1067,6 +1096,12 @@ class ScanResultFormatter:
             total_scans = scan_engine.get("total_scans", 0)
             avg_llm_duration = scan_engine.get("avg_llm_duration_ms", 0)
             total_threats = scan_engine.get("total_threats", 0)
+
+            # If telemetry has no recent data, fall back to scan results
+            if total_scans == 0 and scan_results:
+                classic_summary = self._get_llm_summary(scan_results)
+                classic_summary["status"] = "fallback_to_classic"
+                return classic_summary
 
             # Estimate LLM-specific threats (rough approximation)
             estimated_llm_threats = (
@@ -1085,6 +1120,13 @@ class ScanResultFormatter:
             }
         except Exception as e:
             logger.debug(f"Failed to get LLM summary from telemetry: {e}")
+            # Fallback to scan results data if available
+            if scan_results:
+                classic_summary = self._get_llm_summary(scan_results)
+                classic_summary["status"] = "fallback_to_classic"
+                classic_summary["telemetry_error"] = str(e)
+                return classic_summary
+
             return {
                 "files_processed": 0,
                 "files_failed": 0,

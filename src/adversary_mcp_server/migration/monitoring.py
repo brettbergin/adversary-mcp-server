@@ -341,10 +341,11 @@ class MigrationRecommendationEngine:
                     {
                         "command": r.get("command", ""),
                         "type": r["type"],
-                        "safe_to_automate": r["risk_level"] in ["low", "very_low", "none"],
+                        "safe_to_automate": r["risk_level"]
+                        in ["low", "very_low", "none"],
                     }
                     for r in automated_recommendations
-                ]
+                ],
             )
 
         return schedule
@@ -407,7 +408,9 @@ class MigrationRecommendationEngine:
                 if isinstance(time_str, str):
                     try:
                         minutes = int(time_str.split()[0].split("-")[0])
-                        if isinstance(automated_plan["estimated_total_time"], int | float):
+                        if isinstance(
+                            automated_plan["estimated_total_time"], int | float
+                        ):
                             automated_plan["estimated_total_time"] += minutes
                     except (ValueError, IndexError):
                         pass
@@ -416,9 +419,7 @@ class MigrationRecommendationEngine:
         recommendations = analysis.get("recommendations", [])
         if isinstance(recommendations, list):
             risky_actions = [
-                r
-                for r in recommendations
-                if r.get("risk_level") in ["high", "medium"]
+                r for r in recommendations if r.get("risk_level") in ["high", "medium"]
             ]
         else:
             risky_actions = []
@@ -592,22 +593,26 @@ class MigrationMonitor:
         # Calculate performance metrics
         operations = self.metrics["operations"]
         total_operations = len(operations) if isinstance(operations, list) else 0
-        successful_operations = len(
-            [op for op in operations if op.get("success") is True]
-        ) if isinstance(operations, list) else 0
-        failed_operations = len(
-            [op for op in operations if op.get("success") is False]
-        ) if isinstance(operations, list) else 0
-        total_records = sum(
-            op.get("records_processed", 0) for op in operations
-        ) if isinstance(operations, list) else 0
+        successful_operations = (
+            len([op for op in operations if op.get("success") is True])
+            if isinstance(operations, list)
+            else 0
+        )
+        failed_operations = (
+            len([op for op in operations if op.get("success") is False])
+            if isinstance(operations, list)
+            else 0
+        )
+        total_records = (
+            sum(op.get("records_processed", 0) for op in operations)
+            if isinstance(operations, list)
+            else 0
+        )
 
         average_duration = 0
         if total_operations > 0 and isinstance(operations, list):
             durations = [
-                op.get("duration", 0)
-                for op in operations
-                if op.get("duration")
+                op.get("duration", 0) for op in operations if op.get("duration")
             ]
             if durations:
                 average_duration = sum(durations) / len(durations)
@@ -622,8 +627,16 @@ class MigrationMonitor:
             "success_rate": successful_operations / max(total_operations, 1),
             "total_records_processed": total_records,
             "average_operation_duration": average_duration,
-            "total_errors": len(self.metrics["errors"]) if isinstance(self.metrics["errors"], list) else 0,
-            "total_warnings": len(self.metrics["warnings"]) if isinstance(self.metrics["warnings"], list) else 0,
+            "total_errors": (
+                len(self.metrics["errors"])
+                if isinstance(self.metrics["errors"], list)
+                else 0
+            ),
+            "total_warnings": (
+                len(self.metrics["warnings"])
+                if isinstance(self.metrics["warnings"], list)
+                else 0
+            ),
             "performance_rating": self._calculate_performance_rating(),
         }
 
@@ -634,14 +647,13 @@ class MigrationMonitor:
         operations = self.metrics["operations"]
         if not isinstance(operations, list):
             return "no_data"
-        
+
         total_ops = len(operations)
         if total_ops == 0:
             return "no_data"
 
         success_rate = (
-            len([op for op in operations if op.get("success") is True])
-            / total_ops
+            len([op for op in operations if op.get("success") is True]) / total_ops
         )
         errors = self.metrics["errors"]
         error_rate = (len(errors) if isinstance(errors, list) else 0) / total_ops

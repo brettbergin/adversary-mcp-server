@@ -40,10 +40,7 @@
 ### Quick Install
 
 ```bash
-# Install uv (recommended package manager)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Install Semgrep
+brew install uv # macOS
 brew install semgrep  # macOS
 # or
 pip install semgrep   # Other platforms
@@ -55,40 +52,52 @@ uv pip install adversary-mcp-server
 ### Verify Installation
 
 ```bash
-adversary-mcp-cli --version
-adversary-mcp-cli status
+adv --version
+adv status
 ```
 
 ## Quick Start
+
+### Semgrep Setup
+```bash
+semgrep login
+```
+This next part is annoying but I recommend using semgrep to
+scan a repository (safe-api, mercury, terra, etc) using
+```bash
+cd /path/to/repo && semgrep ci
+```
+This will download and cache the Semgrep Pro rulesets to use
+our paid subscription. We will solve this in a later release.
 
 ### 1. Configure Security Engine
 
 ```bash
 # Initial configuration
-adversary-mcp-cli configure
+adv configure
 
 # Set up AI provider (optional but recommended)
-adversary-mcp-cli configure --llm-provider openai
+adv configure --llm-provider openai
 # Enter your OpenAI API key when prompted
 
-adversary-mcp-cli configure --llm-provider anthropic
+adv configure --llm-provider anthropic
 # Enter your Anthropic API key when prompted
 
 # Check configuration
-adversary-mcp-cli status
+adv status
 ```
 
 ### 2. Run Your First Scan
 
 ```bash
 # Scan a single file
-adversary-mcp-cli scan path/to/file.py
+adv scan path/to/file.py
 
 # Scan with AI validation (reduces false positives)
-adversary-mcp-cli scan path/to/file.py --use-validation
+adv scan path/to/file.py --use-validation
 
 # Scan entire directory
-adversary-mcp-cli scan ./src --use-llm --use-validation
+adv scan ./src --use-llm --use-validation
 ```
 
 ## Cursor IDE Setup
@@ -117,7 +126,7 @@ Create `.cursor/mcp.json` in your project:
   "mcpServers": {
     "adversary": {
       "command": "python",
-      "args": ["-m", "adversary_mcp_server.server"],
+      "args": ["-m", "adversary_mcp_server.mcp_server_clean"],
     }
   }
 }
@@ -129,7 +138,7 @@ Create `.cursor/mcp.json` in your project:
   "mcpServers": {
     "adversary": {
       "command": "/path/to/.venv/bin/python",
-      "args": ["-m", "adversary_mcp_server.server"]
+      "args": ["-m", "adversary_mcp_server.mcp_server_clean"]
     }
   }
 }
@@ -150,55 +159,55 @@ Once configured, these tools are available in Cursor's chat:
 
 ```bash
 # Configure the scanner
-adversary-mcp-cli configure
+adv configure
 
 # Check status and configuration
-adversary-mcp-cli status
+adv status
 
 # Scan files or directories
-adversary-mcp-cli scan <path> [options]
+adv scan <path> [options]
 
 # Launch comprehensive telemetry dashboard
-adversary-mcp-cli dashboard
+adv dashboard
 
 # Manage false positives
-adversary-mcp-cli mark-false-positive <finding-id>
-adversary-mcp-cli unmark-false-positive <finding-id>
+adv mark-false-positive <finding-id>
+adv unmark-false-positive <finding-id>
 ```
 
 ### Scanning Examples
 
 ```bash
 # Basic scan
-adversary-mcp-cli scan app.py
+adv scan app.py
 
 # Scan with AI analysis and validation
-adversary-mcp-cli scan ./src --use-llm --use-validation
+adv scan ./src --use-llm --use-validation
 
 # Scan only changed files (great for CI/CD)
-adversary-mcp-cli diff-scan main feature-branch
+adv diff-scan main feature-branch
 
 # Output results as JSON
-adversary-mcp-cli scan ./src --json --output results.json
+adv scan ./src --json --output results.json
 
 # Scan with specific severity threshold
-adversary-mcp-cli scan ./src --min-severity high
+adv scan ./src --min-severity high
 ```
 
 ### Dashboard Commands
 
 ```bash
 # Launch comprehensive telemetry dashboard
-adversary-mcp-cli dashboard
+adv dashboard
 
 # Dashboard for specific time period
-adversary-mcp-cli dashboard --hours 72
+adv dashboard --hours 72
 
 # Generate dashboard without auto-launch
-adversary-mcp-cli dashboard --no-launch
+adv dashboard --no-launch
 
 # Check telemetry system status
-adversary-mcp-cli status
+adv status
 ```
 
 ### Advanced Options
@@ -251,13 +260,13 @@ The scanner includes a rich web-based dashboard for comprehensive telemetry anal
 
 ```bash
 # Launch interactive dashboard
-adversary-mcp-cli dashboard
+adv dashboard
 
 # Open dashboard for specific time period
-adversary-mcp-cli dashboard --hours 48
+adv dashboard --hours 48
 
 # Generate dashboard without auto-launch
-adversary-mcp-cli dashboard --no-launch
+adv dashboard --no-launch
 ```
 
 **Dashboard Features:**
@@ -303,89 +312,171 @@ Adversary MCP Server includes comprehensive telemetry tracking:
 
 ## Architecture
 
+### Clean Architecture Implementation
+
+Adversary MCP Server is built using **Clean Architecture** principles with Domain-Driven Design (DDD), ensuring separation of concerns, maintainability, and testability.
+
 <div align="center">
 
 ```mermaid
 graph TB
-    subgraph "Client Layer"
+    subgraph "🖥️ **Presentation Layer**"
         A[Cursor IDE]
         B[CLI Interface]
         C[Web Dashboard]
     end
 
-    subgraph "MCP Server"
-        D[Protocol Handler]
-        E[Tool Registry]
+    subgraph "🔧 **Application Layer**"
+        D[MCP Server]
+        E[CLI Commands]
+        F[Adapters]
+        subgraph "Adapters"
+            F1[SemgrepAdapter]
+            F2[LLMAdapter]
+            F3[ValidationAdapter]
+        end
     end
 
-    subgraph "Scan Engine"
-        F[Orchestrator]
-        G[Semgrep Scanner]
-        H[LLM Scanner]
-        I[Git Diff Scanner]
+    subgraph "🏛️ **Domain Layer (Business Logic)**"
+        subgraph "Entities"
+            G[ScanRequest]
+            H[ScanResult]
+            I[ThreatMatch]
+        end
+        subgraph "Value Objects"
+            J[ScanContext]
+            K[SeverityLevel]
+            L[ConfidenceScore]
+            M[FilePath]
+        end
+        subgraph "Domain Services"
+            N[ScanOrchestrator]
+            O[ThreatAggregator]
+            P[ValidationService]
+        end
+        subgraph "Interfaces"
+            Q[IScanStrategy]
+            R[IValidationStrategy]
+        end
     end
 
-    subgraph "AI Validation"
-        J[LLM Validator]
-        K[False Positive Filter]
-    end
-
-    subgraph "Telemetry System"
-        L[Metrics Orchestrator]
-        M[Telemetry Service]
-        N[SQLAlchemy Database]
-        O[HTML Dashboard Generator]
-    end
-
-    subgraph "Results"
-        P[Finding Aggregator]
-        Q[Report Generator]
+    subgraph "⚙️ **Infrastructure Layer**"
+        S[SemgrepScanner]
+        T[LLMScanner]
+        U[LLMValidator]
+        V[SQLAlchemy Database]
+        W[File System]
+        X[Git Operations]
+        Y[Telemetry System]
     end
 
     A -->|MCP Protocol| D
-    B -->|Direct Call| F
-    C -->|Web Interface| O
-    D --> E
+    B --> E
+    C --> Y
+
+    D --> F
     E --> F
+    F1 --> N
+    F2 --> N
+    F3 --> P
 
-    F --> G
-    F --> H
-    F --> I
-    F -.->|Track Performance| L
+    N --> O
+    N --> P
 
-    G --> P
-    H --> P
+    G --> N
+    H --> O
     I --> P
+    J --> G
+    K --> I
+    L --> I
+    M --> G
 
-    P --> J
-    J --> K
-    K --> Q
+    N --> Q
+    P --> R
 
-    L --> M
-    M --> N
-    M --> O
-    D -.->|Track MCP Tools| L
-    B -.->|Track CLI Commands| L
+    F1 -.-> S
+    F2 -.-> T
+    F3 -.-> U
 
-    style F fill:#e1f5fe
-    style J fill:#f3e5f5
-    style G fill:#e8f5e8
-    style H fill:#fff3e0
-    style L fill:#fff8e1
-    style O fill:#f1f8e9
+    S --> W
+    T --> W
+    U --> V
+    Y --> V
+    X --> W
+
+    style N fill:#e1f5fe,stroke:#0277bd,stroke-width:3px
+    style O fill:#e1f5fe,stroke:#0277bd,stroke-width:3px
+    style P fill:#e1f5fe,stroke:#0277bd,stroke-width:3px
+    style G fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    style H fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    style I fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    style F1 fill:#e8f5e8,stroke:#388e3c,stroke-width:2px
+    style F2 fill:#e8f5e8,stroke:#388e3c,stroke-width:2px
+    style F3 fill:#e8f5e8,stroke:#388e3c,stroke-width:2px
 ```
 
 </div>
 
+### Clean Architecture Benefits
+
+1. **🎯 Separation of Concerns**: Business logic isolated from infrastructure
+2. **🔧 Dependency Inversion**: High-level modules don't depend on low-level details
+3. **🧪 Testability**: Pure domain logic enables comprehensive unit testing
+4. **🔄 Maintainability**: Changes to infrastructure don't affect business rules
+5. **📈 Scalability**: New scan strategies and validators easily pluggable
+6. **🛡️ Type Safety**: Rich domain models with comprehensive validation
+
+### Architectural Layers
+
+#### 🏛️ **Domain Layer** (Core Business Logic)
+- **Entities**: `ScanRequest`, `ScanResult`, `ThreatMatch` - Rich business objects
+- **Value Objects**: `ScanContext`, `SeverityLevel`, `ConfidenceScore`, `FilePath` - Immutable domain concepts
+- **Domain Services**: `ScanOrchestrator`, `ThreatAggregator`, `ValidationService` - Pure business orchestration
+- **Interfaces**: `IScanStrategy`, `IValidationStrategy` - Contracts for external dependencies
+
+#### 🔧 **Application Layer** (Use Cases & Coordination)
+- **MCP Server**: Handles Cursor IDE integration via Model Context Protocol
+- **CLI Commands**: Command-line interface for security scanning operations
+- **Adapters**: Bridge domain interfaces with infrastructure implementations
+  - `SemgrepAdapter` - Adapts Semgrep scanner to domain `IScanStrategy`
+  - `LLMAdapter` - Adapts LLM scanner to domain `IScanStrategy`
+  - `ValidationAdapter` - Adapts LLM validator to domain `IValidationStrategy`
+
+#### ⚙️ **Infrastructure Layer** (External Services)
+- **SemgrepScanner**: Static analysis engine integration
+- **LLMScanner**: AI-powered vulnerability detection
+- **LLMValidator**: False positive filtering with LLM analysis
+- **SQLAlchemy Database**: Persistent storage for telemetry and results
+- **File System**: Code file access and Git operations
+- **Telemetry System**: Performance tracking and dashboard generation
+
+### Data Flow Architecture
+
+1. **Input Processing**: `ScanRequest` created with `ScanContext` (file/directory/code)
+2. **Domain Orchestration**: `ScanOrchestrator` coordinates scanning strategies
+3. **Parallel Analysis**: Multiple `IScanStrategy` implementations execute concurrently
+4. **Threat Aggregation**: `ThreatAggregator` deduplicates and merges findings
+5. **Validation Pipeline**: `ValidationService` filters false positives using AI
+6. **Result Assembly**: Rich `ScanResult` with comprehensive metadata
+7. **Presentation**: Results formatted for CLI, MCP, or dashboard consumption
+
+### Key Design Patterns
+
+- **Strategy Pattern**: Pluggable scan and validation strategies
+- **Adapter Pattern**: Infrastructure integration without domain coupling
+- **Factory Pattern**: Bootstrap and dependency injection
+- **Value Objects**: Immutable domain concepts with validation
+- **Domain Services**: Complex business logic coordination
+
 ### How It Works
 
-1. **Multi-Engine Scanning**: Combines Semgrep rules with LLM analysis
-2. **Intelligent Validation**: LLM validator reduces false positives
-3. **Batch Processing**: Optimizes API calls for large codebases
-4. **Git Integration**: Focuses on changed code for faster CI/CD
-5. **Comprehensive Telemetry**: Automatic performance tracking with SQLAlchemy backend
-6. **Interactive Dashboard**: Rich web-based analytics with Chart.js visualizations
-7. **Zero-Config Monitoring**: Telemetry works out-of-the-box with automatic migration
+1. **🔍 Multi-Engine Analysis**: Parallel execution of Semgrep static analysis and LLM AI analysis
+2. **🧠 Intelligent Validation**: LLM-powered false positive reduction with confidence scoring
+3. **📊 Threat Aggregation**: Smart deduplication and merging using fingerprint and proximity strategies
+4. **⚡ Performance Optimization**: Async processing, caching, and batch operations
+5. **📈 Comprehensive Telemetry**: SQLAlchemy-backed metrics with interactive Chart.js dashboard
+6. **🔄 Git Integration**: Diff-aware scanning for efficient CI/CD pipeline integration
+7. **🎛️ Zero-Config Operation**: Auto-discovery and configuration with sensible defaults
 
 ## Configuration
 
@@ -429,7 +520,7 @@ The telemetry system creates a unified SQLAlchemy database at:
 
 ```bash
 # Check telemetry status
-adversary-mcp-cli status
+adv status
 
 # Manually run migration (if needed)
 python -m adversary_mcp_server.migration.database_migration
@@ -456,7 +547,7 @@ jobs:
 
       - name: Run security scan
         run: |
-          adversary-mcp-cli diff-scan origin/main HEAD \
+          adv diff-scan origin/main HEAD \
             --use-validation \
             --min-severity medium \
             --json \
@@ -483,7 +574,7 @@ uv venv
 source .venv/bin/activate  # or `.venv\Scripts\activate` on Windows
 
 # Install in development mode
-uv pip install -e ".[dev]"
+uv pip install -e .[dev]
 
 # Run tests
 make test

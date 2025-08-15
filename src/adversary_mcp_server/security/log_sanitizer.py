@@ -49,6 +49,14 @@ SENSITIVE_PATTERNS = [
         ),
         r"\1bearer_token\2: \3[REDACTED]\5",
     ),
+    # Bearer tokens in values
+    (
+        re.compile(
+            r'(["\']?)Bearer\s+([a-zA-Z0-9_-]{3,})(["\']?)',
+            re.IGNORECASE,
+        ),
+        r"\1Bearer [REDACTED]\3",
+    ),
     # Passwords
     (
         re.compile(
@@ -67,10 +75,10 @@ SENSITIVE_PATTERNS = [
     # Generic secrets
     (
         re.compile(
-            r'(["\']?)secret(["\']?)\s*[:=]\s*(["\']?)([a-zA-Z0-9_-]{3,})(["\']?)',
+            r'(["\']?)(secret[_\w]*)(["\']?)\s*[:=]\s*(["\']?)([a-zA-Z0-9_-]{3,})(["\']?)',
             re.IGNORECASE,
         ),
-        r"\1secret\2: \3[REDACTED]\5",
+        r"\1\2\3: \4[REDACTED]\6",
     ),
     # OpenAI-style keys
     (re.compile(r"sk-[a-zA-Z0-9]{48}", re.IGNORECASE), "[REDACTED-OPENAI-KEY]"),
@@ -80,6 +88,21 @@ SENSITIVE_PATTERNS = [
             r"eyJ[a-zA-Z0-9_-]+\.eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+", re.IGNORECASE
         ),
         "[REDACTED-JWT]",
+    ),
+    # Private keys
+    (
+        re.compile(
+            r"-----BEGIN[A-Z\s]*PRIVATE KEY-----.*?-----END[A-Z\s]*PRIVATE KEY-----",
+            re.IGNORECASE | re.DOTALL,
+        ),
+        "[REDACTED-PRIVATE-KEY]",
+    ),
+    (
+        re.compile(
+            r"-----BEGIN[A-Z\s]*PRIVATE KEY-----",
+            re.IGNORECASE,
+        ),
+        "[REDACTED-PRIVATE-KEY]",
     ),
 ]
 

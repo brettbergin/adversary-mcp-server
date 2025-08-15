@@ -1,12 +1,14 @@
 """Intelligent cache manager with LRU eviction and git-aware invalidation."""
 
 import json
-import sqlite3
 import time
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from ..database.models import AdversaryDatabase
+from ..database.models import CacheEntry as CacheEntryModel
 from ..logger import get_logger
 from ..telemetry.integration import MetricsCollectionOrchestrator
 from ..telemetry.service import TelemetryService
@@ -46,12 +48,19 @@ class CacheManager:
         self.enable_persistence = enable_persistence
         self.metrics_collector = metrics_collector
 
+        # Initialize database connection for ORM operations
+        try:
+            self._db = AdversaryDatabase()
+            logger.debug("Initialized database connection for cache manager")
+        except Exception as e:
+            logger.error(f"Failed to initialize database connection: {e}")
+            raise
+
         # Initialize telemetry system
         self.metrics_orchestrator = metrics_orchestrator
         if self.metrics_orchestrator is None:
             try:
-                db = AdversaryDatabase()
-                telemetry_service = TelemetryService(db)
+                telemetry_service = TelemetryService(self._db)
                 self.metrics_orchestrator = MetricsCollectionOrchestrator(
                     telemetry_service
                 )
@@ -65,9 +74,12 @@ class CacheManager:
         self._stats = CacheStats()
         self._hasher = ContentHasher()
 
-        # SQLite database for metadata and persistence
-        self._db_path = self.cache_dir / "cache_metadata.db"
-        self._init_database()
+        # Initialize database schema (ORM handles this)
+        try:
+            self._db.get_session()  # Ensures database is initialized
+            logger.debug("Database schema initialized for cache manager")
+        except Exception as e:
+            logger.warning(f"Failed to initialize database schema: {e}")
 
         # Load cache from disk if persistence enabled
         if self.enable_persistence:
@@ -77,81 +89,29 @@ class CacheManager:
             f"Cache manager initialized: max_size={max_size_mb}MB, max_age={max_age_hours}h"
         )
 
-    def _init_database(self) -> None:
-        """Initialize SQLite database for cache metadata."""
-        with sqlite3.connect(self._db_path) as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS cache_entries (
-                    key TEXT PRIMARY KEY,
-                    cache_type TEXT NOT NULL,
-                    content_hash TEXT NOT NULL,
-                    metadata_hash TEXT,
-                    created_at REAL NOT NULL,
-                    expires_at REAL,
-                    access_count INTEGER DEFAULT 0,
-                    last_accessed REAL NOT NULL,
-                    size_bytes INTEGER NOT NULL,
-                    file_path TEXT
-                )
-            """
-            )
-
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS cache_stats (
-                    id INTEGER PRIMARY KEY,
-                    hit_count INTEGER DEFAULT 0,
-                    miss_count INTEGER DEFAULT 0,
-                    eviction_count INTEGER DEFAULT 0,
-                    error_count INTEGER DEFAULT 0,
-                    last_cleanup REAL DEFAULT 0
-                )
-            """
-            )
-
-            # Initialize stats if not exists
-            conn.execute(
-                """
-                INSERT OR IGNORE INTO cache_stats (id) VALUES (1)
-            """
-            )
-
-            conn.commit()
-
     def _load_cache(self) -> None:
-        """Load cache entries from disk."""
+        """Load cache entries from disk using SQLAlchemy ORM."""
         try:
-            with sqlite3.connect(self._db_path) as conn:
-                cursor = conn.execute(
-                    """
-                    SELECT key, cache_type, content_hash, metadata_hash,
-                           created_at, expires_at, access_count, last_accessed,
-                           size_bytes, file_path
-                    FROM cache_entries
-                """
-                )
+            with self._db.get_session() as session:
+                entries = session.query(CacheEntryModel).all()
 
                 loaded_count = 0
-                for row in cursor.fetchall():
-                    (
-                        key_str,
-                        cache_type,
-                        content_hash,
-                        metadata_hash,
-                        created_at,
-                        expires_at,
-                        access_count,
-                        last_accessed,
-                        size_bytes,
-                        file_path,
-                    ) = row
+                for entry in entries:
+                    key_str = entry.key
+                    cache_type = entry.cache_type
+                    content_hash = entry.content_hash
+                    created_at = entry.created_at
+                    expires_at = entry.expires_at
+                    access_count = entry.access_count
+                    last_accessed = entry.last_accessed
+                    size_bytes = entry.data_size_bytes
+                    cache_metadata = entry.cache_metadata or {}
 
                     # Reconstruct cache key
                     cache_key = CacheKey(
                         cache_type=CacheType(cache_type),
-                        content_hash=content_hash,
-                        metadata_hash=metadata_hash,
+                        content_hash=str(content_hash),
+                        metadata_hash=cache_metadata.get("metadata_hash", ""),
                     )
 
                     # Try to load data from disk
@@ -164,11 +124,11 @@ class CacheManager:
                             entry = CacheEntry(
                                 key=cache_key,
                                 data=data,
-                                created_at=created_at,
-                                expires_at=expires_at,
-                                access_count=access_count,
-                                last_accessed=last_accessed,
-                                size_bytes=size_bytes,
+                                created_at=float(created_at),
+                                expires_at=float(expires_at) if expires_at else None,
+                                access_count=int(access_count),
+                                last_accessed=float(last_accessed),
+                                size_bytes=int(size_bytes),
                             )
 
                             # Skip expired entries
@@ -182,21 +142,9 @@ class CacheManager:
 
                 logger.info(f"Loaded {loaded_count} cache entries from disk")
 
-                # Load stats
-                cursor = conn.execute(
-                    """
-                    SELECT hit_count, miss_count, eviction_count, error_count
-                    FROM cache_stats WHERE id = 1
-                """
-                )
-                row = cursor.fetchone()
-                if row:
-                    (
-                        self._stats.hit_count,
-                        self._stats.miss_count,
-                        self._stats.eviction_count,
-                        self._stats.error_count,
-                    ) = row
+        except SQLAlchemyError as e:
+            logger.error(f"Failed to load cache from database: {e}")
+            # Initialize empty cache on database error
 
         except Exception as e:
             logger.error(f"Failed to load cache from disk: {e}")
@@ -212,30 +160,42 @@ class CacheManager:
             with open(data_file, "w", encoding="utf-8") as f:
                 json.dump(entry.data, f, indent=2, default=self._json_serializer)
 
-            # Update database metadata
-            with sqlite3.connect(self._db_path) as conn:
-                conn.execute(
-                    """
-                    INSERT OR REPLACE INTO cache_entries
-                    (key, cache_type, content_hash, metadata_hash,
-                     created_at, expires_at, access_count, last_accessed,
-                     size_bytes, file_path)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                    (
-                        key_str,
-                        entry.key.cache_type.value,
-                        entry.key.content_hash,
-                        entry.key.metadata_hash,
-                        entry.created_at,
-                        entry.expires_at,
-                        entry.access_count,
-                        entry.last_accessed,
-                        entry.size_bytes,
-                        str(data_file),
-                    ),
-                )
-                conn.commit()
+            # Update database metadata using ORM
+            try:
+                with self._db.get_session() as session:
+                    # Check if entry exists and update or create
+                    db_entry = (
+                        session.query(CacheEntryModel).filter_by(key=key_str).first()
+                    )
+                    if db_entry:
+                        # Update existing entry
+                        db_entry.cache_type = entry.key.cache_type.value
+                        db_entry.content_hash = entry.key.content_hash
+                        db_entry.created_at = entry.created_at
+                        db_entry.expires_at = entry.expires_at
+                        db_entry.access_count = entry.access_count
+                        db_entry.last_accessed = entry.last_accessed
+                        db_entry.data_size_bytes = entry.size_bytes
+                        db_entry.cache_metadata = {
+                            "metadata_hash": entry.key.metadata_hash
+                        }
+                    else:
+                        # Create new entry
+                        db_entry = CacheEntryModel(
+                            key=key_str,
+                            cache_type=entry.key.cache_type.value,
+                            content_hash=entry.key.content_hash,
+                            created_at=entry.created_at,
+                            expires_at=entry.expires_at,
+                            access_count=entry.access_count,
+                            last_accessed=entry.last_accessed,
+                            data_size_bytes=entry.size_bytes,
+                            cache_metadata={"metadata_hash": entry.key.metadata_hash},
+                        )
+                        session.add(db_entry)
+                    session.commit()
+            except SQLAlchemyError as e:
+                logger.error(f"Failed to save cache entry to database: {e}")
 
         except Exception as e:
             logger.error(f"Failed to save cache entry {key_str}: {e}")
@@ -251,10 +211,18 @@ class CacheManager:
             data_file = self.cache_dir / f"{key_str}.json"
             data_file.unlink(missing_ok=True)
 
-            # Remove from database
-            with sqlite3.connect(self._db_path) as conn:
-                conn.execute("DELETE FROM cache_entries WHERE key = ?", (key_str,))
-                conn.commit()
+            # Remove from database using ORM
+            try:
+                with self._db.get_session() as session:
+                    entry = (
+                        session.query(CacheEntryModel).filter_by(key=key_str).first()
+                    )
+                    if entry:
+                        session.delete(entry)
+                        session.commit()
+                        logger.debug(f"Removed cache entry from database: {key_str}")
+            except SQLAlchemyError as e:
+                logger.error(f"Failed to remove cache entry from database: {e}")
 
         except Exception as e:
             logger.error(f"Failed to remove cache entry {key_str}: {e}")
@@ -559,26 +527,12 @@ class CacheManager:
             entry.size_bytes for entry in self._cache.values()
         )
 
-        # Save updated stats
+        # Save updated stats using ORM
         if self.enable_persistence:
             try:
-                with sqlite3.connect(self._db_path) as conn:
-                    conn.execute(
-                        """
-                        UPDATE cache_stats
-                        SET hit_count = ?, miss_count = ?, eviction_count = ?,
-                            error_count = ?, last_cleanup = ?
-                        WHERE id = 1
-                    """,
-                        (
-                            self._stats.hit_count,
-                            self._stats.miss_count,
-                            self._stats.eviction_count,
-                            self._stats.error_count,
-                            time.time(),
-                        ),
-                    )
-                    conn.commit()
+                # Note: Cache stats are now handled through telemetry system
+                # Legacy stats saving removed in favor of telemetry integration
+                logger.debug("Cache stats are now tracked through telemetry system")
             except Exception as e:
                 logger.error(f"Failed to save cache stats: {e}")
 
