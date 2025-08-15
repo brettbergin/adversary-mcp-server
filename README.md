@@ -63,7 +63,7 @@ adv status
 semgrep login
 ```
 This next part is annoying but I recommend using semgrep to
-scan a repository (safe-api, mercury, terra, etc) using
+scan a repository using
 ```bash
 cd /path/to/repo && semgrep ci
 ```
