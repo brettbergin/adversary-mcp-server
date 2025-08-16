@@ -22,6 +22,7 @@ from adversary_mcp_server.domain.value_objects.file_path import FilePath
 from adversary_mcp_server.domain.value_objects.scan_context import ScanContext
 from adversary_mcp_server.domain.value_objects.scan_metadata import ScanMetadata
 from adversary_mcp_server.domain.value_objects.severity_level import SeverityLevel
+from adversary_mcp_server.scanner.language_mapping import LanguageMapper
 
 
 class ScanApplicationService:
@@ -283,38 +284,9 @@ class ScanApplicationService:
         self._validation_service.update_security_constraints(**constraints)
 
     def _get_extension_for_language(self, language: str) -> str:
-        """Get file extension for a programming language."""
-        extension_map = {
-            "python": "py",
-            "javascript": "js",
-            "typescript": "ts",
-            "java": "java",
-            "go": "go",
-            "rust": "rs",
-            "c": "c",
-            "cpp": "cpp",
-            "csharp": "cs",
-            "php": "php",
-            "ruby": "rb",
-            "swift": "swift",
-            "kotlin": "kt",
-        }
-        return extension_map.get(language.lower(), "txt")
+        """Get file extension for a programming language using shared language mapping."""
+        return LanguageMapper.get_extension_for_language(language)
 
     def _get_supported_languages(self) -> list[str]:
-        """Get list of supported programming languages."""
-        return [
-            "python",
-            "javascript",
-            "typescript",
-            "java",
-            "go",
-            "rust",
-            "c",
-            "cpp",
-            "csharp",
-            "php",
-            "ruby",
-            "swift",
-            "kotlin",
-        ]
+        """Get list of supported programming languages using shared language mapping."""
+        return LanguageMapper.get_supported_languages()

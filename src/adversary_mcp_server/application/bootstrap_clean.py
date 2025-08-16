@@ -66,8 +66,21 @@ class CleanArchitectureBootstrap:
     def get_scan_orchestrator(self) -> ScanOrchestrator:
         """Get domain scan orchestrator."""
         if self._scan_orchestrator is None:
+            self._scan_orchestrator = ScanOrchestrator()
+
+            # Register scan strategies
             strategies = self.get_scan_strategies()
-            self._scan_orchestrator = ScanOrchestrator(strategies)
+            for strategy in strategies:
+                self._scan_orchestrator.register_scan_strategy(strategy)
+
+            # Register validation strategies
+            validation_strategies = self.get_validation_strategies()
+            for strategy in validation_strategies:
+                self._scan_orchestrator.register_validation_strategy(strategy)
+
+            # Set threat aggregator
+            aggregator = self.get_threat_aggregator()
+            self._scan_orchestrator.set_threat_aggregator(aggregator)
 
         return self._scan_orchestrator
 
@@ -81,8 +94,7 @@ class CleanArchitectureBootstrap:
     def get_validation_service(self) -> ValidationService:
         """Get validation service."""
         if self._validation_service is None:
-            validation_strategies = self.get_validation_strategies()
-            self._validation_service = ValidationService(validation_strategies)
+            self._validation_service = ValidationService()
 
         return self._validation_service
 

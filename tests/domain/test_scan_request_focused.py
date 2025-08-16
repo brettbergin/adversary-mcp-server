@@ -132,7 +132,7 @@ class TestScanRequestFocused:
         """Test estimate_scan_complexity method."""
         # Simple file
         simple_request = ScanRequest.for_file_scan(
-            file_path="examples/debug_test.ts", requester="test-user"
+            file_path="examples/vulnerable_typescript.ts", requester="test-user"
         )
         complexity = simple_request.estimate_scan_complexity()
         assert complexity in ["low", "medium", "high"]

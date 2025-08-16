@@ -3,6 +3,10 @@
 import logging
 import re
 
+from ...scanner.language_mapping import (
+    ANALYZABLE_SOURCE_EXTENSIONS,
+    BLOCKED_PATH_PATTERNS,
+)
 from ..entities.scan_request import ScanRequest
 from ..entities.scan_result import ScanResult
 from ..entities.threat_match import ThreatMatch
@@ -27,57 +31,11 @@ class ValidationService(IValidationService):
         self._max_directory_files = 1000
         self._max_code_snippet_lines = 1000
 
-        # Blocked paths for security
-        self._blocked_path_patterns = {
-            r".*\.git/.*",
-            r".*\.ssh/.*",
-            r".*\.gnupg/.*",
-            r".*/proc/.*",
-            r".*/sys/.*",
-            r".*/dev/.*",
-            r".*\.env$",
-            r".*\.key$",
-            r".*\.pem$",
-            r".*password.*",
-            r".*secret.*",
-        }
+        # Blocked paths for security (use shared constants)
+        self._blocked_path_patterns = BLOCKED_PATH_PATTERNS.copy()
 
-        # Allowed file extensions for scanning
-        self._allowed_extensions = {
-            ".py",
-            ".js",
-            ".ts",
-            ".jsx",
-            ".tsx",
-            ".java",
-            ".c",
-            ".cpp",
-            ".cc",
-            ".h",
-            ".hpp",
-            ".cs",
-            ".go",
-            ".rs",
-            ".php",
-            ".rb",
-            ".swift",
-            ".kt",
-            ".scala",
-            ".sh",
-            ".bash",
-            ".zsh",
-            ".ps1",
-            ".yaml",
-            ".yml",
-            ".json",
-            ".xml",
-            ".html",
-            ".css",
-            ".sql",
-            ".dockerfile",
-            ".tf",
-            ".hcl",
-        }
+        # Allowed file extensions for scanning (use shared constants)
+        self._allowed_extensions = ANALYZABLE_SOURCE_EXTENSIONS.copy()
 
         # Required threat fields
         self._required_threat_fields = {

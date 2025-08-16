@@ -50,11 +50,11 @@ def reset_credential_manager():
     from keychain on next access.
     """
     global _credential_manager_instance
-    logger.warning("Resetting CredentialManager singleton instance")
     if _credential_manager_instance is not None:
         # Clear the instance's cache
         _credential_manager_instance._config_cache = None
         _credential_manager_instance._cache_loaded = False
+
     _credential_manager_instance = None
     CredentialManager._instance = None
     CredentialManager._initialized = False

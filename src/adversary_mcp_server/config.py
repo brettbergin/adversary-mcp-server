@@ -76,7 +76,7 @@ class SecurityConfig:
     # Semgrep configuration (auto-detects from environment)
     semgrep_config: str | None = None  # Custom config path (optional)
     semgrep_rules: str | None = None  # Specific rules (default: auto)
-    # Note: semgrep_api_key is managed through CLI keyring, not environment variables
+    semgrep_api_key: str | None = None  # Semgrep API key (managed through keyring)
 
     # ========== EXPLOIT GENERATION ==========
     # Educational exploit generation settings

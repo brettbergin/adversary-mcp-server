@@ -11,8 +11,15 @@ from mcp.server.models import InitializationOptions
 from mcp.types import ServerCapabilities, Tool, ToolsCapability
 from pydantic import BaseModel
 
+from adversary_mcp_server.application.services.false_positive_service import (
+    FalsePositiveService,
+)
 from adversary_mcp_server.application.services.scan_application_service import (
     ScanApplicationService,
+)
+from adversary_mcp_server.application.services.scan_persistence_service import (
+    OutputFormat,
+    ScanResultPersistenceService,
 )
 from adversary_mcp_server.domain.entities.scan_result import ScanResult
 from adversary_mcp_server.domain.entities.threat_match import ThreatMatch
@@ -22,8 +29,10 @@ from adversary_mcp_server.domain.interfaces import (
     ValidationError,
 )
 from adversary_mcp_server.domain.value_objects.severity_level import SeverityLevel
+from adversary_mcp_server.infrastructure.false_positive_json_repository import (
+    FalsePositiveJsonRepository,
+)
 from adversary_mcp_server.logger import get_logger
-from adversary_mcp_server.scanner.false_positive_manager import FalsePositiveManager
 from adversary_mcp_server.security import InputValidator
 
 logger = get_logger("clean_mcp_server")
@@ -73,6 +82,7 @@ class CleanMCPServer:
         """Initialize the Clean Architecture MCP server."""
         self.server = Server("adversary-clean")
         self._scan_service = ScanApplicationService()
+        self._persistence_service = ScanResultPersistenceService()
         self._input_validator = InputValidator()
 
         # Register MCP tools
@@ -131,6 +141,7 @@ class CleanMCPServer:
             severity_threshold = validated_args.get("severity_threshold", "medium")
             timeout_seconds = validated_args.get("timeout_seconds")
             language = validated_args.get("language")
+            output_format = validated_args.get("output_format", "json")
 
             # Execute scan using domain service
             result = await self._scan_service.scan_file(
@@ -144,8 +155,26 @@ class CleanMCPServer:
                 language=language,
             )
 
+            # Persist scan result automatically
+            try:
+                output_format_enum = OutputFormat.from_string(output_format)
+                file_path = await self._persistence_service.persist_scan_result(
+                    result, output_format_enum
+                )
+                logger.info(f"Scan result persisted to {file_path}")
+            except Exception as e:
+                logger.warning(f"Failed to persist scan result: {e}")
+                # Don't fail the scan if persistence fails
+
             # Format result for MCP response
             formatted_result = self._format_scan_result(result)
+
+            # Add persistence info to the response
+            formatted_result["persistence"] = {
+                "output_format": output_format,
+                "file_path": file_path if "file_path" in locals() else None,
+                "persisted": "file_path" in locals(),
+            }
 
             return [
                 types.TextContent(
@@ -179,6 +208,7 @@ class CleanMCPServer:
             severity_threshold = validated_args.get("severity_threshold", "medium")
             timeout_seconds = validated_args.get("timeout_seconds")
             recursive = validated_args.get("recursive", True)
+            output_format = validated_args.get("output_format", "json")
 
             result = await self._scan_service.scan_directory(
                 directory_path=path,
@@ -191,7 +221,25 @@ class CleanMCPServer:
                 recursive=recursive,
             )
 
+            # Persist scan result automatically
+            try:
+                output_format_enum = OutputFormat.from_string(output_format)
+                file_path = await self._persistence_service.persist_scan_result(
+                    result, output_format_enum
+                )
+                logger.info(f"Scan result persisted to {file_path}")
+            except Exception as e:
+                logger.warning(f"Failed to persist scan result: {e}")
+                # Don't fail the scan if persistence fails
+
             formatted_result = self._format_scan_result(result)
+
+            # Add persistence info to the response
+            formatted_result["persistence"] = {
+                "output_format": output_format,
+                "file_path": file_path if "file_path" in locals() else None,
+                "persisted": "file_path" in locals(),
+            }
 
             return [
                 types.TextContent(
@@ -232,6 +280,7 @@ class CleanMCPServer:
             )  # Default to true for code analysis
             use_validation = validated_args.get("use_validation", False)
             severity_threshold = validated_args.get("severity_threshold", "medium")
+            output_format = validated_args.get("output_format", "json")
 
             result = await self._scan_service.scan_code(
                 code_content=content,
@@ -243,7 +292,25 @@ class CleanMCPServer:
                 severity_threshold=severity_threshold,
             )
 
+            # Persist scan result automatically
+            try:
+                output_format_enum = OutputFormat.from_string(output_format)
+                file_path = await self._persistence_service.persist_scan_result(
+                    result, output_format_enum
+                )
+                logger.info(f"Scan result persisted to {file_path}")
+            except Exception as e:
+                logger.warning(f"Failed to persist scan result: {e}")
+                # Don't fail the scan if persistence fails
+
             formatted_result = self._format_scan_result(result)
+
+            # Add persistence info to the response
+            formatted_result["persistence"] = {
+                "output_format": output_format,
+                "file_path": file_path if "file_path" in locals() else None,
+                "persisted": "file_path" in locals(),
+            }
 
             return [
                 types.TextContent(
@@ -269,8 +336,7 @@ class CleanMCPServer:
             security_constraints = self._scan_service.get_security_constraints()
 
             status = {
-                "server": "adversary-clean",
-                "architecture": "clean_architecture",
+                "server": "adversary",
                 "capabilities": capabilities,
                 "security_constraints": security_constraints,
                 "status": "operational",
@@ -295,7 +361,6 @@ class CleanMCPServer:
 
             version_info = {
                 "version": get_version(),
-                "architecture": "clean_architecture",
                 "server_type": "mcp",
                 "domain_layer": "enabled",
             }
@@ -328,12 +393,13 @@ class CleanMCPServer:
             if not finding_uuid:
                 raise CleanAdversaryToolError("finding_uuid parameter is required")
 
-            # Initialize false positive manager
-            fp_manager = FalsePositiveManager(adversary_file_path)
+            # Initialize false positive repository and service
+            fp_repository = FalsePositiveJsonRepository(adversary_file_path)
+            fp_service = FalsePositiveService(fp_repository)
 
             # Mark as false positive
-            success = fp_manager.mark_false_positive(
-                finding_uuid=finding_uuid, reason=reason, marked_by=marked_by
+            success = await fp_service.mark_as_false_positive(
+                uuid=finding_uuid, reason=reason, marked_by=marked_by
             )
 
             result = {
@@ -370,11 +436,12 @@ class CleanMCPServer:
             if not finding_uuid:
                 raise CleanAdversaryToolError("finding_uuid parameter is required")
 
-            # Initialize false positive manager
-            fp_manager = FalsePositiveManager(adversary_file_path)
+            # Initialize false positive repository and service
+            fp_repository = FalsePositiveJsonRepository(adversary_file_path)
+            fp_service = FalsePositiveService(fp_repository)
 
             # Unmark false positive
-            success = fp_manager.unmark_false_positive(finding_uuid)
+            success = await fp_service.unmark_false_positive(finding_uuid)
 
             result = {
                 "success": success,
@@ -500,6 +567,12 @@ class CleanMCPServer:
                             "type": "string",
                             "description": "Programming language hint",
                         },
+                        "output_format": {
+                            "type": "string",
+                            "description": "Output format for persisted scan results",
+                            "enum": ["json", "md", "markdown", "csv"],
+                            "default": "json",
+                        },
                     },
                     "required": ["path"],
                 },
@@ -544,6 +617,12 @@ class CleanMCPServer:
                             "description": "Scan subdirectories",
                             "default": True,
                         },
+                        "output_format": {
+                            "type": "string",
+                            "description": "Output format for persisted scan results",
+                            "enum": ["json", "md", "markdown", "csv"],
+                            "default": "json",
+                        },
                     },
                 },
             ),
@@ -580,6 +659,12 @@ class CleanMCPServer:
                             "type": "string",
                             "description": "Minimum severity level",
                             "default": "medium",
+                        },
+                        "output_format": {
+                            "type": "string",
+                            "description": "Output format for persisted scan results",
+                            "enum": ["json", "md", "markdown", "csv"],
+                            "default": "json",
                         },
                     },
                     "required": ["content", "language"],

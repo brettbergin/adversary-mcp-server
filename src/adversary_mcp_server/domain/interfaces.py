@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from .entities.scan_request import ScanRequest
     from .entities.scan_result import ScanResult
     from .entities.threat_match import ThreatMatch
+    from .value_objects.false_positive_info import FalsePositiveInfo
     from .value_objects.scan_context import ScanContext
 
 
@@ -272,6 +273,61 @@ class IValidationService(ABC):
         pass
 
 
+@runtime_checkable
+class IFalsePositiveRepository(Protocol):
+    """
+    Protocol defining the contract for false positive data persistence.
+
+    Repository implementations handle storage and retrieval of false positive
+    information while maintaining domain model integrity.
+    """
+
+    async def get_false_positive_info(self, uuid: str) -> "FalsePositiveInfo | None":
+        """
+        Retrieve false positive information for a finding.
+
+        Args:
+            uuid: UUID of the finding
+
+        Returns:
+            FalsePositiveInfo if found, None otherwise
+        """
+        ...
+
+    async def save_false_positive_info(self, info: "FalsePositiveInfo") -> bool:
+        """
+        Save false positive information.
+
+        Args:
+            info: False positive information to save
+
+        Returns:
+            True if saved successfully, False otherwise
+        """
+        ...
+
+    async def remove_false_positive_info(self, uuid: str) -> bool:
+        """
+        Remove false positive information for a finding.
+
+        Args:
+            uuid: UUID of the finding
+
+        Returns:
+            True if removed successfully, False if not found
+        """
+        ...
+
+    async def list_false_positives(self) -> list["FalsePositiveInfo"]:
+        """
+        List all false positive information.
+
+        Returns:
+            List of all false positive entries
+        """
+        ...
+
+
 # Helper Types for Type Hints
 
 ScanStrategyType = IScanStrategy
@@ -286,6 +342,7 @@ __all__ = [
     "IThreatAggregator",
     "IScanOrchestrator",
     "IValidationService",
+    "IFalsePositiveRepository",
     "ScanError",
     "ValidationError",
     "AggregationError",

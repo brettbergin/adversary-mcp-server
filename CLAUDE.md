@@ -211,6 +211,9 @@ Bridge domain interfaces with infrastructure implementations:
 #### **Application Services** (`src/adversary_mcp_server/application/`)
 Coordinate use cases and handle cross-cutting concerns:
 
+- **`ScanApplicationService`** - Core scanning orchestration using domain services
+- **`ScanResultPersistenceService`** - Automatic scan result persistence with multi-format support
+- **`FalsePositiveService`** - Clean Architecture false positive management
 - **`CleanMCPServer`** (`mcp/clean_server.py`) - MCP protocol implementation using Clean Architecture
 - **`CleanCLI`** (`cli/clean_cli.py`) - Command-line interface using domain services
 - **`CleanArchitectureBootstrap`** (`bootstrap_clean.py`) - Dependency injection configuration
@@ -299,6 +302,27 @@ External tools wrapped by adapters:
 - **CLI Flexibility**: Full command-line interface with validation controls
 - **Rich Output**: Structured JSON results with comprehensive metadata
 
+#### Automatic Scan Result Persistence
+- **Multi-Format Support**: Automatically saves scan results in JSON, Markdown, and CSV formats
+- **Smart File Placement**: Context-aware automatic placement logic
+  - **File scans**: `.adversary.*` files placed in same directory as scanned file
+  - **Directory scans**: `.adversary.*` files placed in the scanned directory
+  - **Code scans**: `.adversary.*` files placed in current working directory
+- **Conflict Resolution**: Automatic incremental suffixes (`adversary-1.json`, etc.) when files exist
+- **MCP Integration**: All MCP tools support `output_format` parameter (`json`, `md`, `markdown`, `csv`)
+- **CLI Integration**: Automatic persistence in all CLI scan commands with verbose reporting
+- **Error Resilience**: Scans continue successfully even if persistence fails
+- **Clean Architecture**: Built using domain services with proper dependency injection
+
+#### False Positive Management (Clean Architecture)
+- **Domain-Driven Design**: `FalsePositiveInfo` value object with immutable validation rules
+- **Repository Pattern**: `IFalsePositiveRepository` interface with JSON file adapter
+- **Application Service**: `FalsePositiveService` provides business logic for marking/unmarking
+- **MCP Tool Support**: `adv_mark_false_positive` and `adv_unmark_false_positive` tools
+- **Data Persistence**: False positive information stored directly in `.adversary.json` files
+- **Performance Optimization**: Intelligent caching with automatic cache invalidation
+- **Statistics & Reporting**: Comprehensive false positive analytics and reporting
+
 ### Testing Strategy
 
 - **Unit Tests**: Individual component testing with mocks
@@ -337,6 +361,9 @@ The server provides tools for Cursor IDE through the MCP protocol:
 - Tools accept structured parameters with validation
 - Results include detailed findings, metadata, and remediation guidance
 - Validation can be enabled/disabled per scan operation
+- **Automatic Persistence**: All scan tools automatically create `.adversary.*` files alongside scanned code
+- **Multi-Format Support**: `output_format` parameter supports `json`, `md`, `markdown`, `csv` formats
+- **Persistence Metadata**: MCP responses include persistence information (file path, format, success status)
 - Hot-reload capability for real-time rule updates during development
 
 ### MCP Tool Design Patterns
@@ -371,6 +398,9 @@ The server provides tools for Cursor IDE through the MCP protocol:
 Full command-line interface with validation support:
 - `--use-validation/--no-validation` flags control LLM validation
 - `--use-llm/--no-llm` and `--use-semgrep/--no-semgrep` control scan engines
+- **Automatic Persistence**: All CLI scan commands automatically create `.adversary.*` files alongside scanned code
+- **Multi-Format Support**: `--output-format` parameter supports `json`, `markdown`, `csv` formats
+- **Verbose Reporting**: `--verbose` flag shows persistence file locations and status
 - Status command shows validation availability and configuration
 - Git diff scanning fully supported with validation
 - JSON output includes validation statistics and metadata

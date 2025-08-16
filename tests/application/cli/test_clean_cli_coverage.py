@@ -418,6 +418,7 @@ class TestCleanCLI:
             patch(
                 "adversary_mcp_server.application.cli.clean_cli.console"
             ) as mock_console,
+            patch("builtins.print") as mock_print,
         ):
 
             # Setup mocks
@@ -434,7 +435,8 @@ class TestCleanCLI:
             await cli._output_results(mock_result, "json", None, False)
 
             mock_formatter.format_json.assert_called_once_with(mock_result)
-            mock_console.print.assert_called_with('{"test": "result"}')
+            # JSON output to stdout now uses plain print() instead of console.print()
+            mock_print.assert_called_with('{"test": "result"}')
 
     @pytest.mark.asyncio
     async def test_output_results_json_to_file(self):

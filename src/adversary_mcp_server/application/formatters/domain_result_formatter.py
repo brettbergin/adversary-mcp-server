@@ -1,6 +1,8 @@
 """Result formatter for domain ScanResult objects with Clean Architecture."""
 
 import json
+from datetime import date, datetime
+from pathlib import Path
 from typing import Any
 
 from adversary_mcp_server.domain.entities.scan_result import ScanResult
@@ -28,9 +30,55 @@ class DomainScanResultFormatter:
         self.include_exploits = include_exploits
 
     def format_json(self, result: ScanResult) -> str:
-        """Format scan result as JSON string."""
+        """Format scan result as JSON string with proper control character handling."""
         formatted_data = self.format_dict(result)
-        return json.dumps(formatted_data, indent=2, default=str)
+        return json.dumps(
+            formatted_data,
+            indent=2,
+            ensure_ascii=False,
+            separators=(",", ": "),
+            default=self._json_serializer,
+        )
+
+    def _json_serializer(self, obj):
+        """Custom JSON serializer with explicit handling for domain objects."""
+        # Handle domain objects with to_dict methods
+        if hasattr(obj, "to_dict") and callable(obj.to_dict):
+            return obj.to_dict()
+
+        # Handle datetime objects
+        elif isinstance(obj, datetime | date):
+            return obj.isoformat()
+
+        # Handle Path objects
+        elif isinstance(obj, Path | type(Path())):
+            return str(obj)
+
+        # Handle domain value objects with string representation
+        elif hasattr(obj, "__str__"):
+            text = str(obj)
+            # Sanitize control characters that break JSON
+            return self._sanitize_for_json(text)
+
+        else:
+            raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+
+    def _sanitize_for_json(self, text: str) -> str:
+        """Remove control characters that break JSON parsing."""
+        if not isinstance(text, str):
+            return str(text)
+
+        # Remove problematic control characters using built-in string methods
+        # Keep normal whitespace (\t, \n, \r) which json.dumps handles properly
+        result = []
+        for char in text:
+            char_code = ord(char)
+            # Allow normal chars (32+), and common whitespace (9, 10, 13)
+            if char_code >= 32 or char_code in (9, 10, 13):
+                result.append(char)
+            # Skip other control characters (0-8, 11, 12, 14-31)
+
+        return "".join(result)
 
     def format_dict(self, result: ScanResult) -> dict[str, Any]:
         """Format scan result as dictionary."""
@@ -92,7 +140,7 @@ class DomainScanResultFormatter:
                     lines.append(threat.code_snippet)
                     lines.append("```")
 
-                if threat.remediation_advice:
+                if hasattr(threat, "remediation_advice"):
                     lines.append("- **Remediation**:")
                     for advice in threat.remediation_advice:
                         lines.append(f"  - {advice}")
@@ -229,10 +277,11 @@ class DomainScanResultFormatter:
 
         for threat in threats:
             threat_data = {
-                "rule_id": threat.rule_id,
-                "rule_name": threat.rule_name,
-                "description": threat.description,
-                "category": threat.category,
+                "uuid": threat.uuid,  # Required for false positive tracking
+                "rule_id": self._sanitize_for_json(threat.rule_id),
+                "rule_name": self._sanitize_for_json(threat.rule_name),
+                "description": self._sanitize_for_json(threat.description),
+                "category": self._sanitize_for_json(threat.category),
                 "severity": str(threat.severity),
                 "confidence": {
                     "score": threat.confidence.get_decimal(),
@@ -244,9 +293,9 @@ class DomainScanResultFormatter:
                     "line_number": threat.line_number,
                     "column_number": threat.column_number,
                 },
-                "code_snippet": threat.code_snippet,
-                "source_scanner": threat.source_scanner,
-                "fingerprint": threat.get_fingerprint(),
+                "code_snippet": self._sanitize_for_json(threat.code_snippet),
+                "source_scanner": self._sanitize_for_json(threat.source_scanner),
+                "fingerprint": self._sanitize_for_json(threat.get_fingerprint()),
                 "is_false_positive": threat.is_false_positive,
             }
 
@@ -255,7 +304,9 @@ class DomainScanResultFormatter:
             #     threat_data["false_positive_reason"] = threat.false_positive_reason
 
             if threat.remediation:
-                threat_data["remediation_advice"] = threat.remediation
+                threat_data["remediation_advice"] = self._sanitize_for_json(
+                    threat.remediation
+                )
 
             if self.include_exploits and threat.exploit_examples:
                 threat_data["exploit_examples"] = threat.exploit_examples
