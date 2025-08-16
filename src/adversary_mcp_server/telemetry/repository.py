@@ -562,6 +562,15 @@ class ComprehensiveTelemetryRepository:
             .all()
         )
 
+        # Get individual threat findings for detailed dashboard table
+        threat_findings = (
+            self.session.query(ThreatFinding)
+            .filter(ThreatFinding.timestamp > since)
+            .order_by(ThreatFinding.timestamp.desc())
+            .limit(100)  # Limit to prevent overwhelming the dashboard
+            .all()
+        )
+
         return {
             "mcp_tools": [
                 {
@@ -628,5 +637,22 @@ class ComprehensiveTelemetryRepository:
                     "threats_found": stat.threats_found or 0,
                 }
                 for stat in language_performance
+            ],
+            "threat_findings": [
+                {
+                    "finding_uuid": finding.finding_uuid,
+                    "title": finding.title,
+                    "category": finding.category,
+                    "severity": finding.severity,
+                    "scanner_source": finding.scanner_source,
+                    "file_path": finding.file_path,
+                    "line_start": finding.line_start,
+                    "confidence": finding.confidence or 0,
+                    "is_validated": finding.is_validated,
+                    "is_false_positive": finding.is_false_positive,
+                    "timestamp": finding.timestamp,
+                    "scan_id": finding.scan_id,
+                }
+                for finding in threat_findings
             ],
         }

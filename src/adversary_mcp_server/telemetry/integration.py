@@ -10,6 +10,11 @@ from typing import Any
 
 import psutil
 
+from adversary_mcp_server.application.adapters.input_models import (
+    TelemetryInput,
+    safe_convert_to_input_model,
+)
+
 from .service import TelemetryService
 
 
@@ -281,28 +286,30 @@ class MetricsCollectionOrchestrator:
         """Record threat finding with comprehensive context."""
         finding_uuid = str(uuid.uuid4())
 
-        # Extract finding details (adapt based on your threat finding structure)
+        # Convert threat finding to type-safe input model
+        safe_finding = safe_convert_to_input_model(threat_finding, TelemetryInput)
+
         return self.telemetry.record_threat_finding(
             scan_id=scan_id,
             finding_uuid=finding_uuid,
             scanner_source=scanner_source,
-            category=getattr(threat_finding, "category", "unknown"),
-            severity=getattr(threat_finding, "severity", "medium"),
-            file_path=getattr(threat_finding, "file_path", ""),
-            line_start=getattr(threat_finding, "line_start", 0),
-            line_end=getattr(threat_finding, "line_end", 0),
-            title=getattr(threat_finding, "title", "Security Finding"),
-            rule_id=getattr(threat_finding, "rule_id", None),
-            confidence=getattr(threat_finding, "confidence", None),
-            column_start=getattr(threat_finding, "column_start", None),
-            column_end=getattr(threat_finding, "column_end", None),
-            code_snippet=getattr(threat_finding, "code_snippet", None),
-            description=getattr(threat_finding, "description", None),
-            remediation=getattr(threat_finding, "remediation", None),
-            references=getattr(threat_finding, "references", None),
-            is_validated=getattr(threat_finding, "is_validated", False),
-            is_false_positive=getattr(threat_finding, "is_false_positive", False),
-            validation_reason=getattr(threat_finding, "validation_reason", None),
+            category=safe_finding.category,
+            severity=safe_finding.severity,
+            file_path=safe_finding.file_path,
+            line_start=safe_finding.line_start,
+            line_end=safe_finding.line_end,
+            title=safe_finding.title,
+            rule_id=safe_finding.rule_id,
+            confidence=safe_finding.confidence,
+            column_start=safe_finding.column_start,
+            column_end=safe_finding.column_end,
+            code_snippet=safe_finding.code_snippet,
+            description=safe_finding.description,
+            remediation=safe_finding.remediation,
+            references=safe_finding.references,
+            is_validated=safe_finding.is_validated,
+            is_false_positive=safe_finding.is_false_positive,
+            validation_reason=safe_finding.validation_reason,
         )
 
     # === SYSTEM HEALTH MONITORING ===

@@ -90,10 +90,23 @@ __author__ = "Brett Bergin"
 __email__ = "brettberginbc@yahoo.com"
 __description__ = "MCP server for security vulnerability scanning and detection"
 
-from .scanner.exploit_generator import ExploitGenerator
-from .server import AdversaryMCPServer
+
+# Lazy imports to avoid loading heavy dependencies for simple operations
+def __getattr__(name: str):
+    """Lazy loading of heavy components to improve startup time."""
+    if name == "CleanMCPServer":
+        from .application.mcp_server import CleanMCPServer
+
+        return CleanMCPServer
+    elif name == "ExploitGenerator":
+        from .scanner.exploit_generator import ExploitGenerator
+
+        return ExploitGenerator
+    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
+
 
 __all__ = [
-    "AdversaryMCPServer",
+    "CleanMCPServer",  # Clean Architecture MCP server
     "ExploitGenerator",
+    "get_version",  # Fast version access
 ]

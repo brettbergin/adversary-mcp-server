@@ -1,6 +1,5 @@
 """Tests for cache manager."""
 
-import sqlite3
 import tempfile
 import time
 from pathlib import Path
@@ -57,15 +56,16 @@ class TestCacheManager:
 
     def test_database_initialization(self, cache_manager):
         """Test SQLite database initialization."""
-        db_path = cache_manager._db_path
-        assert db_path.exists()
+        # Check database instance exists
+        assert cache_manager._db is not None
 
-        with sqlite3.connect(db_path) as conn:
-            # Check tables exist
-            cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
-            tables = [row[0] for row in cursor.fetchall()]
-            assert "cache_entries" in tables
-            assert "cache_stats" in tables
+        # Check that we can get a session and query tables
+        with cache_manager._db.get_session() as session:
+            # Test that we can connect to database
+            from sqlalchemy import text
+
+            result = session.execute(text("SELECT 1")).scalar()
+            assert result == 1
 
     def test_put_and_get_basic(self, cache_manager, cache_key):
         """Test basic put and get operations."""

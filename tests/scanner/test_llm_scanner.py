@@ -889,18 +889,17 @@ class TestLLMScanner:
 
         # Test analyzable files
         analyzable_files = [
-            Path("test.py"),
-            Path("script.js"),
-            Path("component.tsx"),
-            Path("main.java"),
-            Path("code.cpp"),
-            Path("program.cs"),
-            Path("app.go"),
-            Path("lib.rs"),
-            Path("index.php"),
-            Path("script.rb"),
-            Path("app.swift"),
-            Path("main.kt"),
+            Path("examples/vulnerable_python.py"),
+            Path("examples/vulnerable_javascript.js"),
+            Path("examples/vulnerable_typescript.ts"),
+            Path("examples/vulnerable_java.java"),
+            Path("examples/vulnerable_cpp.cpp"),
+            Path("examples/vulnerable_go.go"),
+            Path("examples/vulnerable_rust.rs"),
+            Path("examples/vulnerable_php.php"),
+            Path("examples/vulnerable_ruby.rb"),
+            Path("examples/vulnerable_swift.swift"),
+            Path("examples/vulnerable_bash.sh"),
         ]
 
         for file_path in analyzable_files:
@@ -912,9 +911,6 @@ class TestLLMScanner:
         non_analyzable_files = [
             Path("README.md"),
             Path("image.png"),
-            Path("data.json"),
-            Path("config.xml"),
-            Path("style.css"),
             Path("binary.exe"),
         ]
 

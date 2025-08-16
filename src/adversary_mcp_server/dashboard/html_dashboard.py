@@ -43,6 +43,7 @@ class ComprehensiveHTMLDashboard:
         self.jinja_env.filters["format_duration"] = self._format_duration
         self.jinja_env.filters["format_size"] = self._format_size
         self.jinja_env.filters["percentage"] = self._format_percentage
+        self.jinja_env.filters["basename"] = self._basename
 
     def generate_and_launch_dashboard(
         self, hours: int = 24, auto_launch: bool = True
@@ -158,6 +159,14 @@ class ComprehensiveHTMLDashboard:
         if value is None:
             return "N/A"
         return f"{value * 100:.1f}%"
+
+    def _basename(self, file_path: str) -> str:
+        """Get basename of file path for display."""
+        if not file_path:
+            return "N/A"
+        from pathlib import Path
+
+        return Path(file_path).name
 
     def _sanitize_dashboard_data(self, data: dict[str, Any]) -> dict[str, Any]:
         """Sanitize dashboard data to prevent injection attacks."""
@@ -338,7 +347,7 @@ class DashboardAssetManager:
                 <div class="health-metrics">
                     <div class="metric">
                         <span class="label">Database Size:</span>
-                        <span class="value">{{ scan_engine.total_scans | format_size }}B</span>
+                        <span class="value">{{ metadata.db_size_bytes | format_size }}</span>
                     </div>
                     <div class="metric">
                         <span class="label">Total Scans:</span>
@@ -531,9 +540,13 @@ body {
 }
 
 .dashboard-container {
-    max-width: 1400px;
+    max-width: 98%;
     margin: 0 auto;
     padding: 20px;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
 }
 
 /* Header */
@@ -782,6 +795,275 @@ canvas {
 @keyframes spin {
     0% { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }
+}
+
+/* Threat Findings Table Styles */
+.threat-findings-section {
+    margin-bottom: 32px;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.threat-findings-section h2 {
+    text-align: center;
+    margin-bottom: 24px;
+}
+
+.threat-findings-table-container {
+    background: var(--card-background);
+    border-radius: 12px;
+    padding: 32px;
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    width: 100%;
+    max-width: none;
+}
+
+.table-responsive {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+.threat-findings-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 0.9rem;
+    background: var(--card-background);
+    table-layout: fixed;
+}
+
+.threat-findings-table th {
+    background: var(--background-color);
+    color: var(--text-primary);
+    font-weight: 600;
+    padding: 18px 16px;
+    text-align: left;
+    border-bottom: 2px solid var(--border-color);
+    border-right: 1px solid var(--border-color);
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.025em;
+    white-space: nowrap;
+}
+
+.threat-findings-table th:last-child {
+    border-right: none;
+}
+
+.threat-findings-table td {
+    padding: 18px 16px;
+    border-bottom: 1px solid var(--border-color);
+    border-right: 1px solid var(--border-color);
+    vertical-align: middle;
+    line-height: 1.5;
+    word-wrap: break-word;
+    overflow: hidden;
+}
+
+.threat-findings-table td:last-child {
+    border-right: none;
+}
+
+.threat-row:hover {
+    background: var(--background-color);
+}
+
+/* Column widths - optimized for wider screens */
+.col-uuid { width: 12%; }
+.col-time { width: 15%; }
+.col-title { width: 28%; }
+.col-severity { width: 8%; }
+.col-file { width: 15%; }
+.col-line { width: 6%; }
+.col-scanner { width: 8%; }
+.col-confidence { width: 10%; }
+.col-status { width: 8%; }
+
+/* Title content */
+.title-content {
+    font-weight: 500;
+    color: var(--text-primary);
+    line-height: 1.4;
+}
+
+/* Severity badges */
+.severity-badge {
+    padding: 4px 8px;
+    border-radius: 6px;
+    font-size: 0.6875rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.025em;
+}
+
+.severity-critical {
+    background: #fde8e8;
+    color: #9b2c2c;
+}
+
+.severity-high {
+    background: #fed7d7;
+    color: #c53030;
+}
+
+.severity-medium {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.severity-low {
+    background: #dcfce7;
+    color: #166534;
+}
+
+/* Category tags */
+.category-tag {
+    padding: 3px 6px;
+    background: var(--background-color);
+    border-radius: 4px;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    border: 1px solid var(--border-color);
+}
+
+/* File info */
+.file-info {
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    background: var(--background-color);
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+/* Scanner badges */
+.scanner-badge {
+    padding: 3px 6px;
+    border-radius: 4px;
+    font-size: 0.6875rem;
+    font-weight: 500;
+    text-transform: lowercase;
+}
+
+.scanner-semgrep {
+    background: #e0f2fe;
+    color: #0277bd;
+}
+
+.scanner-llm {
+    background: #f3e5f5;
+    color: #7b1fa2;
+}
+
+/* Confidence bar */
+.confidence-bar {
+    position: relative;
+    width: 80px;
+    height: 18px;
+    background: var(--background-color);
+    border-radius: 9px;
+    overflow: hidden;
+    border: 1px solid var(--border-color);
+}
+
+.confidence-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #ef4444, #f59e0b, #22c55e);
+    transition: width 0.3s ease;
+}
+
+.confidence-text {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.625rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+/* Status badges */
+.status-badge {
+    padding: 3px 6px;
+    border-radius: 4px;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-align: center;
+    min-width: 24px;
+    display: inline-block;
+}
+
+.status-badge.false-positive {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.status-badge.validated {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.status-badge.unvalidated {
+    background: var(--background-color);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-color);
+}
+
+/* UUID display */
+.uuid-short {
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 0.6875rem;
+    padding: 2px 4px;
+    background: var(--background-color);
+    border: 1px solid var(--border-color);
+    border-radius: 3px;
+    color: var(--text-secondary);
+}
+
+/* Time info */
+.time-info {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+/* No findings state */
+.no-findings {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--text-secondary);
+}
+
+.no-findings .hint {
+    font-size: 0.875rem;
+    margin-top: 8px;
+    color: var(--text-secondary);
+}
+
+/* Responsive adjustments */
+@media (max-width: 1200px) {
+    .threat-findings-table {
+        font-size: 0.8125rem;
+    }
+
+    .threat-findings-table th,
+    .threat-findings-table td {
+        padding: 8px 6px;
+    }
+}
+
+@media (max-width: 768px) {
+    .col-title { width: 30%; }
+    .col-category { display: none; }
+    .col-confidence { display: none; }
+    .col-time { display: none; }
 }"""
 
         css_file = self.static_dir / "dashboard.css"

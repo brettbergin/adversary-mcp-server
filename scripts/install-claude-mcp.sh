@@ -69,16 +69,14 @@ print_status "Configuring Claude Code MCP settings..."
 # Remove any existing adversary server configuration
 claude mcp remove adversary 2>/dev/null || true
 
-# Add the adversary MCP server using claude mcp add-json
+# Add the adversary MCP server using claude mcp add-json (Clean Architecture)
 MCP_CONFIG="{
   \"command\": \"uv\",
   \"args\": [
     \"run\",
     \"--directory\",
     \"$PROJECT_ROOT\",
-    \"python\",
-    \"-m\",
-    \"adversary_mcp_server.server\"
+    \"adversary-mcp-server\"
   ]
 }"
 
@@ -90,12 +88,12 @@ else
 fi
 
 
-# Test the MCP server
+# Test the MCP server (Clean Architecture)
 print_status "Testing MCP server installation..."
-if "$PYTHON_PATH" -c "import adversary_mcp_server.server" 2>/dev/null; then
-    print_success "MCP server module imports correctly"
+if "$PYTHON_PATH" -c "from adversary_mcp_server.application.mcp_server import CleanMCPServer" 2>/dev/null; then
+    print_success "Clean Architecture MCP server imports correctly"
 else
-    print_warning "MCP server import test failed"
+    print_warning "Clean Architecture MCP server import test failed"
 fi
 
 # Test CLI installation

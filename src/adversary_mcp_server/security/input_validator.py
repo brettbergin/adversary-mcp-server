@@ -6,6 +6,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from ..scanner.language_mapping import LanguageMapper
+
 
 class SecurityError(Exception):
     """Exception raised when input validation detects a security issue."""
@@ -346,6 +348,43 @@ class InputValidator:
         return code
 
     @staticmethod
+    def validate_language(language: str) -> str:
+        """Validate programming language parameter.
+
+        Args:
+            language: The programming language to validate
+
+        Returns:
+            Validated language string
+
+        Raises:
+            ValueError: If language is invalid
+            SecurityError: If language contains dangerous patterns
+        """
+        if not isinstance(language, str):
+            raise ValueError("Language must be a string")
+
+        # Check for null bytes and dangerous patterns
+        if InputValidator.NULL_BYTE_PATTERN.search(language):
+            raise SecurityError("Null bytes detected in language parameter")
+
+        if InputValidator.COMMAND_INJECTION_PATTERN.search(language):
+            raise SecurityError(
+                "Command injection pattern detected in language parameter"
+            )
+
+        # Validate against supported languages using LanguageMapper
+        language = language.lower().strip()
+
+        if not LanguageMapper.is_supported_language(language):
+            supported_languages = LanguageMapper.get_supported_languages()
+            raise ValueError(
+                f"Unsupported language: {language}. Supported languages: {supported_languages[:10]}..."
+            )
+
+        return language
+
+    @staticmethod
     def validate_mcp_arguments(
         arguments: dict[str, Any], tool_name: str | None = None
     ) -> dict[str, Any]:
@@ -383,6 +422,11 @@ class InputValidator:
                         validated[key] = str(
                             InputValidator.validate_directory_path(str(value))
                         )
+                    elif tool_name in ("adv_scan_file",):
+                        # File scanning tools expect file paths
+                        validated[key] = str(
+                            InputValidator.validate_file_path(str(value))
+                        )
                     else:
                         # Default to file path validation for other tools
                         validated[key] = str(
@@ -403,6 +447,7 @@ class InputValidator:
                 "use_semgrep",
                 "recursive",
                 "include_exploits",
+                "verbose",
             ):
                 validated[key] = InputValidator.validate_boolean_param(value, key)
 
@@ -412,16 +457,48 @@ class InputValidator:
             elif key_lower == "content":
                 validated[key] = InputValidator.validate_code_content(str(value))
 
+            elif key_lower == "language":
+                validated[key] = InputValidator.validate_language(str(value))
+
             elif key_lower in (
-                "output_format",
                 "source_branch",
                 "target_branch",
-                "finding_uuid",
-                "reason",
             ):
                 validated[key] = InputValidator.validate_string_param(
                     str(value), key, 200, r"^[a-zA-Z0-9_.-]+$"
                 )
+
+            elif key_lower == "output_format":
+                # Validate against allowed output formats
+                allowed_formats = ["json", "markdown", "csv", "txt"]
+                format_value = str(value).lower().strip()
+                if format_value not in allowed_formats:
+                    raise ValueError(
+                        f"Invalid output format '{format_value}'. Must be one of: {allowed_formats}"
+                    )
+                validated[key] = format_value
+
+            elif key_lower == "output_file":
+                # Validate output file path (allow non-existent files for writing)
+                validated[key] = InputValidator.validate_string_param(
+                    str(value), key, 500, r"^[a-zA-Z0-9\s\.\-_/\\:]+$"
+                )
+
+            elif key_lower == "finding_uuid":
+                # UUIDs need different pattern (allow hyphens)
+                validated[key] = InputValidator.validate_string_param(
+                    str(value), key, 100, r"^[a-fA-F0-9-]+$"
+                )
+
+            elif key_lower in ("reason", "marked_by"):
+                # Allow more characters for human-readable text
+                validated[key] = InputValidator.validate_string_param(
+                    str(value), key, 500, r"^[a-zA-Z0-9\s\.,!?\-_()]+$"
+                )
+
+            elif key_lower in ("adversary_file_path", "input_file"):
+                # File path validation
+                validated[key] = str(InputValidator.validate_file_path(str(value)))
 
             else:
                 # Generic string validation for unknown parameters

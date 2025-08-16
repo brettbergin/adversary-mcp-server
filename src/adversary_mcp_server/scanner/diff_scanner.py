@@ -440,19 +440,19 @@ class GitDiffScanner:
             raise GitDiffError(f"Branch validation failed: {e}")
 
     def _detect_language_from_path(self, file_path: str) -> str:
-        """Detect programming language from file path (simplified to generic).
+        """Detect programming language from file path using language mapping.
 
         Args:
             file_path: Path to the file
 
         Returns:
-            Always returns "generic" as language detection has been simplified
+            Programming language name (e.g., 'python', 'javascript') or 'generic' for unknown
         """
-        file_path_abs = str(Path(file_path).resolve())
-        logger.debug(
-            f"Language detection simplified - returning generic for {file_path_abs}"
-        )
-        return "generic"
+        from .language_mapping import LanguageMapper
+
+        detected_language = LanguageMapper.detect_language_from_extension(file_path)
+        logger.debug(f"Language detected for {file_path}: {detected_language}")
+        return detected_language
 
     async def get_diff_changes(
         self, source_branch: str, target_branch: str, working_dir: Path | None = None

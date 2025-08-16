@@ -192,6 +192,89 @@
                 {% endfor %}
             </div>
         </section>
+
+        <!-- Threat Findings Table -->
+        <section class="threat-findings-section">
+            <h2>Recent Threat Findings ({{ threat_findings|length }} found)</h2>
+            <div class="threat-findings-table-container">
+                {% if threat_findings %}
+                <div class="table-responsive">
+                    <table class="threat-findings-table">
+                        <thead>
+                            <tr>
+                                <th class="col-uuid">UUID</th>
+                                <th class="col-time">Found</th>
+                                <th class="col-title">Title</th>
+                                <th class="col-severity">Severity</th>
+                                <th class="col-file">File</th>
+                                <th class="col-line">Line</th>
+                                <th class="col-scanner">Scanner</th>
+                                <th class="col-confidence">Confidence</th>
+                                <th class="col-status">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for finding in threat_findings %}
+                            <tr class="threat-row">
+                                <td class="threat-uuid">
+                                    <code class="uuid-short" title="{{ finding.finding_uuid }}">
+                                        {{ finding.finding_uuid[:8] }}...
+                                    </code>
+                                </td>
+                                <td class="threat-time">
+                                    <div class="time-info" title="{{ finding.timestamp | timestamp_to_datetime }}">
+                                        {{ finding.timestamp | timestamp_to_datetime | replace(' UTC', '') | replace('2025-', '') }}
+                                    </div>
+                                </td>
+                                <td class="threat-title" title="{{ finding.title }}">
+                                    <div class="title-content">
+                                        {{ finding.title[:60] }}{% if finding.title|length > 60 %}...{% endif %}
+                                    </div>
+                                </td>
+                                <td class="threat-severity">
+                                    <span class="severity-badge severity-{{ finding.severity }}">
+                                        {{ finding.severity|upper }}
+                                    </span>
+                                </td>
+                                <td class="threat-file" title="{{ finding.file_path }}">
+                                    <div class="file-info">
+                                        {{ finding.file_path | basename }}
+                                    </div>
+                                </td>
+                                <td class="threat-line">{{ finding.line_start if finding.line_start is not none else 'N/A' }}</td>
+                                <td class="threat-scanner">
+                                    <span class="scanner-badge scanner-{{ finding.scanner_source }}">
+                                        {{ finding.scanner_source }}
+                                    </span>
+                                </td>
+                                <td class="threat-confidence">
+                                    <div class="confidence-bar">
+                                        <div class="confidence-fill" style="width: {{ (finding.confidence * 100)|round }}%"></div>
+                                        <span class="confidence-text">{{ (finding.confidence * 100)|round }}%</span>
+                                    </div>
+                                </td>
+                                <td class="threat-status">
+                                    {% if finding.is_false_positive %}
+                                        <span class="status-badge false-positive" title="False Positive">FP</span>
+                                    {% elif finding.is_validated %}
+                                        <span class="status-badge validated" title="Validated">✓</span>
+                                    {% else %}
+                                        <span class="status-badge unvalidated" title="Unvalidated">New</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="no-findings">
+                    <p>No threat findings found in the selected time window.</p>
+                    <p class="hint">Try increasing the time range or running some scans to populate the data.</p>
+                </div>
+                {% endif %}
+            </div>
+        </section>
     </div>
 
     <script>

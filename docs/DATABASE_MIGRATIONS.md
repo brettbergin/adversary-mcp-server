@@ -17,7 +17,7 @@ The Adversary MCP Server uses a sophisticated multi-layered database migration s
 - JSON metrics migration
 - Safety checks and rollback capabilities
 
-**When to Use**: 
+**When to Use**:
 - Upgrading from older versions with separate SQLite files
 - Consolidating scattered metrics data
 - Initial system migration
@@ -227,7 +227,7 @@ If a migration fails catastrophically:
    ```bash
    # Find backup directory
    ls ~/.local/share/adversary-mcp-server/cache/migration_backup_*
-   
+
    # Restore from most recent backup
    cp -r migration_backup_*/cache/* ~/.local/share/adversary-mcp-server/cache/
    cp -r migration_backup_*/metrics/* ~/.local/share/adversary-mcp-server/metrics/
@@ -315,7 +315,7 @@ results = manager.install_data_consistency_constraints()
 ### Migration Commands
 
 - `adversary-mcp-cli migration-analysis` - Analyze migration needs and get recommendations
-- `adversary-mcp-cli migrate-all` - Complete migration workflow with dependency checking  
+- `adversary-mcp-cli migrate-all` - Complete migration workflow with dependency checking
 - `adversary-mcp-cli migrate-legacy` - Migrate legacy SQLite files and JSON metrics
 - `adversary-mcp-cli migrate-data` - Fix data consistency issues
 - `adversary-mcp-cli validate-data` - Check data integrity
@@ -375,14 +375,14 @@ sqlite3 ~/.local/share/adversary-mcp-server/cache/adversary.db
 ### Common SQL Queries for Debugging
 ```sql
 -- Check summary field consistency
-SELECT 
+SELECT
   (SELECT COUNT(*) FROM threat_findings tf WHERE tf.scan_id = se.scan_id) as actual_threats,
   se.threats_found as recorded_threats
-FROM scan_executions se 
+FROM scan_executions se
 WHERE actual_threats != recorded_threats;
 
 -- Find orphaned records
-SELECT * FROM threat_findings tf 
+SELECT * FROM threat_findings tf
 WHERE NOT EXISTS (
   SELECT 1 FROM scan_executions se WHERE se.scan_id = tf.scan_id
 );

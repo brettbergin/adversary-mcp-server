@@ -4,7 +4,7 @@
       "command": "~/code/adversary-mcp-server/.venv/bin/python",
       "args": [
         "-m",
-        "adversary_mcp_server.server"
+        "adversary_mcp_server.sync_main"
       ],
       "cwd": "~/code/adversary-mcp-server",
       "env": {

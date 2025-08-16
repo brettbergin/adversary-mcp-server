@@ -45,6 +45,33 @@ class JSONType(TypeDecorator):
 # === COMPREHENSIVE TELEMETRY MODELS ===
 
 
+class CacheEntry(Base):
+    """SQLAlchemy ORM model for cache entries."""
+
+    __tablename__ = "cache_entries"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    key = Column(String(255), unique=True, nullable=False, index=True)
+    cache_type = Column(String(50), nullable=False, index=True)
+    content_hash = Column(String(64), nullable=False, index=True)
+    data_size_bytes = Column(Integer, nullable=False)
+    access_count = Column(Integer, nullable=False, default=0)
+    last_accessed = Column(Float, nullable=False, index=True)
+    created_at = Column(Float, nullable=False, index=True)
+    expires_at = Column(Float, nullable=True, index=True)
+    cache_metadata = Column(
+        JSONType, nullable=True
+    )  # Renamed to avoid reserved 'metadata' attribute
+
+    __table_args__ = (
+        Index("idx_cache_type_accessed", "cache_type", "last_accessed"),
+        Index("idx_expires_at", "expires_at"),
+    )
+
+    def __repr__(self):
+        return f"<CacheEntry(key={self.key}, type={self.cache_type})>"
+
+
 class MCPToolExecution(Base):
     """Track all MCP tool executions and performance."""
 
