@@ -141,7 +141,7 @@ function unsafe_extraction() {
 # 18. Time-of-check to time-of-use (TOCTOU)
 function toctou_vulnerability() {
     local filename="$1"
-    
+
     # Check if file exists
     if [ -f "$filename" ]; then
         # Time gap - file could be changed/replaced

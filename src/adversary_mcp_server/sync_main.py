@@ -15,11 +15,14 @@ def main() -> None:
 
     This function properly handles the async execution of the MCP server.
     """
-    # SSL truststore injection for corporate environments
+    # SSL truststore injection for corporate environments (e.g., Netskope)
     try:
         import truststore
 
         truststore.inject_into_ssl()
+    except ImportError:
+        # Truststore not available - will use system SSL configuration
+        pass
     except Exception as e:
         import logging
 

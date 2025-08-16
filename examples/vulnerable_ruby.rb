@@ -131,7 +131,7 @@ end
 # 18. Mass assignment vulnerability
 class User
   attr_accessor :name, :email, :admin, :password
-  
+
   def initialize(params)
     # No protection against mass assignment
     params.each do |key, value|
@@ -144,11 +144,11 @@ end
 def timing_attack(user_token, expected_token)
   # Vulnerable to timing attacks due to early return
   return false if user_token.length != expected_token.length
-  
+
   user_token.each_char.with_index do |char, index|
     return false if char != expected_token[index]
   end
-  
+
   true
 end
 

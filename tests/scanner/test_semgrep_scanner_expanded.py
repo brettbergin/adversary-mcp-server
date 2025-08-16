@@ -11,9 +11,7 @@ import pytest
 
 from adversary_mcp_server.cache import CacheManager
 from adversary_mcp_server.credentials import CredentialManager
-from adversary_mcp_server.scanner.semgrep_scanner import (
-    OptimizedSemgrepScanner,
-)
+from adversary_mcp_server.scanner.semgrep_scanner import OptimizedSemgrepScanner
 
 
 class TestSemgrepScannerExpandedCoverage:
