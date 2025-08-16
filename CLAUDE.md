@@ -354,6 +354,16 @@ External tools wrapped by adapters:
 - Input validation using pydantic models
 - Fail-safe validation (unknown findings kept when validation fails)
 
+#### SSL/TLS and Corporate Environment Support
+- **Truststore Integration**: Both CLI and MCP entry points inject `truststore.inject_into_ssl()` for corporate CA support
+- **Netskope Compatibility**: Automatic SSL context injection handles corporate SSL inspection tools
+- **Entry Point Coverage**:
+  - CLI (`clean_cli.py::main()`) - Injected before any CLI operations
+  - MCP Server (`sync_main.py::main()`) - Injected before MCP server startup
+- **Graceful Fallback**: Missing truststore package falls back to system SSL configuration
+- **Network Client Support**: All OpenAI/Anthropic API calls inherit the enhanced SSL context
+- **Error Resilience**: Failed truststore injection logs debug messages but doesn't block execution
+
 ### MCP Integration
 
 The server provides tools for Cursor IDE through the MCP protocol:

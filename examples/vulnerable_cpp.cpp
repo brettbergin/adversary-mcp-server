@@ -102,7 +102,7 @@ int main() {
     // Example usage (commented to prevent actual execution)
     // bufferOverflow("This is a very long string that will overflow the buffer");
     // commandInjection("file.txt; rm -rf /");
-    
+
     std::cout << "Vulnerable C++ examples compiled successfully" << std::endl;
     return 0;
 }

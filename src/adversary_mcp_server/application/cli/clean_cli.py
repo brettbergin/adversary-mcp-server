@@ -1774,6 +1774,17 @@ def dashboard(hours: int, no_launch: bool, output_dir: str):
 
 def main():
     """Main entry point for Clean Architecture CLI."""
+    # SSL truststore injection for corporate environments (e.g., Netskope)
+    try:
+        import truststore
+
+        truststore.inject_into_ssl()
+        logger.debug("Truststore injected into SSL context for corporate CA support")
+    except ImportError:
+        logger.debug("Truststore not available - using system SSL configuration")
+    except Exception as e:
+        logger.debug(f"Failed to inject truststore into SSL context: {e}")
+
     cli()
 
 

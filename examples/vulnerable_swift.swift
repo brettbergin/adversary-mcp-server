@@ -6,7 +6,7 @@ import CryptoKit
 func sqlInjection(userId: String) {
     var db: OpaquePointer?
     sqlite3_open("database.db", &db)
-    
+
     // Direct string interpolation - vulnerable to SQL injection
     let query = "SELECT * FROM users WHERE id = '\(userId)'"
     var statement: OpaquePointer?
@@ -51,7 +51,7 @@ func bufferOverflow(input: String) {
     // Fixed-size buffer with potential overflow
     var buffer = Array<CChar>(repeating: 0, count: 10)
     let cString = input.cString(using: .utf8)!
-    
+
     // No bounds checking - potential overflow
     for i in 0..<cString.count {
         if i < buffer.count {
@@ -96,7 +96,7 @@ var counter = 0
 
 func raceCondition() {
     let queue = DispatchQueue.global(qos: .default)
-    
+
     for _ in 0..<1000 {
         queue.async {
             counter += 1  // Not thread-safe
@@ -134,7 +134,7 @@ func fileInclusion(templateName: String) {
 func urlSchemeVuln(urlString: String) {
     // No validation of URL scheme
     guard let url = URL(string: urlString) else { return }
-    
+
     if #available(iOS 10.0, *) {
         UIApplication.shared.open(url, options: [:], completionHandler: nil)
     }
@@ -159,7 +159,7 @@ func improperSSLValidation() {
     // Disabling SSL validation
     config.urlCredentialStorage = nil
     config.tlsMinimumSupportedProtocol = .tlsProtocol10  // Weak protocol
-    
+
     let session = URLSession(configuration: config)
     // This session would accept invalid certificates
 }
@@ -171,7 +171,7 @@ func insecureDataTransmission(sensitiveData: String) {
     var request = URLRequest(url: url)
     request.httpMethod = "POST"
     request.httpBody = sensitiveData.data(using: .utf8)
-    
+
     URLSession.shared.dataTask(with: request).resume()
 }
 
@@ -200,7 +200,7 @@ func unsafeCoreDataOps(userInput: String) {
 // Main function
 func main() {
     print("Vulnerable Swift examples compiled successfully")
-    
+
     // Example usage (commented to prevent actual execution)
     // commandInjection("file.txt; rm -rf /")
     // pathTraversal("../../../etc/passwd")

@@ -28,7 +28,7 @@ fn command_injection(filename: &str) {
         .arg(filename)
         .output()
         .expect("Failed to execute command");
-    
+
     println!("{}", String::from_utf8_lossy(&output.stdout));
 }
 
@@ -170,7 +170,7 @@ use std::sync::Arc;
 
 fn concurrent_modification() {
     let data = Arc::new(vec![1, 2, 3, 4, 5]);
-    
+
     for _ in 0..10 {
         let data_clone = Arc::clone(&data);
         std::thread::spawn(move || {
@@ -186,11 +186,11 @@ fn concurrent_modification() {
 
 fn main() {
     println!("Vulnerable Rust examples compiled successfully");
-    
+
     // Example usage (commented to prevent actual unsafe execution)
     // unsafe { buffer_overflow(); }
     // command_injection("file.txt; rm -rf /");
     // path_traversal("../../../etc/passwd");
-    
+
     println!("Note: Many examples require 'unsafe' blocks and may cause undefined behavior");
 }
