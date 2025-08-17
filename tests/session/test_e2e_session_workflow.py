@@ -462,14 +462,14 @@ app.secret_key = SECRET_KEY
 def login():
     username = request.form['username']
     password = request.form['password']
-    
+
     # Vulnerable SQL injection
     conn = sqlite3.connect(DATABASE_URL)
     query = f"SELECT * FROM users WHERE username='{username}' AND password='{password}'"
     cursor = conn.cursor()
     cursor.execute(query)
     user = cursor.fetchone()
-    
+
     if user:
         session['user_id'] = user[0]
         return render_template('dashboard.html')
@@ -548,7 +548,7 @@ def get_data():
 function loadUserData(userId) {
     // XSS vulnerability
     document.getElementById('content').innerHTML = '<h1>User: ' + userId + '</h1>';
-    
+
     fetch('/api/data', {
         method: 'POST',
         body: JSON.stringify({user_id: userId})
@@ -641,7 +641,7 @@ app.secret_key = os.environ.get('SECRET_KEY', 'default-secret')
 def login():
     username = request.json.get('username')
     password = request.json.get('password')
-    
+
     # Multiple vulnerabilities
     # 1. SQL Injection
     conn = sqlite3.connect('app.db')
@@ -649,12 +649,12 @@ def login():
     cursor = conn.cursor()
     cursor.execute(query)
     user = cursor.fetchone()
-    
+
     if user:
         # 2. Session fixation
         session['user_id'] = user[0]
         return jsonify({'status': 'success', 'user_id': user[0]})
-    
+
     return jsonify({'status': 'error'}), 401
 
 @app.route('/api/file/<path:filename>')
@@ -715,19 +715,19 @@ from app import app
 class TestApp(unittest.TestCase):
     def setUp(self):
         self.app = app.test_client()
-        
+
     def test_login_vulnerable(self):
         # This test actually demonstrates the SQL injection
-        response = self.app.post('/api/login', 
+        response = self.app.post('/api/login',
                                 json={'username': "admin' OR '1'='1", 'password': 'anything'})
         # This would succeed due to SQL injection
         self.assertEqual(response.status_code, 200)
-        
+
     def test_file_access(self):
         # Test path traversal
         response = self.app.get('/api/file/../../../etc/passwd')
         # This might succeed due to path traversal
-        
+
 if __name__ == '__main__':
     unittest.main()
 """
@@ -778,17 +778,17 @@ class TestCompleteE2EWorkflow:
         context_response = LLMResponse(
             content="""I understand this is a Flask web application with the following architecture:
             - REST API with authentication endpoints
-            - File serving capability  
+            - File serving capability
             - Code evaluation feature
             - SQLite database backend
             - Docker containerization
-            
+
             Key security components identified:
             - Authentication system in app.py
             - File access controls
             - Configuration management
             - Test suite that may reveal vulnerabilities
-            
+
             Ready for comprehensive security analysis.""",
             model="gpt-4",
             usage={"total_tokens": 800},
@@ -815,7 +815,7 @@ class TestCompleteE2EWorkflow:
                         "title": "Path Traversal in File API",
                         "description": "The file endpoint allows arbitrary file access through path traversal",
                         "severity": "high",
-                        "file_path": "src/app.py", 
+                        "file_path": "src/app.py",
                         "line_number": 35,
                         "code_snippet": "with open(os.path.join('/var/files/', filename), 'r') as f:",
                         "confidence": 0.95,
@@ -899,7 +899,7 @@ class TestCompleteE2EWorkflow:
                         "remediation_advice": "Fix all components: use parameterized queries, environment-based secrets, remove eval endpoint, implement proper session management"
                     },
                     {
-                        "rule_id": "docker_security_issues", 
+                        "rule_id": "docker_security_issues",
                         "title": "Docker Security Misconfigurations",
                         "description": "Container runs as root and exposes application with debug mode",
                         "severity": "medium",

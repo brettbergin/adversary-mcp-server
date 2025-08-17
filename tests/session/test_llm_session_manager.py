@@ -357,7 +357,7 @@ class TestLLMSessionManager:
                 {
                     "rule_id": "test_rule",
                     "title": "Test Finding",
-                    "description": "Test description", 
+                    "description": "Test description",
                     "severity": "high",
                     "file_path": "test.py",
                     "line_number": 10,
@@ -386,7 +386,7 @@ class TestLLMSessionManager:
         natural_response = """
         I found a serious SQL injection vulnerability in the login function.
         This could allow attackers to bypass authentication and access sensitive data.
-        
+
         There's also a potential XSS issue in the user profile page where
         user input is not properly escaped before being displayed.
         """

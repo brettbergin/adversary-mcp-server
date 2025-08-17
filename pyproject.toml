@@ -116,6 +116,7 @@ allow_untyped_defs = true
 allow_incomplete_defs = true
 allow_untyped_globals = true
 allow_redefinition = true
+explicit_package_bases = true
 disable_error_code = ["type-var", "var-annotated", "assignment", "attr-defined", "call-arg", "valid-type", "index", "union-attr", "no-redef", "import-untyped"]
 
 [tool.black]

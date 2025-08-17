@@ -476,14 +476,14 @@ app = Flask(__name__)
 def login():
     username = request.form['username']
     password = request.form['password']
-    
+
     # Vulnerable SQL injection
     conn = sqlite3.connect('users.db')
     cursor = conn.cursor()
     query = f"SELECT * FROM users WHERE username='{username}' AND password='{password}'"
     cursor.execute(query)
     user = cursor.fetchone()
-    
+
     if user:
         return render_template('dashboard.html', username=username)
     else:
@@ -533,7 +533,7 @@ from src.app import app
 class TestApp(unittest.TestCase):
     def setUp(self):
         self.app = app.test_client()
-    
+
     def test_login(self):
         response = self.app.post('/login', data={'username': 'admin', 'password': 'password'})
         self.assertEqual(response.status_code, 200)

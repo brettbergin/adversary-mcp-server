@@ -16,11 +16,7 @@ from .project_context import ProjectContext, ProjectContextBuilder
 from .session_cache import SessionCache, TokenUsageOptimizer
 from .session_cleanup import create_session_cleanup_service
 from .session_persistence import SessionPersistenceStore
-from .session_types import (
-    AnalysisSession,
-    SecurityFinding,
-    SessionState,
-)
+from .session_types import AnalysisSession, SecurityFinding, SessionState
 
 logger = get_logger("llm_session_manager")
 
@@ -389,7 +385,7 @@ class LLMSessionManager:
             context_prompt = project_context.to_context_prompt()
             optimization_note = ""
 
-        return f"""You are a senior security engineer analyzing a codebase for vulnerabilities. 
+        return f"""You are a senior security engineer analyzing a codebase for vulnerabilities.
 
 {context_prompt}
 

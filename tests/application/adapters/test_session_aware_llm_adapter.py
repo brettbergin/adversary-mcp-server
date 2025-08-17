@@ -18,10 +18,7 @@ from adversary_mcp_server.domain.value_objects.file_path import FilePath
 from adversary_mcp_server.domain.value_objects.scan_context import ScanContext
 from adversary_mcp_server.domain.value_objects.scan_metadata import ScanMetadata
 from adversary_mcp_server.domain.value_objects.severity_level import SeverityLevel
-from adversary_mcp_server.scanner.types import (
-    Category,
-    Severity,
-)
+from adversary_mcp_server.scanner.types import Category, Severity
 from adversary_mcp_server.scanner.types import ThreatMatch as ScannerThreatMatch
 
 

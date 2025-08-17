@@ -375,7 +375,7 @@ class TestIncrementalAnalysisIntegration:
 @@ -15,7 +15,7 @@ def authenticate(username, password):
      if not username or not password:
          return False
-     
+
 -    query = f"SELECT * FROM users WHERE username='{username}'"
 +    query = "SELECT * FROM users WHERE username=%s"
 +    cursor.execute(query, (username,))
