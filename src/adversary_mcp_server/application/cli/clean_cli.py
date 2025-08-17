@@ -32,6 +32,7 @@ from adversary_mcp_server.domain.interfaces import (
 )
 from adversary_mcp_server.logger import get_logger
 from adversary_mcp_server.security.input_validator import InputValidator
+from adversary_mcp_server.session.llm_session_manager import LLMSessionManager
 
 console = Console()
 logger = get_logger("clean_cli")
@@ -51,6 +52,10 @@ class CleanCLI:
         self._formatter = DomainScanResultFormatter()
         self._persistence_service = ScanResultPersistenceService()
         self._input_validator = InputValidator()
+
+        # Initialize session manager for session-aware commands
+        self._session_manager: LLMSessionManager | None = None
+        self._init_session_manager()
 
     async def scan_file(
         self,
@@ -513,7 +518,7 @@ class CleanCLI:
             # console.print(constraints_table)
 
             # Add current configuration summary
-            console.print("\n[yellow]Current Configuration:[/yellow]")
+            # console.print("\n[yellow]Current Configuration:[/yellow]")
             credential_manager = get_credential_manager()
             try:
                 current_config = credential_manager.load_config()
@@ -1083,74 +1088,162 @@ class CleanCLI:
         """Configure LLM model selection based on provider."""
         logger.debug(f"Configuring LLM model for provider: {provider}")
 
-        # Define available models for each provider
-        model_choices = {
-            "openai": [
-                "gpt-4o",
-                "gpt-4o-mini",
-                "gpt-4-turbo",
-                "gpt-4",
-                "gpt-3.5-turbo",
-                "custom",
-            ],
-            "anthropic": [
-                "claude-3-5-sonnet-20241022",
-                "claude-3-5-haiku-20241022",
-                "claude-3-opus-20240229",
-                "claude-3-sonnet-20240229",
-                "claude-3-haiku-20240307",
-                "custom",
-            ],
-        }
+        try:
+            # Load available models from pricing config
+            from adversary_mcp_server.llm.pricing_manager import PricingManager
 
-        # Default models for each provider
-        default_models = {"openai": "gpt-4o", "anthropic": "claude-3-5-sonnet-20241022"}
-
-        if provider not in model_choices:
-            console.print(
-                f"[yellow]No predefined models for provider '{provider}'. You can set a custom model later.[/yellow]"
+            pricing_manager = PricingManager()
+            available_models = pricing_manager.get_models_by_provider(
+                provider, available_only=True
             )
-            return
 
-        console.print(f"\n[cyan]Select {provider.title()} model:[/cyan]")
+            if not available_models:
+                console.print(
+                    f"[yellow]No models found for provider '{provider}'. You can set a custom model.[/yellow]"
+                )
+                # Allow setting custom model even if none found
+                custom_model = click.prompt(
+                    f"Enter {provider} model name",
+                    default="",
+                    show_default=False,
+                )
+                if custom_model.strip():
+                    config.llm_model = custom_model.strip()
+                    console.print(f"[green]✓[/green] Model set: {custom_model}")
+                return
 
-        # Show current model if set
-        current_model = config.llm_model or "Not set"
-        console.print(f"Current model: [yellow]{current_model}[/yellow]")
+            console.print(f"\n[cyan]Select {provider.title()} model:[/cyan]")
 
-        # Get model choices for this provider
-        choices = model_choices[provider]
-        default_choice = default_models.get(provider, choices[0])
+            # Show current model if set
+            current_model = config.llm_model or "Not set"
+            console.print(f"Current model: [yellow]{current_model}[/yellow]")
 
-        model_choice = click.prompt(
-            f"Choose {provider} model",
-            type=click.Choice(choices),
-            default=default_choice,
-            show_default=True,
-        )
+            # Build choices list with model IDs plus "custom" option
+            model_choices = [model["id"] for model in available_models] + ["custom"]
 
-        if model_choice == "custom":
+            # Find the best default model (prefer latest category, then first available)
+            default_choice = None
+            for model in available_models:
+                if model["category"] == "latest":
+                    default_choice = model["id"]
+                    break
+            if not default_choice and available_models:
+                default_choice = available_models[0]["id"]
+            if not default_choice:
+                default_choice = "custom"
+
+            # Display model details to help user choose
+            console.print("\n[dim]Available models:[/dim]")
+            for model in available_models:
+                category_color = {
+                    "latest": "green",
+                    "specialized": "blue",
+                    "budget": "yellow",
+                    "legacy": "dim",
+                }.get(model["category"], "white")
+
+                console.print(
+                    f"  [{category_color}]{model['id']}[/{category_color}] - {model['display_name']}"
+                )
+                if model.get("description"):
+                    console.print(f"    [dim]{model['description']}[/dim]")
+                if model.get("best_for"):
+                    console.print(
+                        f"    [dim]Best for: {', '.join(model['best_for'])}[/dim]"
+                    )
+
+                # Display cost information
+                prompt_cost = model.get("prompt_tokens_per_1k", 0)
+                completion_cost = model.get("completion_tokens_per_1k", 0)
+                currency = model.get("currency", "USD")
+
+                if prompt_cost > 0 or completion_cost > 0:
+                    console.print(
+                        f"    [dim]Cost per 1K tokens: ${prompt_cost:.4f} input / ${completion_cost:.4f} output ({currency})[/dim]"
+                    )
+
+                    # Show usage estimates for typical scenarios
+                    try:
+                        typical_estimate = (
+                            pricing_manager.estimate_cost_for_usage_scenario(
+                                model["id"], "typical"
+                            )
+                        )
+                        light_estimate = (
+                            pricing_manager.estimate_cost_for_usage_scenario(
+                                model["id"], "light"
+                            )
+                        )
+
+                        # Create budget indicator
+                        daily_cost = typical_estimate["daily_cost"]
+                        if daily_cost < 1.0:
+                            budget_indicator = "[green]💰 Budget-friendly[/green]"
+                        elif daily_cost < 5.0:
+                            budget_indicator = "[yellow]💰💰 Moderate cost[/yellow]"
+                        else:
+                            budget_indicator = "[red]💰💰💰 Premium pricing[/red]"
+
+                        console.print(
+                            f"    [dim]Estimated daily cost: ${daily_cost:.2f} (typical usage) | ${light_estimate['daily_cost']:.2f} (light usage)[/dim]"
+                        )
+                        console.print(f"    {budget_indicator}")
+
+                    except Exception as e:
+                        logger.debug(f"Failed to estimate costs for {model['id']}: {e}")
+                        # Don't show estimates if calculation fails
+
+            model_choice = click.prompt(
+                f"\nChoose {provider} model",
+                type=click.Choice(model_choices),
+                default=default_choice,
+                show_default=True,
+            )
+
+            if model_choice == "custom":
+                custom_model = click.prompt(
+                    f"Enter custom {provider} model name",
+                    default="",
+                    show_default=False,
+                )
+                if custom_model.strip():
+                    config.llm_model = custom_model.strip()
+                    console.print(f"[green]✓[/green] Custom model set: {custom_model}")
+                else:
+                    console.print(
+                        "[yellow]No custom model entered, keeping current setting[/yellow]"
+                    )
+            else:
+                config.llm_model = model_choice
+                # Find the selected model for display name
+                selected_model = next(
+                    (m for m in available_models if m["id"] == model_choice), None
+                )
+                display_name = (
+                    selected_model["display_name"] if selected_model else model_choice
+                )
+                console.print(f"[green]✓[/green] Model configured: {display_name}")
+
+        except Exception as e:
+            logger.warning(f"Failed to load models from pricing config: {e}")
+            # Fallback to asking for custom model
+            console.print(
+                "[yellow]Unable to load model list. Please enter a model name manually.[/yellow]"
+            )
             custom_model = click.prompt(
-                f"Enter custom {provider} model name",
+                f"Enter {provider} model name",
                 default="",
                 show_default=False,
             )
             if custom_model.strip():
                 config.llm_model = custom_model.strip()
-                console.print(f"[green]✓[/green] Custom model set: {custom_model}")
-            else:
-                console.print(
-                    "[yellow]No custom model entered, keeping current setting[/yellow]"
-                )
-        else:
-            config.llm_model = model_choice
-            console.print(f"[green]✓[/green] Model configured: {model_choice}")
+                console.print(f"[green]✓[/green] Model set: {custom_model}")
 
     async def _show_configuration_summary(
         self, config: SecurityConfig, credential_manager: CredentialManager
     ) -> None:
         """Show configuration summary."""
-        console.print("\n[bold]📋 Configuration Summary[/bold]")
+        # console.print("\n[bold]📋 Configuration Summary[/bold]")
 
         # Create summary table
         table = Table(title="Current Configuration")
@@ -1197,25 +1290,37 @@ class CleanCLI:
             )
 
         # Analysis Configuration
-        table.add_row(
-            "LLM Analysis",
-            "Enabled" if config.enable_llm_analysis else "Disabled",
-            "[green]✓[/green]" if config.enable_llm_analysis else "[red]✗[/red]",
-        )
+        # Check if LLM is properly configured for analysis and validation
+        llm_configured = config.llm_provider and config.llm_api_key
 
-        table.add_row(
-            "LLM Validation",
-            "Enabled" if config.enable_llm_validation else "Disabled",
-            "[green]✓[/green]" if config.enable_llm_validation else "[red]✗[/red]",
-        )
+        if config.enable_llm_analysis:
+            if llm_configured:
+                llm_analysis_status = "[green]✓ Enabled[/green]"
+                llm_analysis_value = "Enabled"
+            else:
+                llm_analysis_status = "[yellow]⚠ API key needed[/yellow]"
+                llm_analysis_value = "[yellow]Disabled (API key needed)[/yellow]"
+        else:
+            llm_analysis_status = "[red]✗ Disabled[/red]"
+            llm_analysis_value = "Disabled"
+
+        table.add_row("LLM Analysis", llm_analysis_value, llm_analysis_status)
+
+        if config.enable_llm_validation:
+            if llm_configured:
+                llm_validation_status = "[green]✓ Enabled[/green]"
+                llm_validation_value = "Enabled"
+            else:
+                llm_validation_status = "[yellow]⚠ API key needed[/yellow]"
+                llm_validation_value = "[yellow]Disabled (API key needed)[/yellow]"
+        else:
+            llm_validation_status = "[red]✗ Disabled[/red]"
+            llm_validation_value = "Disabled"
+
+        table.add_row("LLM Validation", llm_validation_value, llm_validation_status)
 
         table.add_row(
             "Severity Threshold", config.severity_threshold.upper(), "[green]✓[/green]"
-        )
-        table.add_row(
-            "Exploit Generation",
-            "Enabled" if config.enable_exploit_generation else "Disabled",
-            "[green]✓[/green]" if config.enable_exploit_generation else "[red]✗[/red]",
         )
 
         console.print(table)
@@ -1268,6 +1373,290 @@ class CleanCLI:
             logger.error(f"Configuration reset error: {e}")
             console.print(f"\n[red]❌ Reset failed:[/red] {e}")
             sys.exit(1)
+
+    def _init_session_manager(self):
+        """Initialize session manager if LLM is available."""
+        try:
+            credential_manager = get_credential_manager()
+            config = credential_manager.load_config()
+
+            if config.llm_provider and config.llm_api_key:
+                from adversary_mcp_server.llm import LLMProvider, create_llm_client
+
+                llm_client = create_llm_client(
+                    provider=LLMProvider(config.llm_provider),
+                    api_key=config.llm_api_key,
+                    model=config.llm_model,
+                )
+
+                self._session_manager = LLMSessionManager(
+                    llm_client=llm_client,
+                    max_context_tokens=50000,
+                    session_timeout_seconds=3600,
+                )
+                logger.info("Session manager initialized for CLI")
+            else:
+                logger.info(
+                    "LLM not configured - session-aware commands will be unavailable"
+                )
+
+        except Exception as e:
+            logger.warning(f"Failed to initialize session manager: {e}")
+            self._session_manager = None
+
+    async def scan_project_with_context(
+        self,
+        project_path: str,
+        target_files: list[str] | None = None,
+        analysis_focus: str = "comprehensive security analysis",
+        output_format: str = "json",
+        output_file: str | None = None,
+        verbose: bool = False,
+    ) -> None:
+        """Scan a project using session-aware context analysis."""
+        if not self._session_manager:
+            console.print(
+                "[red]Error:[/red] Session-aware analysis not available. Please configure LLM settings."
+            )
+            return
+
+        project_root = Path(project_path).resolve()
+
+        if not project_root.exists():
+            console.print(
+                f"[red]Error:[/red] Project path does not exist: {project_path}"
+            )
+            return
+
+        logger.info(f"Starting session-aware project analysis: {project_path}")
+
+        try:
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                console=console,
+            ) as progress:
+                task = progress.add_task(
+                    "Initializing session-aware analysis...", total=None
+                )
+
+                # Convert target files to Path objects if provided
+                target_file_paths = None
+                if target_files:
+                    target_file_paths = [Path(f) for f in target_files]
+
+                progress.update(task, description="Creating analysis session...")
+
+                # Create session and analyze project
+                session = await self._session_manager.create_session(
+                    project_root=project_root,
+                    target_files=target_file_paths,
+                    session_metadata={
+                        "analysis_focus": analysis_focus,
+                        "cli_session": True,
+                        "requester": "cli_session_aware",
+                    },
+                )
+
+                progress.update(
+                    task, description="Performing comprehensive analysis..."
+                )
+
+                # Perform multi-phase analysis
+                findings = await self._perform_cli_session_analysis(
+                    session.session_id, analysis_focus
+                )
+
+                progress.update(task, description="Finalizing results...")
+
+                # Close session
+                self._session_manager.close_session(session.session_id)
+
+            # Display results
+            if findings:
+                console.print(
+                    f"\n[green]✓ Session analysis complete![/green] Found {len(findings)} potential security issues."
+                )
+
+                # Format and display findings
+                if verbose:
+                    self._display_session_findings(findings)
+
+                # Save results if requested
+                if output_file:
+                    await self._save_session_results(
+                        findings, output_file, output_format
+                    )
+            else:
+                console.print("[green]✓ No security issues found![/green]")
+
+        except Exception as e:
+            console.print(f"[red]Session analysis failed:[/red] {e}")
+            logger.error(f"Session analysis error: {e}")
+
+    def get_session_status(self) -> dict[str, Any]:
+        """Get status of session management capabilities."""
+        status = {
+            "session_manager_available": self._session_manager is not None,
+            "active_sessions": 0,
+            "cache_statistics": {},
+        }
+
+        if self._session_manager:
+            status["active_sessions"] = len(self._session_manager.sessions)
+            status["cache_statistics"] = self._session_manager.get_cache_statistics()
+
+        return status
+
+    async def _perform_cli_session_analysis(self, session_id: str, analysis_focus: str):
+        """Perform comprehensive session analysis for CLI."""
+        # Phase 1: General security analysis
+        findings = await self._session_manager.analyze_with_session(
+            session_id=session_id,
+            analysis_query=f"""
+Perform a {analysis_focus} of this codebase. Look for:
+
+1. Authentication and authorization vulnerabilities
+2. Input validation issues and injection flaws
+3. Cross-site scripting (XSS) vulnerabilities
+4. Cross-site request forgery (CSRF) issues
+5. SQL injection and database security
+6. File upload and path traversal vulnerabilities
+7. Session management issues
+8. Cryptographic implementation problems
+9. Information disclosure risks
+10. Business logic flaws
+
+Focus on real, exploitable vulnerabilities with high confidence.
+""",
+        )
+
+        # Phase 2: Architectural analysis if we found some issues
+        if len(findings) > 0:
+            arch_findings = await self._session_manager.continue_analysis(
+                session_id=session_id,
+                follow_up_query="""
+Now analyze the overall architecture for security issues:
+
+1. Are there any trust boundary violations?
+2. How does data flow between components - any risks?
+3. Are authentication/authorization consistently applied?
+4. Any privilege escalation opportunities?
+5. Configuration and deployment security issues?
+6. Third-party dependency risks?
+
+Focus on systemic and architectural vulnerabilities.
+""",
+            )
+            findings.extend(arch_findings)
+
+        return findings
+
+    def _find_project_root(self, file_path: Path) -> Path:
+        """Find project root by looking for common project indicators."""
+        current = file_path.parent if file_path.is_file() else file_path
+
+        while current.parent != current:
+            if any(
+                (current / indicator).exists()
+                for indicator in [
+                    ".git",
+                    "package.json",
+                    "pyproject.toml",
+                    "requirements.txt",
+                    ".project",
+                ]
+            ):
+                return current
+            current = current.parent
+
+        # Fallback to file's parent directory
+        return file_path.parent if file_path.is_file() else file_path
+
+    def _display_session_findings(self, findings):
+        """Display session findings in a formatted table."""
+        table = Table(title="Session-Aware Security Analysis Results")
+        table.add_column("Rule ID", style="cyan")
+        table.add_column("Severity", style="red")
+        table.add_column("Description", style="white")
+        table.add_column("Confidence", style="green")
+
+        for finding in findings[:10]:  # Show top 10 findings
+            severity = (
+                finding.severity.value
+                if hasattr(finding.severity, "value")
+                else str(finding.severity)
+            )
+            confidence = (
+                f"{finding.confidence_score:.1%}"
+                if hasattr(finding, "confidence_score")
+                else "N/A"
+            )
+
+            table.add_row(
+                finding.rule_id,
+                severity.upper(),
+                (
+                    finding.description[:80] + "..."
+                    if len(finding.description) > 80
+                    else finding.description
+                ),
+                confidence,
+            )
+
+        console.print(table)
+
+        if len(findings) > 10:
+            console.print(
+                f"\n[yellow]Note:[/yellow] Showing top 10 of {len(findings)} findings. Use output file to see all results."
+            )
+
+    async def _save_session_results(
+        self, findings, output_file: str, output_format: str
+    ):
+        """Save session findings to file."""
+        try:
+            # Convert findings to dictionary format for saving
+            results_data = {
+                "analysis_type": "session_aware",
+                "findings_count": len(findings),
+                "findings": [
+                    {
+                        "rule_id": finding.rule_id,
+                        "rule_name": finding.rule_name,
+                        "description": finding.description,
+                        "severity": (
+                            finding.severity.value
+                            if hasattr(finding.severity, "value")
+                            else str(finding.severity)
+                        ),
+                        "confidence": (
+                            finding.confidence_score
+                            if hasattr(finding, "confidence_score")
+                            else 0.7
+                        ),
+                        "session_context": getattr(finding, "session_context", {}),
+                    }
+                    for finding in findings
+                ],
+            }
+
+            if output_format.lower() == "json":
+                import json
+
+                with open(output_file, "w") as f:
+                    json.dump(results_data, f, indent=2)
+            else:
+                # Default to JSON if format not recognized
+                import json
+
+                with open(output_file, "w") as f:
+                    json.dump(results_data, f, indent=2)
+
+            console.print(f"[green]Results saved to:[/green] {output_file}")
+
+        except Exception as e:
+            console.print(f"[red]Failed to save results:[/red] {e}")
 
 
 # Click CLI commands
@@ -1760,12 +2149,6 @@ def dashboard(hours: int, no_launch: bool, output_dir: str):
         else:
             console.print("[green]Dashboard opened in your default browser[/green]")
 
-    except ImportError as e:
-        console.print(f"[red]Dashboard dependency error:[/red] {e}")
-        console.print(
-            "[yellow]Tip:[/yellow] Ensure all dashboard dependencies are installed"
-        )
-        sys.exit(1)
     except Exception as e:
         console.print(f"[red]Dashboard generation failed:[/red] {e}")
         logger.error(f"Dashboard error: {e}")

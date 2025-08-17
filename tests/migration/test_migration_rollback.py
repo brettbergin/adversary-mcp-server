@@ -195,26 +195,38 @@ class TestMigrationFailureRecovery:
 
         orchestrator = MigrationOrchestrator(db_path)
 
-        # Mock database operation to fail
+        # Mock validation to return inconsistencies so migration actually runs
         with patch.object(
             orchestrator.data_manager,
-            "fix_summary_field_inconsistencies",
-            side_effect=Exception("Database connection lost"),
+            "validate_data_consistency",
+            return_value={
+                "validation_success": True,
+                "total_inconsistencies": 5,  # Force migration to run
+                "mcp_inconsistencies": 2,
+                "cli_inconsistencies": 2,
+                "scan_inconsistencies": 1,
+            },
         ):
+            # Then mock the actual fix method to fail
+            with patch.object(
+                orchestrator.data_manager,
+                "fix_summary_field_inconsistencies",
+                side_effect=Exception("Database connection lost"),
+            ):
 
-            results = orchestrator.run_complete_migration(backup=False)
+                results = orchestrator.run_complete_migration(backup=False)
 
-            assert results["overall_success"] is False
-            # Check that error was recorded somewhere
-            has_error = (
-                "workflow_error" in results
-                or len(results.get("errors", [])) > 0
-                or any(
-                    not phase.get("success", True)
-                    for phase in results.get("phases", {}).values()
+                assert results["overall_success"] is False
+                # Check that error was recorded somewhere
+                has_error = (
+                    "workflow_error" in results
+                    or len(results.get("errors", [])) > 0
+                    or any(
+                        not phase.get("success", True)
+                        for phase in results.get("phases", {}).values()
+                    )
                 )
-            )
-            assert has_error
+                assert has_error
 
     def test_migration_state_consistency_after_failure(self, populated_db_with_backup):
         """Test that database state remains consistent after migration failure."""
@@ -233,16 +245,28 @@ class TestMigrationFailureRecovery:
 
         orchestrator = MigrationOrchestrator(db_path)
 
-        # Force failure in the middle of data migration
+        # Mock validation to return inconsistencies so migration actually runs
         with patch.object(
             orchestrator.data_manager,
-            "_fix_scan_engine_threats_found",
-            side_effect=Exception("Simulated failure"),
+            "validate_data_consistency",
+            return_value={
+                "validation_success": True,
+                "total_inconsistencies": 3,  # Force migration to run
+                "mcp_inconsistencies": 1,
+                "cli_inconsistencies": 1,
+                "scan_inconsistencies": 1,
+            },
         ):
+            # Force failure in the middle of data migration
+            with patch.object(
+                orchestrator.data_manager,
+                "_fix_scan_engine_threats_found",
+                side_effect=Exception("Simulated failure"),
+            ):
 
-            results = orchestrator.run_complete_migration()
+                results = orchestrator.run_complete_migration()
 
-            assert results["overall_success"] is False
+                assert results["overall_success"] is False
 
         # Verify database state is preserved (transaction rollback)
         final_db = AdversaryDatabase(db_path)
@@ -293,17 +317,31 @@ class TestMigrationRecoveryStrategies:
 
         orchestrator = MigrationOrchestrator(db_path)
 
+        # Mock validation to return inconsistencies for first attempt
+        validation_mock_first = {
+            "validation_success": True,
+            "total_inconsistencies": 5,  # Force migration to run
+            "mcp_inconsistencies": 2,
+            "cli_inconsistencies": 2,
+            "scan_inconsistencies": 1,
+        }
+
         # First attempt - fail on data migration
         with patch.object(
             orchestrator.data_manager,
-            "fix_summary_field_inconsistencies",
-            side_effect=Exception("First attempt failed"),
+            "validate_data_consistency",
+            return_value=validation_mock_first,
         ):
+            with patch.object(
+                orchestrator.data_manager,
+                "fix_summary_field_inconsistencies",
+                side_effect=Exception("First attempt failed"),
+            ):
 
-            results = orchestrator.run_complete_migration()
-            assert results["overall_success"] is False
+                results = orchestrator.run_complete_migration()
+                assert results["overall_success"] is False
 
-        # Second attempt - should succeed
+        # Second attempt - should succeed (no inconsistencies found)
         results = orchestrator.run_complete_migration(skip_legacy=True)
         assert results["overall_success"] is True
 

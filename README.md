@@ -618,7 +618,7 @@ make pre-commit         # Run same pre-commit in git commits.
 - [Documentation](https://github.com/brettbergin/adversary-mcp-server/wiki)
 - [Report Issues](https://github.com/brettbergin/adversary-mcp-server/issues)
 - [Discussions](https://github.com/brettbergin/adversary-mcp-server/discussions)
-- Contact: brettbergin@gmail.com
+- Contact: brettberginbc@yahoo.com
 
 ## License
 

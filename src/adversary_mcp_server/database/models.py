@@ -312,6 +312,33 @@ class SystemHealth(Base):
         return f"<SystemHealth(timestamp={self.timestamp})>"
 
 
+class LLMAnalysisSession(Base):
+    """Persistent storage for LLM analysis sessions."""
+
+    __tablename__ = "sessions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String(36), nullable=False, unique=True, index=True)
+
+    # Session metadata
+    state = Column(String(20), nullable=False, index=True)
+    created_at = Column(Float, nullable=False, index=True)
+    last_activity = Column(Float, nullable=False, index=True)
+
+    # Session data (JSON serialized)
+    session_data = Column(Text, nullable=False)
+
+    # Optimization indexes
+    __table_args__ = (
+        Index("idx_session_activity", "last_activity"),
+        Index("idx_session_state", "state"),
+        Index("idx_session_created", "created_at"),
+    )
+
+    def __repr__(self):
+        return f"<LLMAnalysisSession(session_id={self.session_id}, state={self.state})>"
+
+
 # === UNIFIED DATABASE ===
 
 

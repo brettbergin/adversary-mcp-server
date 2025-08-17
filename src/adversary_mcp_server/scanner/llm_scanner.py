@@ -22,6 +22,7 @@ from ..credentials import CredentialManager
 from ..llm import LLMClient, LLMProvider, create_llm_client
 from ..logger import get_logger
 from ..resilience import ErrorHandler, ResilienceConfig
+from ..session import LLMSessionManager
 from .language_mapping import ANALYZABLE_SOURCE_EXTENSIONS, LanguageMapper
 from .types import Category, Severity, ThreatMatch
 
@@ -186,13 +187,20 @@ class LLMAnalysisPrompt:
 
 
 class LLMScanner:
-    """LLM-based security scanner that uses AI for vulnerability detection."""
+    """LLM-based security scanner that uses AI for vulnerability detection.
+
+    This scanner supports both legacy analysis methods and new session-aware analysis.
+    Session-aware analysis provides better context and cross-file vulnerability detection.
+    """
 
     def __init__(
         self,
         credential_manager: CredentialManager,
         cache_manager: CacheManager | None = None,
         metrics_collector=None,
+        enable_sessions: bool = True,
+        max_context_tokens: int = 50000,
+        session_timeout_seconds: int = 3600,
     ):
         """Initialize the LLM security analyzer.
 
@@ -208,6 +216,12 @@ class LLMScanner:
         self.metrics_collector = metrics_collector
         self.config_manager = get_config_manager()
         self.dynamic_limits = self.config_manager.dynamic_limits
+
+        # Session-aware analysis capabilities
+        self.enable_sessions = enable_sessions
+        self.max_context_tokens = max_context_tokens
+        self.session_timeout_seconds = session_timeout_seconds
+        self.session_manager: LLMSessionManager | None = None
 
         try:
             self.config = credential_manager.load_config()
@@ -295,6 +309,22 @@ class LLMScanner:
                     metrics_collector=self.metrics_collector,
                 )
                 logger.info("LLM client initialized successfully")
+
+                # Initialize session manager if sessions are enabled
+                if self.enable_sessions:
+                    try:
+                        self.session_manager = LLMSessionManager(
+                            llm_client=self.llm_client,
+                            max_context_tokens=self.max_context_tokens,
+                            session_timeout_seconds=self.session_timeout_seconds,
+                            cache_manager=self.cache_manager,  # Share cache manager with session manager
+                        )
+                        logger.info(
+                            "Session-aware analysis enabled with shared caching"
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to initialize session manager: {e}")
+                        logger.info("Falling back to legacy analysis")
             else:
                 logger.warning(
                     "LLM provider not configured - advanced security analysis will be unavailable",
@@ -325,6 +355,16 @@ class LLMScanner:
     def get_circuit_breaker_stats(self) -> dict:
         """Get circuit breaker statistics for debugging."""
         return self.error_handler.get_circuit_breaker_stats()
+
+    def is_session_aware_available(self) -> bool:
+        """Check if session-aware analysis is available."""
+        return self.session_manager is not None
+
+    def cleanup_expired_sessions(self) -> int:
+        """Clean up expired sessions and return count of cleaned sessions."""
+        if self.session_manager:
+            return self.session_manager.cleanup_expired_sessions()
+        return 0
 
     def is_available(self) -> bool:
         """Check if LLM analysis is available.
@@ -1894,6 +1934,362 @@ Provide up to {total_findings_limit} security findings total (max {max_findings_
 
         return results
 
+    # Session-aware analysis methods
+
+    async def analyze_project_with_session(
+        self,
+        project_root: Path,
+        target_files: list[Path] | None = None,
+        analysis_focus: str = "comprehensive security analysis",
+        max_findings: int = 50,
+    ) -> list[LLMSecurityFinding]:
+        """
+        Analyze a project using session-aware context for better cross-file vulnerability detection.
+
+        This method provides enhanced analysis by maintaining context across files,
+        enabling detection of architectural vulnerabilities and attack chains.
+
+        Args:
+            project_root: Root directory of the project
+            target_files: Specific files to focus on (optional)
+            analysis_focus: Type of analysis to perform
+            max_findings: Maximum total findings to return
+
+        Returns:
+            List of security findings with enhanced context
+        """
+        if not self.session_manager:
+            logger.warning(
+                "Session manager not available, falling back to legacy directory analysis"
+            )
+            return await self.analyze_directory(
+                str(project_root), max_findings_per_file=max_findings
+            )
+
+        logger.info(f"Starting session-aware project analysis of {project_root}")
+
+        session = None
+        try:
+            # Create analysis session
+            session = await self.session_manager.create_session(
+                project_root=project_root,
+                target_files=target_files,
+                session_metadata={
+                    "analysis_focus": analysis_focus,
+                    "scanner_type": "llm_enhanced",
+                    "max_findings": max_findings,
+                },
+            )
+
+            # Perform comprehensive analysis with session context
+            findings = await self._perform_session_analysis(
+                session.session_id, max_findings
+            )
+
+            logger.info(
+                f"Session-aware project analysis complete: {len(findings)} findings"
+            )
+            return findings
+
+        except Exception as e:
+            logger.error(f"Session-aware project analysis failed: {e}")
+            # Fallback to legacy analysis
+            logger.info("Falling back to legacy directory analysis")
+            return await self.analyze_directory(
+                str(project_root), max_findings_per_file=max_findings
+            )
+        finally:
+            # Always cleanup session if it was created
+            if session and self.session_manager:
+                self.session_manager.close_session(session.session_id)
+
+    async def analyze_file_with_context(
+        self,
+        file_path: Path,
+        project_root: Path | None = None,
+        context_hint: str | None = None,
+        max_findings: int = 20,
+    ) -> list[LLMSecurityFinding]:
+        """
+        Analyze a specific file with project context for enhanced detection.
+
+        Args:
+            file_path: File to analyze
+            project_root: Project root for context (auto-detected if None)
+            context_hint: Hint about what to focus on
+            max_findings: Maximum findings to return
+
+        Returns:
+            List of security findings with context
+        """
+        if not self.session_manager:
+            logger.warning(
+                "Session manager not available, falling back to legacy file analysis"
+            )
+            language = self._detect_language(file_path)
+            return await self.analyze_file(file_path, language, max_findings)
+
+        # Auto-detect project root if not provided
+        if project_root is None:
+            project_root = self._find_project_root(file_path)
+
+        logger.info(f"Analyzing {file_path} with session context from {project_root}")
+
+        session = None
+        try:
+            # Create session focused on this file
+            session = await self.session_manager.create_session(
+                project_root=project_root,
+                target_files=[file_path],
+                session_metadata={
+                    "analysis_type": "focused_file",
+                    "target_file": str(file_path),
+                    "context_hint": context_hint,
+                },
+            )
+
+            # Analyze the specific file with context
+            language = self._detect_language(file_path)
+            query = (
+                f"Analyze {file_path.name} ({language}) for security vulnerabilities"
+            )
+            if context_hint:
+                query += f". {context_hint}"
+
+            session_findings = await self.session_manager.analyze_with_session(
+                session_id=session.session_id,
+                analysis_query=query,
+                context_hint=context_hint,
+            )
+
+            # Convert session findings to LLMSecurityFinding objects
+            findings = []
+            for finding in session_findings[:max_findings]:
+                llm_finding = LLMSecurityFinding(
+                    finding_type=finding.rule_id,
+                    severity=(
+                        finding.severity.value
+                        if hasattr(finding.severity, "value")
+                        else str(finding.severity)
+                    ),
+                    description=finding.description,
+                    line_number=finding.line_number,
+                    code_snippet=finding.code_snippet,
+                    explanation=finding.description,
+                    recommendation=getattr(
+                        finding, "remediation", "Review and fix this vulnerability"
+                    ),
+                    confidence=finding.confidence_score,
+                    file_path=str(file_path),
+                    cwe_id=getattr(finding, "cwe_id", None),
+                    owasp_category=getattr(finding, "owasp_category", None),
+                )
+                findings.append(llm_finding)
+
+            logger.info(
+                f"File analysis with context complete: {len(findings)} findings"
+            )
+            return findings
+
+        except Exception as e:
+            logger.error(f"File analysis with context failed: {e}")
+            # Fallback to legacy analysis
+            language = self._detect_language(file_path)
+            return await self.analyze_file(file_path, language, max_findings)
+        finally:
+            if session and self.session_manager:
+                self.session_manager.close_session(session.session_id)
+
+    async def analyze_code_with_context(
+        self,
+        code_content: str,
+        language: str,
+        file_name: str = "code_snippet",
+        context_hint: str | None = None,
+        max_findings: int = 20,
+    ) -> list[LLMSecurityFinding]:
+        """
+        Analyze code content with minimal context.
+
+        Args:
+            code_content: Code to analyze
+            language: Programming language
+            file_name: Name for the code snippet
+            context_hint: Analysis focus hint
+            max_findings: Maximum findings to return
+
+        Returns:
+            List of security findings
+        """
+        if not self.session_manager:
+            logger.warning(
+                "Session manager not available, falling back to legacy code analysis"
+            )
+            return await self._analyze_code_async(
+                code_content, file_name, language, max_findings
+            )
+
+        logger.info(f"Analyzing {language} code snippet with session context")
+
+        session = None
+        try:
+            # Create temporary session for code analysis
+            session = await self.session_manager.create_session(
+                project_root=Path.cwd(),  # Use current directory as fallback
+                target_files=[],  # No specific files
+                session_metadata={
+                    "analysis_type": "code_snippet",
+                    "language": language,
+                    "file_name": file_name,
+                },
+            )
+
+            # Analyze code with session context
+            query = f"""
+Analyze this {language} code for security vulnerabilities:
+
+File: {file_name}
+```{language}
+{code_content}
+```
+
+{context_hint if context_hint else "Focus on common security vulnerabilities for this language."}
+"""
+
+            session_findings = await self.session_manager.analyze_with_session(
+                session_id=session.session_id,
+                analysis_query=query,
+                context_hint=context_hint,
+            )
+
+            # Convert to LLMSecurityFinding objects
+            findings = []
+            for finding in session_findings[:max_findings]:
+                llm_finding = LLMSecurityFinding(
+                    finding_type=finding.rule_id,
+                    severity=(
+                        finding.severity.value
+                        if hasattr(finding.severity, "value")
+                        else str(finding.severity)
+                    ),
+                    description=finding.description,
+                    line_number=finding.line_number,
+                    code_snippet=finding.code_snippet,
+                    explanation=finding.description,
+                    recommendation=getattr(
+                        finding, "remediation", "Review and fix this vulnerability"
+                    ),
+                    confidence=finding.confidence_score,
+                    file_path=file_name,
+                    cwe_id=getattr(finding, "cwe_id", None),
+                    owasp_category=getattr(finding, "owasp_category", None),
+                )
+                findings.append(llm_finding)
+
+            return findings
+
+        except Exception as e:
+            logger.error(f"Code analysis with context failed: {e}")
+            # Fallback to legacy analysis
+            return await self._analyze_code_async(
+                code_content, file_name, language, max_findings
+            )
+        finally:
+            if session and self.session_manager:
+                self.session_manager.close_session(session.session_id)
+
+    def _find_project_root(self, file_path: Path) -> Path:
+        """Find project root by looking for common project indicators."""
+        current = file_path.parent
+        while current.parent != current:
+            if any(
+                (current / indicator).exists()
+                for indicator in [
+                    ".git",
+                    "package.json",
+                    "pyproject.toml",
+                    "requirements.txt",
+                    ".project",
+                ]
+            ):
+                return current
+            current = current.parent
+        # Fallback to file's parent directory
+        return file_path.parent
+
+    async def _perform_session_analysis(
+        self, session_id: str, max_findings: int
+    ) -> list[LLMSecurityFinding]:
+        """Perform comprehensive security analysis using the session."""
+        all_session_findings = []
+
+        # Phase 1: General security analysis
+        findings = await self.session_manager.analyze_with_session(
+            session_id=session_id,
+            analysis_query="""
+Perform a comprehensive security analysis of this codebase. Look for:
+
+1. Authentication and authorization vulnerabilities
+2. Input validation issues and injection flaws
+3. Cross-site scripting (XSS) vulnerabilities
+4. Cross-site request forgery (CSRF) issues
+5. SQL injection and database security
+6. File upload and path traversal vulnerabilities
+7. Session management issues
+8. Cryptographic implementation problems
+9. Information disclosure risks
+10. Business logic flaws
+
+Focus on real, exploitable vulnerabilities with high confidence.
+""",
+        )
+        all_session_findings.extend(findings)
+
+        # Phase 2: Architectural analysis (if we have findings to build on)
+        if len(all_session_findings) < max_findings // 2:
+            arch_findings = await self.session_manager.continue_analysis(
+                session_id=session_id,
+                follow_up_query="""
+Now analyze the overall architecture for security issues:
+
+1. Are there any trust boundary violations?
+2. How does data flow between components - any risks?
+3. Are authentication/authorization consistently applied?
+4. Any privilege escalation opportunities?
+5. Configuration and deployment security issues?
+6. Third-party dependency risks?
+
+Focus on systemic and architectural vulnerabilities.
+""",
+            )
+            all_session_findings.extend(arch_findings)
+
+        # Convert session findings to LLMSecurityFinding objects
+        llm_findings = []
+        for finding in all_session_findings[:max_findings]:
+            llm_finding = LLMSecurityFinding(
+                finding_type=finding.rule_id,
+                severity=(
+                    finding.severity.value
+                    if hasattr(finding.severity, "value")
+                    else str(finding.severity)
+                ),
+                description=finding.description,
+                line_number=finding.line_number,
+                code_snippet=finding.code_snippet,
+                explanation=finding.description,
+                recommendation=getattr(
+                    finding, "remediation", "Review and fix this vulnerability"
+                ),
+                confidence=finding.confidence_score,
+                file_path=getattr(finding, "file_path", ""),
+                cwe_id=getattr(finding, "cwe_id", None),
+                owasp_category=getattr(finding, "owasp_category", None),
+            )
+            llm_findings.append(llm_finding)
+
+        return llm_findings
+
     def get_analysis_stats(self) -> dict[str, Any]:
         """Get analysis statistics.
 
@@ -1908,6 +2304,7 @@ Provide up to {total_findings_limit} security findings total (max {max_findings_
             "average_findings_per_analysis": 0.0,
             "supported_languages": ["python", "javascript", "typescript"],
             "client_based": True,
+            "session_aware_available": self.is_session_aware_available(),
         }
         logger.debug(f"Returning stats: {stats}")
         return stats

@@ -138,6 +138,12 @@ DEFAULT_EXCLUDE_PATTERNS: set[str] = {
     "WHEEL",
     "*.dist-info/*",
     "*.egg-info/*",
+    # Adversary MCP server output files (prevent scanning our own output)
+    "adversary.*",
+    ".adversary.*",
+    "*.adversary.json",
+    "*.adversary.md",
+    "*.adversary.csv",
 }
 
 # Blocked paths for security - used by validation service

@@ -2,6 +2,7 @@
 
 import uuid
 from dataclasses import dataclass, field
+from typing import Any
 
 from ..exceptions import ValidationError
 from ..value_objects.confidence_score import ConfidenceScore
@@ -46,6 +47,7 @@ class ThreatMatch:
     confidence: ConfidenceScore = field(default_factory=lambda: ConfidenceScore(1.0))
     source_scanner: str = "unknown"  # Scanner source: "semgrep", "llm", "rules"
     is_false_positive: bool = False
+    metadata: dict[str, Any] = field(default_factory=dict)  # Session-aware metadata
 
     # Unique identification
     uuid: str = field(default_factory=lambda: str(uuid.uuid4()))
@@ -462,6 +464,32 @@ class ThreatMatch:
     def mark_false_positive(self) -> "ThreatMatch":
         """Create a copy marked as false positive."""
         return self.mark_as_false_positive()
+
+    def add_metadata(self, metadata_dict: dict[str, Any]) -> "ThreatMatch":
+        """Add metadata to the threat match and return a new instance."""
+        new_metadata = {**self.metadata, **metadata_dict}
+        return ThreatMatch(
+            rule_id=self.rule_id,
+            rule_name=self.rule_name,
+            description=self.description,
+            category=self.category,
+            severity=self.severity,
+            file_path=self.file_path,
+            line_number=self.line_number,
+            column_number=self.column_number,
+            code_snippet=self.code_snippet,
+            function_name=self.function_name,
+            exploit_examples=self.exploit_examples.copy(),
+            remediation=self.remediation,
+            references=self.references.copy(),
+            cwe_id=self.cwe_id,
+            owasp_category=self.owasp_category,
+            confidence=self.confidence,
+            source_scanner=self.source_scanner,
+            is_false_positive=self.is_false_positive,
+            metadata=new_metadata,
+            uuid=self.uuid,
+        )
 
     def to_detailed_dict(self) -> dict:
         """Convert to detailed dictionary for full reporting."""

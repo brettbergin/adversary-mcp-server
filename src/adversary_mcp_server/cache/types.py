@@ -13,6 +13,8 @@ class CacheType(str, Enum):
     SEMGREP_RESULT = "semgrep_result"
     VALIDATION_RESULT = "validation_result"
     FILE_ANALYSIS = "file_analysis"
+    PROJECT_CONTEXT = "project_context"
+    ANALYSIS_RESULT = "analysis_result"
 
 
 @dataclass
