@@ -269,10 +269,6 @@ class ScanResult:
         """Get list of scanners that were used in this scan."""
         return list({threat.source_scanner for threat in self.threats})
 
-    def get_threats_by_severity(self, severity: str) -> list[ThreatMatch]:
-        """Get threats filtered by specific severity level."""
-        return [threat for threat in self.threats if str(threat.severity) == severity]
-
     def has_critical_threats(self) -> bool:
         """Check if this result has any critical severity threats."""
         return any(threat.severity.is_critical() for threat in self.threats)

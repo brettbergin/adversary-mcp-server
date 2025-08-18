@@ -52,9 +52,11 @@ class DynamicLimits:
 
     # ========== CONCURRENCY LIMITS ==========
     # Automatically scaled based on CPU cores
-    max_concurrent_scans: int = 4  # Parallel file scans
-    max_concurrent_batches: int = 2  # Parallel LLM batches
-    llm_max_batch_size: int = 8  # Files per LLM batch
+    max_concurrent_scans: int = 8  # Parallel file scans (doubled)
+    max_concurrent_batches: int = (
+        12  # Parallel LLM batches (6x increase for much better throughput)
+    )
+    llm_max_batch_size: int = 15  # Files per LLM batch (increased from 8)
 
     # ========== TIMEOUT CONFIGURATION ==========
     # Prevents hanging operations
@@ -156,18 +158,18 @@ class ConfigManager:
         # Apply profile-specific defaults
         if self.profile == ConfigProfile.DEVELOPMENT:
             # Conservative settings for local development
-            limits.max_concurrent_scans = 2
-            limits.max_concurrent_batches = 1
+            limits.max_concurrent_scans = 4
+            limits.max_concurrent_batches = 6  # Increased for better dev experience
             limits.scan_timeout_seconds = 120
-            limits.llm_max_batch_size = 3
+            limits.llm_max_batch_size = 8
             limits.cache_max_size_mb = 50
 
         elif self.profile == ConfigProfile.PRODUCTION:
             # Optimized settings for production
-            limits.max_concurrent_scans = 8
-            limits.max_concurrent_batches = 4
+            limits.max_concurrent_scans = 16
+            limits.max_concurrent_batches = 20  # Much higher for production workloads
             limits.scan_timeout_seconds = 300
-            limits.llm_max_batch_size = 10
+            limits.llm_max_batch_size = 20
             limits.cache_max_size_mb = 200
 
         # Apply resource tier scaling

@@ -12,14 +12,18 @@ class AdversaryLogger:
     _instance = None
     _initialized = False
 
-    def __new__(cls) -> "AdversaryLogger":
+    def __new__(cls, test_mode: bool = False) -> "AdversaryLogger":
         """Ensure singleton pattern."""
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
 
-    def __init__(self) -> None:
-        """Initialize the logger (only once)."""
+    def __init__(self, test_mode: bool = False) -> None:
+        """Initialize the logger (only once).
+
+        Args:
+            test_mode: If True, use test-specific log file
+        """
         if self._initialized:
             return
 
@@ -27,7 +31,12 @@ class AdversaryLogger:
         self.log_dir = (
             Path.home() / ".local" / "share" / "adversary-mcp-server" / "logs"
         )
-        self.log_file = self.log_dir / "adversary-mcp.log"
+
+        # Use different log file for tests
+        if test_mode:
+            self.log_file = self.log_dir / "test-adversary.log"
+        else:
+            self.log_file = self.log_dir / "adversary-mcp.log"
 
         # Create log directory
         self.log_dir.mkdir(parents=True, exist_ok=True)
@@ -182,6 +191,12 @@ class AdversaryLogger:
 
         return stats
 
+    @classmethod
+    def reset_for_tests(cls) -> None:
+        """Reset the logger singleton for test isolation."""
+        cls._instance = None
+        cls._initialized = False
+
 
 # Global logger instance
 _logger_instance = AdversaryLogger()
@@ -232,3 +247,10 @@ def set_log_level(level: str) -> None:
 def get_log_stats() -> dict[str, Any]:
     """Get log statistics."""
     return _logger_instance.get_log_stats()
+
+
+def setup_test_logging() -> None:
+    """Set up logging for tests with a separate log file."""
+    global _logger_instance
+    AdversaryLogger.reset_for_tests()
+    _logger_instance = AdversaryLogger(test_mode=True)

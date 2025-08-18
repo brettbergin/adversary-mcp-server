@@ -1,5 +1,9 @@
 """Clean Architecture bootstrap for integration testing."""
 
+import logging
+from functools import lru_cache
+from typing import Protocol
+
 from ..application.adapters.llm_adapter import LLMScanStrategy
 from ..application.adapters.llm_validation_adapter import LLMValidationStrategy
 from ..application.adapters.semgrep_adapter import SemgrepScanStrategy
@@ -8,103 +12,144 @@ from ..domain.services.scan_orchestrator import ScanOrchestrator
 from ..domain.services.threat_aggregator import ThreatAggregator
 from ..domain.services.validation_service import ValidationService
 
+logger = logging.getLogger(__name__)
+
+
+class StrategyFactory(Protocol):
+    """Protocol for strategy factories."""
+
+    def create(self) -> IScanStrategy | IValidationStrategy:
+        """Create a strategy instance."""
+        ...
+
+
+def _create_strategy_safely(factory_class, strategy_name: str):
+    """
+    Safely create a strategy instance with proper error handling.
+
+    Args:
+        factory_class: The strategy class to instantiate
+        strategy_name: Name for logging purposes
+
+    Returns:
+        Strategy instance or None if creation failed
+    """
+    try:
+        return factory_class()
+    except Exception as e:
+        logger.debug(f"Strategy '{strategy_name}' not available: {e}")
+        return None
+
 
 class CleanArchitectureBootstrap:
     """
-    Bootstrap class for Clean Architecture dependency injection.
+    Simplified bootstrap for Clean Architecture dependency injection.
 
-    Provides factory methods to create properly configured domain services
-    and adapters for integration testing and production use.
+    Uses functional programming principles with caching instead of
+    stateful lazy initialization for better testability and clarity.
     """
 
-    def __init__(self):
-        """Initialize bootstrap with default configuration."""
-        self._scan_strategies: list[IScanStrategy] | None = None
-        self._validation_strategies: list[IValidationStrategy] | None = None
-        self._scan_orchestrator: ScanOrchestrator | None = None
-        self._threat_aggregator: ThreatAggregator | None = None
-        self._validation_service: ValidationService | None = None
+    @staticmethod
+    @lru_cache(maxsize=1)
+    def get_scan_strategies() -> list[IScanStrategy]:
+        """Get configured scan strategies (cached)."""
+        strategies = []
 
-    def get_scan_strategies(self) -> list[IScanStrategy]:
-        """Get configured scan strategies."""
-        if self._scan_strategies is None:
-            self._scan_strategies = []
+        # Available strategy factories
+        strategy_configs = [
+            (SemgrepScanStrategy, "semgrep"),
+            (LLMScanStrategy, "llm"),
+        ]
 
-            # Add Semgrep strategy (always available)
-            try:
-                semgrep_strategy = SemgrepScanStrategy()
-                self._scan_strategies.append(semgrep_strategy)
-            except Exception:
-                # Semgrep might not be available in test environment
-                pass
+        for factory_class, name in strategy_configs:
+            strategy = _create_strategy_safely(factory_class, name)
+            if strategy:
+                strategies.append(strategy)
 
-            # Add LLM strategy if available
-            try:
-                llm_strategy = LLMScanStrategy()
-                self._scan_strategies.append(llm_strategy)
-            except Exception:
-                # LLM scanner might not be available
-                pass
+        logger.info(f"Initialized {len(strategies)} scan strategies")
+        return strategies
 
-        return self._scan_strategies
+    @staticmethod
+    @lru_cache(maxsize=1)
+    def get_validation_strategies() -> list[IValidationStrategy]:
+        """Get configured validation strategies (cached)."""
+        strategies = []
 
-    def get_validation_strategies(self) -> list[IValidationStrategy]:
-        """Get configured validation strategies."""
-        if self._validation_strategies is None:
-            self._validation_strategies = []
+        # Available validation strategy factories
+        strategy_configs = [
+            (LLMValidationStrategy, "llm_validation"),
+        ]
 
-            # Add LLM validation if available
-            try:
-                llm_validation = LLMValidationStrategy()
-                self._validation_strategies.append(llm_validation)
-            except Exception:
-                # LLM validator might not be available
-                pass
+        for factory_class, name in strategy_configs:
+            strategy = _create_strategy_safely(factory_class, name)
+            if strategy:
+                strategies.append(strategy)
 
-        return self._validation_strategies
+        logger.info(f"Initialized {len(strategies)} validation strategies")
+        return strategies
 
-    def get_scan_orchestrator(self) -> ScanOrchestrator:
-        """Get domain scan orchestrator."""
-        if self._scan_orchestrator is None:
-            self._scan_orchestrator = ScanOrchestrator()
+    @staticmethod
+    @lru_cache(maxsize=1)
+    def get_threat_aggregator() -> ThreatAggregator:
+        """Get threat aggregator service (cached)."""
+        return ThreatAggregator()
 
-            # Register scan strategies
-            strategies = self.get_scan_strategies()
-            for strategy in strategies:
-                self._scan_orchestrator.register_scan_strategy(strategy)
+    @staticmethod
+    @lru_cache(maxsize=1)
+    def get_validation_service() -> ValidationService:
+        """Get validation service (cached)."""
+        return ValidationService()
 
-            # Register validation strategies
-            validation_strategies = self.get_validation_strategies()
-            for strategy in validation_strategies:
-                self._scan_orchestrator.register_validation_strategy(strategy)
+    @classmethod
+    @lru_cache(maxsize=1)
+    def get_scan_orchestrator(cls) -> ScanOrchestrator:
+        """Get fully configured domain scan orchestrator (cached)."""
+        orchestrator = ScanOrchestrator()
 
-            # Set threat aggregator
-            aggregator = self.get_threat_aggregator()
-            self._scan_orchestrator.set_threat_aggregator(aggregator)
+        # Register all available strategies
+        for strategy in cls.get_scan_strategies():
+            orchestrator.register_scan_strategy(strategy)
 
-        return self._scan_orchestrator
+        for strategy in cls.get_validation_strategies():
+            orchestrator.register_validation_strategy(strategy)
 
-    def get_threat_aggregator(self) -> ThreatAggregator:
-        """Get threat aggregator service."""
-        if self._threat_aggregator is None:
-            self._threat_aggregator = ThreatAggregator()
+        # Set threat aggregator
+        orchestrator.set_threat_aggregator(cls.get_threat_aggregator())
 
-        return self._threat_aggregator
+        logger.info("Scan orchestrator configured successfully")
+        return orchestrator
 
-    def get_validation_service(self) -> ValidationService:
-        """Get validation service."""
-        if self._validation_service is None:
-            self._validation_service = ValidationService()
-
-        return self._validation_service
-
-    def create_with_mock_strategies(
-        self,
-        scan_strategies: list[IScanStrategy],
+    @classmethod
+    def create_for_testing(
+        cls,
+        scan_strategies: list[IScanStrategy] | None = None,
         validation_strategies: list[IValidationStrategy] | None = None,
-    ) -> "CleanArchitectureBootstrap":
-        """Create bootstrap with mock strategies for testing."""
-        bootstrap = CleanArchitectureBootstrap()
-        bootstrap._scan_strategies = scan_strategies
-        bootstrap._validation_strategies = validation_strategies or []
-        return bootstrap
+    ) -> ScanOrchestrator:
+        """
+        Create orchestrator with custom strategies for testing.
+
+        This bypasses caching to allow different configurations per test.
+        """
+        orchestrator = ScanOrchestrator()
+
+        # Use provided strategies or defaults
+        scan_strats = scan_strategies or cls.get_scan_strategies()
+        val_strats = validation_strategies or cls.get_validation_strategies()
+
+        for strategy in scan_strats:
+            orchestrator.register_scan_strategy(strategy)
+
+        for strategy in val_strats:
+            orchestrator.register_validation_strategy(strategy)
+
+        orchestrator.set_threat_aggregator(cls.get_threat_aggregator())
+        return orchestrator
+
+    @staticmethod
+    def clear_cache():
+        """Clear all cached instances (useful for testing)."""
+        CleanArchitectureBootstrap.get_scan_strategies.cache_clear()
+        CleanArchitectureBootstrap.get_validation_strategies.cache_clear()
+        CleanArchitectureBootstrap.get_threat_aggregator.cache_clear()
+        CleanArchitectureBootstrap.get_validation_service.cache_clear()
+        CleanArchitectureBootstrap.get_scan_orchestrator.cache_clear()

@@ -163,6 +163,144 @@ class PricingManager:
         """
         return list(self.pricing_data.get("pricing_models", {}).keys())
 
+    def get_models_by_provider(
+        self, provider: str, available_only: bool = True
+    ) -> list[dict[str, Any]]:
+        """Get list of models for a specific provider.
+
+        Args:
+            provider: Provider name ('openai', 'anthropic')
+            available_only: Only return available models (not deprecated)
+
+        Returns:
+            List of model info dictionaries with id, display_name, category, etc.
+        """
+        models = []
+        pricing_models = self.pricing_data.get("pricing_models", {})
+
+        for model_id, model_info in pricing_models.items():
+            # Determine provider from model ID
+            model_provider = self._determine_model_provider(model_id)
+
+            if model_provider != provider.lower():
+                continue
+
+            # Filter out unavailable/deprecated models if requested
+            if available_only:
+                if not model_info.get("is_available", True):
+                    continue
+                if model_info.get("is_deprecated", False):
+                    continue
+
+            models.append(
+                {
+                    "id": model_id,
+                    "display_name": model_info.get("display_name", model_id),
+                    "category": model_info.get("category", "legacy"),
+                    "description": model_info.get("description", ""),
+                    "capabilities": model_info.get("capabilities", []),
+                    "best_for": model_info.get("best_for", []),
+                    "notes": model_info.get("notes", []),
+                    "speed_rating": model_info.get("speed_rating", "medium"),
+                    "quality_rating": model_info.get("quality_rating", "good"),
+                    "prompt_tokens_per_1k": model_info["prompt_tokens_per_1k"],
+                    "completion_tokens_per_1k": model_info["completion_tokens_per_1k"],
+                    "currency": model_info.get("currency", "USD"),
+                }
+            )
+
+        # Sort by category priority (latest > specialized > budget > legacy)
+        category_priority = {"latest": 0, "specialized": 1, "budget": 2, "legacy": 3}
+        models.sort(key=lambda m: (category_priority.get(m["category"], 4), m["id"]))
+
+        return models
+
+    def _determine_model_provider(self, model_id: str) -> str:
+        """Determine provider from model ID.
+
+        Args:
+            model_id: Model identifier
+
+        Returns:
+            Provider name ('openai', 'anthropic', or 'unknown')
+        """
+        model_lower = model_id.lower()
+
+        # OpenAI patterns
+        if any(
+            keyword in model_lower
+            for keyword in ["gpt", "davinci", "text-", "code-", "o3", "o4"]
+        ):
+            return "openai"
+        # Anthropic patterns
+        elif "claude" in model_lower:
+            return "anthropic"
+
+        return "unknown"
+
+    def estimate_cost_for_usage_scenario(
+        self, model_id: str, scenario: str = "typical"
+    ) -> dict[str, Any]:
+        """Estimate cost for common usage scenarios.
+
+        Args:
+            model_id: Model identifier
+            scenario: Usage scenario ('light', 'typical', 'heavy')
+
+        Returns:
+            Dictionary with cost estimates for the scenario
+        """
+        pricing = self.get_model_pricing(model_id)
+
+        # Define usage scenarios (prompt tokens, completion tokens per request, requests per day)
+        scenarios = {
+            "light": {
+                "prompt_tokens": 500,
+                "completion_tokens": 200,
+                "requests_per_day": 10,
+            },
+            "typical": {
+                "prompt_tokens": 1500,
+                "completion_tokens": 600,
+                "requests_per_day": 50,
+            },
+            "heavy": {
+                "prompt_tokens": 3000,
+                "completion_tokens": 1200,
+                "requests_per_day": 200,
+            },
+        }
+
+        if scenario not in scenarios:
+            scenario = "typical"
+
+        usage = scenarios[scenario]
+
+        # Calculate costs
+        prompt_cost_per_request = (
+            usage["prompt_tokens"] * pricing["prompt_tokens_per_1k"]
+        ) / 1000
+        completion_cost_per_request = (
+            usage["completion_tokens"] * pricing["completion_tokens_per_1k"]
+        ) / 1000
+        cost_per_request = prompt_cost_per_request + completion_cost_per_request
+
+        daily_cost = cost_per_request * usage["requests_per_day"]
+        monthly_cost = daily_cost * 30
+
+        return {
+            "scenario": scenario,
+            "cost_per_request": round(cost_per_request, 4),
+            "daily_cost": round(daily_cost, 2),
+            "monthly_cost": round(monthly_cost, 2),
+            "currency": pricing.get("currency", "USD"),
+            "usage_details": {
+                "prompt_tokens_per_request": usage["prompt_tokens"],
+                "completion_tokens_per_request": usage["completion_tokens"],
+                "requests_per_day": usage["requests_per_day"],
+            },
+        }
+
     def get_config_metadata(self) -> dict[str, Any]:
         """Get metadata about the pricing configuration.
 

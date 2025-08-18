@@ -13,6 +13,10 @@ class CacheType(str, Enum):
     SEMGREP_RESULT = "semgrep_result"
     VALIDATION_RESULT = "validation_result"
     FILE_ANALYSIS = "file_analysis"
+    PROJECT_CONTEXT = "project_context"
+    ANALYSIS_RESULT = "analysis_result"
+    BATCH_LLM_RESPONSE = "batch_llm_response"  # For batch analysis results
+    DEDUPLICATED_CONTENT = "deduplicated_content"  # For content deduplication
 
 
 @dataclass

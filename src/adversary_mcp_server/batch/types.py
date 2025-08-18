@@ -14,6 +14,7 @@ class BatchStrategy(str, Enum):
     DYNAMIC_SIZE = "dynamic_size"
     TOKEN_BASED = "token_based"
     COMPLEXITY_BASED = "complexity_based"
+    ADAPTIVE_TOKEN_OPTIMIZED = "adaptive_token_optimized"  # New optimized strategy
 
 
 class Language(str, Enum):
@@ -65,6 +66,14 @@ class BatchConfig:
     group_by_complexity: bool = True
     prefer_similar_file_sizes: bool = True
     adaptive_sizing: bool = True
+
+    # Progressive scanning settings
+    enable_progressive_scanning: bool = True
+    max_findings_before_early_exit: int = 50
+    min_high_severity_findings_for_exit: int = 5
+    progressive_scan_file_limit: int = (
+        100  # Stop after scanning this many files if enough findings
+    )
 
 
 @dataclass

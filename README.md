@@ -48,7 +48,7 @@ brew install semgrep  # macOS
 pip install semgrep   # Other platforms
 
 # Install Adversary MCP Server
-pip install adversary-mcp-server
+uv pip install adversary-mcp-server
 ```
 
 ### Verify Installation
@@ -84,7 +84,7 @@ adv scan-file path/to/file.py
 adv scan-file path/to/file.py --use-llm --use-validation
 
 # Scan entire directory
-adv scan-directory ./src --use-llm --use-validation
+adv scan-folder ./src --use-llm --use-validation
 
 # Scan code snippet directly
 adv scan-code "print('Hello World')" --language python
@@ -216,7 +216,7 @@ adv status
 adv scan-file <file-path> [options]
 
 # Scan directories
-adv scan-directory <directory-path> [options]
+adv scan-folder <directory-path> [options]
 
 # Scan code snippets
 adv scan-code <code-content> --language <lang> [options]
@@ -235,7 +235,7 @@ adv scan-file app.py
 adv scan-file app.py --use-llm --use-validation
 
 # Directory scan with full analysis
-adv scan-directory ./src --use-llm --use-validation
+adv scan-folder ./src --use-llm --use-validation
 
 # Code snippet scan
 adv scan-code "SELECT * FROM users WHERE id = ?" --language sql
@@ -618,7 +618,7 @@ make pre-commit         # Run same pre-commit in git commits.
 - [Documentation](https://github.com/brettbergin/adversary-mcp-server/wiki)
 - [Report Issues](https://github.com/brettbergin/adversary-mcp-server/issues)
 - [Discussions](https://github.com/brettbergin/adversary-mcp-server/discussions)
-- Contact: brettbergin@gmail.com
+- Contact: brettberginbc@yahoo.com
 
 ## License
 

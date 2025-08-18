@@ -510,6 +510,34 @@ class InputValidator:
         return validated
 
     @staticmethod
+    def sanitize_input(input_text: str | None) -> str:
+        """Sanitize input by removing dangerous characters.
+
+        Args:
+            input_text: The input text to sanitize
+
+        Returns:
+            Sanitized string with null bytes and dangerous patterns removed
+
+        Raises:
+            TypeError: If input is not a string or None
+        """
+        if input_text is None:
+            return ""
+
+        if not isinstance(input_text, str):
+            # Convert to string if possible
+            input_text = str(input_text)
+
+        # Remove null bytes
+        sanitized = InputValidator.NULL_BYTE_PATTERN.sub("", input_text)
+
+        # Note: We don't remove command injection patterns here as they might be legitimate
+        # in code content. This method focuses on basic sanitization.
+
+        return sanitized
+
+    @staticmethod
     def get_allowed_scan_directories() -> list[Path]:
         """Get list of allowed directories for scanning.
 

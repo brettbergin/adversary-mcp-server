@@ -1,6 +1,6 @@
 [project]
 name = "adversary-mcp-server"
-version = "1.10.7"
+version = "1.10.8"
 description = "MCP server for security vulnerability scanning and detection"
 readme = "README.md"
 authors = [
@@ -116,6 +116,7 @@ allow_untyped_defs = true
 allow_incomplete_defs = true
 allow_untyped_globals = true
 allow_redefinition = true
+explicit_package_bases = true
 disable_error_code = ["type-var", "var-annotated", "assignment", "attr-defined", "call-arg", "valid-type", "index", "union-attr", "no-redef", "import-untyped"]
 
 [tool.black]

@@ -8,8 +8,7 @@
       ],
       "cwd": "~/code/adversary-mcp-server",
       "env": {
-        "PYTHONPATH": "~/code/adversary-mcp-server/src",
-        "ADVERSARY_DISABLE_LLM": "true"
+        "PYTHONPATH": "~/code/adversary-mcp-server/src"
       }
     }
   }

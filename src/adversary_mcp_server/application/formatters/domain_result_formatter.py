@@ -8,6 +8,7 @@ from typing import Any
 from adversary_mcp_server.domain.entities.scan_result import ScanResult
 from adversary_mcp_server.domain.entities.threat_match import ThreatMatch
 from adversary_mcp_server.domain.value_objects.confidence_score import ConfidenceScore
+from adversary_mcp_server.domain.value_objects.severity_level import SeverityLevel
 
 
 class DomainScanResultFormatter:
@@ -236,7 +237,9 @@ class DomainScanResultFormatter:
         return {
             "total_threats": len(result.threats),
             "threat_count_by_severity": {
-                str(severity): len(result.get_threats_by_severity(str(severity)))
+                severity: len(
+                    result.get_threats_by_severity(SeverityLevel.from_string(severity))
+                )
                 for severity in ["critical", "high", "medium", "low"]
             },
             "threat_categories": list(result.get_threat_categories()),

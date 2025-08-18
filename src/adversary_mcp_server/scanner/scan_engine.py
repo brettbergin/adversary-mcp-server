@@ -2536,11 +2536,15 @@ class ScanEngine:
             "file_path": result.file_path,
             "language": result.language,
             "llm_threats": [
-                SerializableThreatMatch.from_threat_match(threat).to_dict()
+                SerializableThreatMatch.from_infrastructure_threat_match(
+                    threat
+                ).to_dict()
                 for threat in result.llm_threats
             ],
             "semgrep_threats": [
-                SerializableThreatMatch.from_threat_match(threat).to_dict()
+                SerializableThreatMatch.from_infrastructure_threat_match(
+                    threat
+                ).to_dict()
                 for threat in result.semgrep_threats
             ],
             "scan_metadata": result.scan_metadata,
@@ -2551,13 +2555,17 @@ class ScanEngine:
 
     def _deserialize_scan_result(self, cached_data: dict) -> EnhancedScanResult:
         """Deserialize cached data back to EnhancedScanResult."""
-        # Reconstruct threat matches
+        # Reconstruct threat matches as infrastructure objects
         llm_threats = [
-            SerializableThreatMatch.from_dict(threat_data).to_threat_match()
+            SerializableThreatMatch.from_dict(
+                threat_data
+            ).to_infrastructure_threat_match()
             for threat_data in cached_data.get("llm_threats", [])
         ]
         semgrep_threats = [
-            SerializableThreatMatch.from_dict(threat_data).to_threat_match()
+            SerializableThreatMatch.from_dict(
+                threat_data
+            ).to_infrastructure_threat_match()
             for threat_data in cached_data.get("semgrep_threats", [])
         ]
 

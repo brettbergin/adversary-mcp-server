@@ -147,3 +147,21 @@ class TestCoverageImprovements:
         # Should handle exception gracefully
         scanner = OptimizedSemgrepScanner()
         assert scanner is not None
+
+    def test_threat_match_fingerprint(self):
+        """Test ThreatMatch fingerprint generation."""
+        threat = ThreatMatch(
+            rule_id="test_rule",
+            rule_name="Test Rule",
+            description="Test",
+            category=Category.MISC,
+            severity=Severity.HIGH,
+            file_path=str(self.test_file),
+            line_number=42,
+        )
+
+        # Test fingerprint generation
+        fingerprint = threat.get_fingerprint()
+        assert "test_rule" in fingerprint
+        assert str(42) in fingerprint
+        assert str(Path(self.test_file).resolve()) in fingerprint

@@ -138,6 +138,12 @@ DEFAULT_EXCLUDE_PATTERNS: set[str] = {
     "WHEEL",
     "*.dist-info/*",
     "*.egg-info/*",
+    # Adversary MCP server output files (prevent scanning our own output)
+    "adversary.*",
+    ".adversary.*",
+    "*.adversary.json",
+    "*.adversary.md",
+    "*.adversary.csv",
 }
 
 # Blocked paths for security - used by validation service
@@ -294,6 +300,28 @@ VENV_INDICATORS: list[str] = [
     "site-packages",
     "lib/python",
     "pyvenv.cfg",
+]
+
+# Common project root indicators used across scanners
+PROJECT_ROOT_INDICATORS: list[str] = [
+    ".git",
+    ".hg",
+    ".svn",
+    ".bzr",
+    "package.json",
+    "pyproject.toml",
+    "requirements.txt",
+    "Cargo.toml",
+    "pom.xml",
+    "build.gradle",
+    "composer.json",
+    "go.mod",
+    ".project",
+    "Makefile",
+    "CMakeLists.txt",
+    "mix.exs",
+    "pubspec.yaml",
+    "Package.swift",
 ]
 
 
@@ -605,3 +633,84 @@ class LanguageMapper:
             Sorted list of supported file extensions
         """
         return sorted(cls.EXTENSION_TO_LANGUAGE.keys())
+
+    @classmethod
+    def find_project_root(cls, file_path: Path) -> Path:
+        """Find project root by looking for common project indicators.
+
+        This method provides centralized project root detection logic
+        used across all scanners to ensure consistency.
+
+        Args:
+            file_path: File or directory path to start search from
+
+        Returns:
+            Path to project root, or file's parent if no indicators found
+        """
+        current = file_path.parent if file_path.is_file() else file_path
+
+        while current.parent != current:
+            if any(
+                (current / indicator).exists() for indicator in PROJECT_ROOT_INDICATORS
+            ):
+                return current
+            current = current.parent
+
+        # If no project root found, use the file's parent directory
+        return file_path.parent if file_path.is_file() else file_path
+
+    @classmethod
+    def is_virtual_environment_path(cls, file_path: Path) -> bool:
+        """Check if a path belongs to a Python virtual environment.
+
+        Args:
+            file_path: Path to check
+
+        Returns:
+            True if path appears to be in a virtual environment
+        """
+        path_str = str(file_path).lower()
+        return any(indicator in path_str for indicator in VENV_INDICATORS)
+
+    @classmethod
+    def get_security_analysis_hints(cls, language: str) -> str:
+        """Get language-specific security analysis hints for LLM scanning.
+
+        Args:
+            language: Programming language identifier
+
+        Returns:
+            Security-focused analysis hints for the language
+        """
+        security_hints = {
+            "python": "Focus on Flask/Django security, SQL injection, XSS, pickle deserialization, path traversal, and Python-specific vulnerabilities like eval() misuse",
+            "javascript": "Focus on XSS, prototype pollution, NPM vulnerabilities, Node.js security, injection attacks, and client-side security issues",
+            "typescript": "Focus on type safety bypasses, XSS, TypeScript-specific security issues, and potential runtime type coercion vulnerabilities",
+            "java": "Focus on deserialization vulnerabilities, injection flaws, Spring security issues, XML external entity (XXE), and Java-specific memory leaks",
+            "go": "Focus on Go-specific vulnerabilities, race conditions, memory safety, goroutine leaks, and unsafe package usage",
+            "php": "Focus on PHP-specific vulnerabilities, file inclusion attacks, SQL injection, XSS, session security, and unsafe deserialization",
+            "ruby": "Focus on Ruby on Rails security, mass assignment, SQL injection, XSS, and unsafe YAML/code evaluation",
+            "rust": "Focus on unsafe code blocks, memory safety violations, concurrency issues, and potential panic conditions",
+            "c": "Focus on buffer overflows, memory management, format string vulnerabilities, and integer overflow/underflow",
+            "cpp": "Focus on memory corruption, buffer overflows, use-after-free, RAII violations, and unsafe pointer operations",
+            "csharp": "Focus on .NET security, SQL injection, XSS, deserialization attacks, and unsafe code blocks",
+            "kotlin": "Focus on null safety bypasses, Java interop security issues, and Android-specific vulnerabilities if applicable",
+            "swift": "Focus on memory safety, optional unwrapping issues, and iOS/macOS-specific security patterns",
+            "scala": "Focus on JVM security issues, functional programming pitfalls, and Akka/concurrency security",
+            "bash": "Focus on command injection, path traversal, privilege escalation, and unsafe shell expansions",
+            "powershell": "Focus on code injection, execution policy bypasses, and Windows-specific security issues",
+            "sql": "Focus on SQL injection, privilege escalation, and database-specific security misconfigurations",
+            "yaml": "Focus on YAML injection, unsafe deserialization, and configuration security issues",
+            "json": "Focus on JSON injection, parser vulnerabilities, and configuration exposure risks",
+            "xml": "Focus on XXE attacks, XML injection, and schema validation bypasses",
+            "html": "Focus on XSS, CSRF, clickjacking, and client-side security vulnerabilities",
+            "css": "Focus on CSS injection, data exfiltration through CSS, and UI redressing attacks",
+            "dockerfile": "Focus on privilege escalation, secrets exposure, and container security misconfigurations",
+            "terraform": "Focus on infrastructure security, secrets management, and cloud security misconfigurations",
+            "solidity": "Focus on smart contract vulnerabilities, reentrancy attacks, integer overflow, and gas optimization issues",
+        }
+
+        return security_hints.get(
+            language.lower(),
+            "Perform comprehensive security analysis focusing on common vulnerability patterns",
+        )

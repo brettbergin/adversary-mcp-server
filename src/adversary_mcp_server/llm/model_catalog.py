@@ -468,7 +468,8 @@ class ModelCatalogService:
         model_lower = model_id.lower()
 
         if any(
-            keyword in model_lower for keyword in ["gpt", "davinci", "text-", "code-"]
+            keyword in model_lower
+            for keyword in ["gpt", "davinci", "text-", "code-", "o3", "o4"]
         ):
             return ModelProvider.OPENAI
         elif "claude" in model_lower:

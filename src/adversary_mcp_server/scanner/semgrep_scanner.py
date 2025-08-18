@@ -1009,6 +1009,8 @@ class OptimizedSemgrepScanner:
                 "--json",
                 "--quiet",
                 "--disable-version-check",
+                "--exclude=**/adversary.*",
+                "--exclude=**/.adversary.*",
                 "-",  # Read from stdin
             ]
 
@@ -1086,6 +1088,8 @@ class OptimizedSemgrepScanner:
                 "--json",
                 "--quiet",  # Reduce output noise
                 "--disable-version-check",  # Faster startup
+                "--exclude=**/adversary.*",
+                "--exclude=**/.adversary.*",
                 temp_file_path,
             ]
 
@@ -1153,6 +1157,8 @@ class OptimizedSemgrepScanner:
                 "--json",
                 "--quiet",  # Reduce output noise
                 "--disable-version-check",  # Faster startup
+                "--exclude=**/adversary.*",
+                "--exclude=**/.adversary.*",
             ]
 
             # Add recursive flag if needed (Semgrep is recursive by default)
