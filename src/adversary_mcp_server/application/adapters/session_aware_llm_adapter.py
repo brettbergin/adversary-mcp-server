@@ -57,31 +57,11 @@ class SessionAwareLLMScanStrategy(IScanStrategy):
         return context.metadata.scan_type in ["file", "directory", "code", "diff"]
 
     def get_supported_languages(self) -> list[str]:
-        """Get list of supported languages."""
-        # Session-aware scanner supports all languages that LLM can understand
-        return [
-            "python",
-            "javascript",
-            "typescript",
-            "java",
-            "go",
-            "rust",
-            "php",
-            "ruby",
-            "c",
-            "cpp",
-            "csharp",
-            "kotlin",
-            "swift",
-            "scala",
-            "shell",
-            "yaml",
-            "json",
-            "xml",
-            "sql",
-            "html",
-            "css",
-        ]
+        """Get list of supported languages from language mapper."""
+        from adversary_mcp_server.scanner.language_mapping import LanguageMapper
+
+        # Session-aware scanner supports all languages that the mapper recognizes
+        return LanguageMapper.get_supported_languages()
 
     async def execute_scan(self, request: ScanRequest) -> ScanResult:
         """Execute session-aware LLM scan."""
@@ -209,49 +189,23 @@ class SessionAwareLLMScanStrategy(IScanStrategy):
         )
 
     def _find_project_root(self, file_path: Path) -> Path:
-        """Find the project root directory."""
-        current = file_path.parent if file_path.is_file() else file_path
+        """Find the project root directory using centralized detection."""
+        from adversary_mcp_server.scanner.language_mapping import LanguageMapper
 
-        # Look for common project indicators
-        project_indicators = [
-            ".git",
-            ".hg",
-            ".svn",
-            "package.json",
-            "pyproject.toml",
-            "requirements.txt",
-            "Cargo.toml",
-            "pom.xml",
-            "build.gradle",
-            "composer.json",
-            "go.mod",
-        ]
-
-        while current.parent != current:
-            if any((current / indicator).exists() for indicator in project_indicators):
-                return current
-            current = current.parent
-
-        # If no project root found, use the file's parent directory
-        return file_path.parent if file_path.is_file() else file_path
+        return LanguageMapper.find_project_root(file_path)
 
     def _create_context_hint(self, request: ScanRequest) -> str:
         """Create context hint based on scan request."""
         hints = []
 
-        # Add language-specific hints
+        # Add language-specific hints using centralized mapping
         if request.context.language:
-            language_hints = {
-                "python": "Focus on Flask/Django security, SQL injection, XSS, and Python-specific vulnerabilities",
-                "javascript": "Focus on XSS, prototype pollution, NPM vulnerabilities, and Node.js security",
-                "typescript": "Focus on type safety bypasses, XSS, and TypeScript-specific security issues",
-                "java": "Focus on deserialization, injection flaws, and Spring security issues",
-                "go": "Focus on Go-specific vulnerabilities, race conditions, and memory safety",
-                "php": "Focus on PHP-specific vulnerabilities, file inclusion, and web security",
-                "rust": "Focus on unsafe code blocks, memory safety, and concurrency issues",
-            }
-            if request.context.language in language_hints:
-                hints.append(language_hints[request.context.language])
+            from adversary_mcp_server.scanner.language_mapping import LanguageMapper
+
+            language_hint = LanguageMapper.get_security_analysis_hints(
+                request.context.language
+            )
+            hints.append(language_hint)
 
         # Add severity-based hints
         if request.severity_threshold:

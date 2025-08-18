@@ -46,7 +46,7 @@ async def complete_streaming(self, system_prompt: str, user_prompt: str, ...) ->
 ```python
 # Before → After
 max_concurrent_batches: 2 → 12    # Default (6x increase)
-max_concurrent_batches: 1 → 6     # Dev environment  
+max_concurrent_batches: 1 → 6     # Dev environment
 max_concurrent_batches: 4 → 20    # Production (5x increase)
 llm_max_batch_size: 8 → 15        # Larger batches (87% increase)
 ```
@@ -107,7 +107,7 @@ MODEL_CONTEXT_LIMITS = {
 - **Coverage:** **0% → 100%** (83 lines fully covered)
 - **32 comprehensive test cases** covering:
   - `GitChangeDetector` class (16 tests)
-  - `create_incremental_scan_context` function (6 tests)  
+  - `create_incremental_scan_context` function (6 tests)
   - `filter_security_relevant_changes` function (10 tests)
 
 **Key Test Features:**
@@ -123,7 +123,7 @@ MODEL_CONTEXT_LIMITS = {
 ```python
 class TestLLMMetricsRecording:
     - test_record_llm_metrics_with_metrics_collector
-    - test_record_llm_metrics_without_total_tokens  
+    - test_record_llm_metrics_without_total_tokens
     - test_record_llm_metrics_collector_error
     - test_record_llm_metrics_no_collector
 ```
@@ -146,7 +146,7 @@ class TestStreamingRetryLogic:
 - Metrics collection failure scenarios
 
 #### 3. **Scanner Types Testing** (`tests/scanner/test_coverage_simple.py`)
-- **Coverage:** **97% → 100%** 
+- **Coverage:** **97% → 100%**
 - Added `ThreatMatch.get_fingerprint()` method testing
 - Validates security finding fingerprint generation
 
@@ -206,7 +206,7 @@ sequenceDiagram
     participant Client
     participant LLMClient
     participant Provider
-    
+
     Client->>LLMClient: complete_streaming_with_retry()
     LLMClient->>Provider: stream request
     Provider-->>LLMClient: chunk 1
@@ -223,13 +223,13 @@ graph TD
     A[Scan Request] --> B[Batch Processor]
     B --> C[Concurrent File Scanner]
     C --> D[LLM Batch 1]
-    C --> E[LLM Batch 2] 
+    C --> E[LLM Batch 2]
     C --> F[LLM Batch N]
     D --> G[Streaming API]
     E --> G
     F --> G
     G --> H[Result Aggregation]
-    
+
     style D fill:#e1f5fe
     style E fill:#e1f5fe
     style F fill:#e1f5fe
@@ -258,7 +258,7 @@ graph TD
 - ✅ **Hours to minutes** reduction in large codebase processing
 - ✅ **85% context utilization** for optimal API usage
 
-### Testing Excellence  
+### Testing Excellence
 - ✅ **44 new high-quality test cases** added
 - ✅ **5+ percentage points** coverage improvement
 - ✅ **5 modules** achieving 100% coverage
