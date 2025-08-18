@@ -54,11 +54,11 @@ class SerializableThreatMatch:
                 threat.confidence.get_decimal()
                 if hasattr(threat.confidence, "get_decimal")
                 else (
-                    float(threat.confidence.value)
+                    float(getattr(threat.confidence, "value", 0.7))
                     if hasattr(threat.confidence, "value")
                     else (
                         float(threat.confidence)
-                        if isinstance(threat.confidence, int | float | str)
+                        if isinstance(threat.confidence, (int, float, str))
                         else 0.7
                     )
                 )

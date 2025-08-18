@@ -9,6 +9,7 @@ from typing import Any
 
 from ..cache import CacheKey, CacheType
 from ..logger import get_logger
+from ..llm.pricing_manager import PricingManager
 from .token_estimator import TokenEstimator
 from .types import (
     BatchConfig,
@@ -20,25 +21,86 @@ from .types import (
 
 logger = get_logger("batch_processor")
 
-# Model-specific context limits for dynamic batch sizing
+# Model-specific context limits for dynamic batch sizing  
+# NOTE: This serves as a fallback when pricing_config.json is unavailable
+# Primary source is now get_model_context_limit() which loads from pricing config
 MODEL_CONTEXT_LIMITS = {
-    # OpenAI models
-    "gpt-4": 8192,
-    "gpt-4-turbo": 128000,
-    "gpt-4-turbo-preview": 128000,
+    # OpenAI GPT-5 family (latest)
+    "gpt-5": 272000,
+    "gpt-5-mini": 272000,
+    "gpt-5-nano": 272000,
+    "gpt-5-chat-latest": 272000,
+    
+    # OpenAI GPT-4 family
     "gpt-4o": 128000,
     "gpt-4o-mini": 128000,
+    "gpt-4-turbo": 128000,
+    "gpt-4-turbo-preview": 128000,
+    "gpt-4": 8192,
+    
+    # OpenAI legacy models
     "gpt-3.5-turbo": 16384,
     "gpt-3.5-turbo-16k": 16384,
-    # Anthropic models
+    
+    # OpenAI reasoning models
+    "o3": 200000,
+    "o4-mini": 200000,
+    
+    # Anthropic Claude 4 family (latest)
+    "claude-opus-4.1": 200000,
+    "claude-opus-4": 200000,
+    "claude-sonnet-4-20250514": 1000000,  # Extended context available
+    "claude-sonnet-3.7": 200000,
+    
+    # Anthropic Claude 3.5 family
     "claude-3-5-sonnet-20241022": 200000,
     "claude-3-5-haiku-20241022": 200000,
+    
+    # Anthropic Claude 3 family (legacy)
     "claude-3-opus-20240229": 200000,
     "claude-3-sonnet-20240229": 200000,
     "claude-3-haiku-20240307": 200000,
+    
     # Default fallback
     "default": 8192,
 }
+
+
+def get_model_context_limit(model_name: str) -> int:
+    """Get context limit for a model from pricing configuration.
+    
+    Dynamically loads model context limits from pricing_config.json,
+    falling back to hardcoded values for backwards compatibility.
+    
+    Args:
+        model_name: LLM model name
+        
+    Returns:
+        Maximum context tokens for the model
+    """
+    try:
+        pricing_manager = PricingManager()
+        model_info = pricing_manager.get_model_info(model_name)
+        
+        if model_info and "max_context_tokens" in model_info:
+            context_limit = model_info["max_context_tokens"]
+            logger.debug(f"Got context limit {context_limit} for {model_name} from pricing config")
+            return context_limit
+        
+        # Fallback to hardcoded MODEL_CONTEXT_LIMITS
+        if model_name in MODEL_CONTEXT_LIMITS:
+            context_limit = MODEL_CONTEXT_LIMITS[model_name]
+            logger.debug(f"Using hardcoded context limit {context_limit} for {model_name}")
+            return context_limit
+        
+        # Final fallback
+        default_limit = MODEL_CONTEXT_LIMITS["default"]
+        logger.warning(f"No context limit found for {model_name}, using default {default_limit}")
+        return default_limit
+        
+    except Exception as e:
+        logger.warning(f"Failed to get context limit for {model_name}: {e}")
+        return MODEL_CONTEXT_LIMITS.get(model_name, MODEL_CONTEXT_LIMITS["default"])
 
 
 class BatchProcessor:
@@ -1040,10 +1102,8 @@ class BatchProcessor:
             f"After deduplication: {len(deduplicated_contexts)} unique files to process"
         )
 
-        # Get model-specific context limit
-        model_context_limit = MODEL_CONTEXT_LIMITS.get(
-            model or "default", MODEL_CONTEXT_LIMITS["default"]
-        )
+        # Get model-specific context limit dynamically
+        model_context_limit = get_model_context_limit(model or "default")
         logger.debug(
             f"Using context limit: {model_context_limit} tokens for model {model}"
         )
