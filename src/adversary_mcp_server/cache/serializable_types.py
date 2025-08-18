@@ -6,6 +6,30 @@ from typing import Any
 from ..domain.entities.threat_match import ThreatMatch
 
 
+def _safe_confidence_to_float(confidence) -> float:
+    """Safely convert any confidence value to float."""
+    # Check for ConfidenceScore with get_decimal method
+    if hasattr(confidence, "get_decimal"):
+        return confidence.get_decimal()
+
+    # Check for objects with value attribute
+    if hasattr(confidence, "value"):
+        return float(confidence.value)
+
+    # Handle primitive types
+    if isinstance(confidence, int | float):
+        return float(confidence)
+
+    if isinstance(confidence, str):
+        try:
+            return float(confidence)
+        except ValueError:
+            return 0.7
+
+    # Default fallback
+    return 0.7
+
+
 @dataclass
 class SerializableThreatMatch:
     """Serializable version of ThreatMatch for cache storage."""
@@ -50,19 +74,7 @@ class SerializableThreatMatch:
             line_number=threat.line_number,
             end_line_number=getattr(threat, "end_line_number", threat.line_number),
             code_snippet=threat.code_snippet,
-            confidence=(
-                threat.confidence.get_decimal()
-                if hasattr(threat.confidence, "get_decimal")
-                else (
-                    float(getattr(threat.confidence, "value", 0.7))
-                    if hasattr(threat.confidence, "value")
-                    else (
-                        float(threat.confidence)
-                        if isinstance(threat.confidence, (int, float, str))
-                        else 0.7
-                    )
-                )
-            ),
+            confidence=_safe_confidence_to_float(threat.confidence),
             source=threat.source,
             cwe_id=threat.cwe_id,
             owasp_category=threat.owasp_category,
