@@ -1,5 +1,10 @@
 """Adapter for SemgrepScanner to implement domain IScanStrategy interface."""
 
+import json
+import subprocess
+import time
+from pathlib import Path
+
 from adversary_mcp_server.application.adapters.input_models import (
     SemgrepScanResultInput,
     safe_convert_to_input_model,
@@ -98,8 +103,12 @@ class SemgrepScanStrategy(IScanStrategy):
             context = request.context
             scan_type = context.metadata.scan_type
 
+            # Start timing the scan execution
+            start_time = time.time()
+
             # Convert domain objects to infrastructure parameters
             semgrep_results = []
+            lines_analyzed = 0
 
             if scan_type == "file":
                 # File scan
@@ -109,17 +118,20 @@ class SemgrepScanStrategy(IScanStrategy):
                     or LanguageMapper.detect_language_from_extension(file_path)
                 )
                 semgrep_results = await self._scan_file(file_path, language)
+                lines_analyzed = self._count_lines_in_file(file_path)
 
             elif scan_type == "directory":
                 # Directory scan
                 dir_path = str(context.target_path)
                 semgrep_results = await self._scan_directory(dir_path)
+                lines_analyzed = self._count_lines_in_directory(dir_path)
 
             elif scan_type == "code":
                 # Code snippet scan
                 code_content = context.content or ""
                 language = context.language or "generic"
                 semgrep_results = await self._scan_code(code_content, language)
+                lines_analyzed = len(code_content.splitlines()) if code_content else 0
 
             elif scan_type == "diff":
                 # Diff scan - requires special handling
@@ -130,6 +142,10 @@ class SemgrepScanStrategy(IScanStrategy):
                     or LanguageMapper.detect_language_from_extension(file_path)
                 )
                 semgrep_results = await self._scan_file(file_path, language)
+                lines_analyzed = self._count_lines_in_file(file_path)
+
+            # Calculate scan duration
+            scan_duration_ms = int((time.time() - start_time) * 1000)
 
             # Convert infrastructure results to domain objects
             domain_threats = self._convert_to_domain_threats(semgrep_results, request)
@@ -139,16 +155,28 @@ class SemgrepScanStrategy(IScanStrategy):
                 domain_threats, request.severity_threshold
             )
 
+            # Get actual semgrep metadata
+            semgrep_version = await self._get_semgrep_version()
+            rules_count = await self._get_rules_count()
+
+            # Create scan metadata with validation
+            scan_metadata = {
+                "scanner": self.get_strategy_name(),
+                "rules_count": rules_count,
+                "scan_duration_ms": scan_duration_ms,
+                "semgrep_version": semgrep_version,
+                "lines_analyzed": lines_analyzed,
+                "scan_id": request.context.metadata.scan_id,
+            }
+
+            # Validate metrics
+            self._validate_scan_metadata(scan_metadata)
+
             # Create domain scan result
             return ScanResult.create_from_threats(
                 request=request,
                 threats=filtered_threats,
-                scan_metadata={
-                    "scanner": self.get_strategy_name(),
-                    "rules_count": getattr(self._scanner, "_rules_count", 0),
-                    "scan_duration_ms": 0,  # TODO: Add timing
-                    "semgrep_version": getattr(self._scanner, "_version", "unknown"),
-                },
+                scan_metadata=scan_metadata,
             )
 
         except Exception as e:
@@ -336,3 +364,121 @@ class SemgrepScanStrategy(IScanStrategy):
         return [
             threat for threat in threats if threat.severity.meets_threshold(threshold)
         ]
+
+    def _count_lines_in_file(self, file_path: str) -> int:
+        """Count lines in a single file."""
+        try:
+            with open(file_path, encoding="utf-8", errors="ignore") as f:
+                return sum(1 for _ in f)
+        except (OSError, UnicodeDecodeError) as e:
+            get_logger(__name__).debug(f"Could not count lines in {file_path}: {e}")
+            return 0
+
+    def _count_lines_in_directory(self, dir_path: str) -> int:
+        """Count lines in all supported files in a directory."""
+        total_lines = 0
+        supported_extensions = LanguageMapper.get_supported_extensions()
+
+        try:
+            for file_path in Path(dir_path).rglob("*"):
+                if (
+                    file_path.is_file()
+                    and file_path.suffix.lower() in supported_extensions
+                ):
+                    total_lines += self._count_lines_in_file(str(file_path))
+        except Exception as e:
+            get_logger(__name__).debug(
+                f"Could not count lines in directory {dir_path}: {e}"
+            )
+
+        return total_lines
+
+    async def _get_semgrep_version(self) -> str:
+        """Get the actual semgrep version."""
+        try:
+            # Try to get version from semgrep command
+            result = subprocess.run(
+                ["semgrep", "--version"], capture_output=True, text=True, timeout=10
+            )
+            if result.returncode == 0:
+                return result.stdout.strip()
+            else:
+                return "unknown"
+        except (
+            subprocess.TimeoutExpired,
+            FileNotFoundError,
+            subprocess.SubprocessError,
+        ):
+            # Fallback to checking if semgrep is available
+            return getattr(self._scanner, "_version", "unknown")
+
+    async def _get_rules_count(self) -> int:
+        """Get the number of rules available to semgrep."""
+        try:
+            # Try to get rules count from scanner's pro status
+            if hasattr(self._scanner, "_pro_status") and self._scanner._pro_status:
+                rules_available = self._scanner._pro_status.get("rules_available")
+                if rules_available is not None:
+                    return rules_available
+
+            # Fallback: Try to run semgrep with --dump-config to count rules
+            config = getattr(self._scanner, "config", "p/security-audit")
+            result = subprocess.run(
+                ["semgrep", f"--config={config}", "--dump-config"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode == 0:
+                try:
+                    config_data = json.loads(result.stdout)
+                    if isinstance(config_data, dict) and "rules" in config_data:
+                        return len(config_data["rules"])
+                except (json.JSONDecodeError, KeyError):
+                    pass
+
+            return getattr(self._scanner, "_rules_count", 0)
+        except (
+            subprocess.TimeoutExpired,
+            FileNotFoundError,
+            subprocess.SubprocessError,
+        ):
+            return getattr(self._scanner, "_rules_count", 0)
+
+    def _validate_scan_metadata(self, metadata: dict) -> None:
+        """Validate that scan metadata contains proper values."""
+        logger = get_logger(__name__)
+
+        # Validate semgrep version
+        if metadata.get("semgrep_version") == "unknown":
+            logger.warning("Semgrep version could not be determined")
+
+        # Validate rules count
+        rules_count = metadata.get("rules_count", 0)
+        if rules_count == 0:
+            logger.warning(
+                "No Semgrep rules detected - this may indicate a configuration issue"
+            )
+        elif rules_count < 10:
+            logger.info(
+                f"Low rules count detected: {rules_count} - consider using more comprehensive rulesets"
+            )
+
+        # Validate scan duration
+        scan_duration_ms = metadata.get("scan_duration_ms", 0)
+        if scan_duration_ms == 0:
+            logger.warning(
+                "Scan duration is 0ms - this may indicate timing measurement failure"
+            )
+        elif scan_duration_ms > 300000:  # 5 minutes
+            logger.warning(f"Scan took unusually long: {scan_duration_ms}ms")
+
+        # Validate lines analyzed
+        lines_analyzed = metadata.get("lines_analyzed", 0)
+        if lines_analyzed == 0:
+            logger.info(
+                "No lines were analyzed - target may be empty or unsupported file types"
+            )
+
+        # Log successful validation
+        logger.debug(f"Scan metadata validation passed: {metadata}")

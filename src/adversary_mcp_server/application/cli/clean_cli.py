@@ -1503,7 +1503,9 @@ class CleanCLI:
         }
 
         if self._session_manager:
-            status["active_sessions"] = len(self._session_manager.sessions)
+            status["active_sessions"] = len(
+                self._session_manager.list_active_sessions()
+            )
             status["cache_statistics"] = self._session_manager.get_cache_statistics()
 
         return status
@@ -1588,9 +1590,7 @@ Focus on systemic and architectural vulnerabilities.
                 else str(finding.severity)
             )
             confidence = (
-                f"{finding.confidence_score:.1%}"
-                if hasattr(finding, "confidence_score")
-                else "N/A"
+                f"{finding.confidence:.1%}" if hasattr(finding, "confidence") else "N/A"
             )
 
             table.add_row(
@@ -1631,8 +1631,8 @@ Focus on systemic and architectural vulnerabilities.
                             else str(finding.severity)
                         ),
                         "confidence": (
-                            finding.confidence_score
-                            if hasattr(finding, "confidence_score")
+                            finding.confidence
+                            if hasattr(finding, "confidence")
                             else 0.7
                         ),
                         "session_context": getattr(finding, "session_context", {}),
@@ -1742,7 +1742,7 @@ def scan_file(
         sys.exit(1)
 
 
-@cli.command()
+@cli.command("scan-folder")
 @click.argument("directory_path", type=click.Path(exists=True, file_okay=False))
 @click.option(
     "--use-semgrep/--no-semgrep", default=True, help="Enable/disable Semgrep analysis"
@@ -1777,7 +1777,7 @@ def scan_directory(
     output_file: str,
     verbose: bool,
 ):
-    """Scan a directory for security vulnerabilities using Clean Architecture."""
+    """Scan a folder for security vulnerabilities using Clean Architecture."""
     try:
         # Validate all inputs using InputValidator
         validated_directory_path = str(

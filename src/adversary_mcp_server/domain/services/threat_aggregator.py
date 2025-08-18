@@ -137,9 +137,73 @@ class ProximityBasedAggregationStrategy(BaseThreatAggregationStrategy):
         base_threat = threats[0]
 
         for other_threat in threats[1:]:
-            base_threat = base_threat.merge_with(other_threat)
+            # For proximity-based grouping, we need to be more lenient with merging
+            # Check if they can be merged using standard similarity check
+            if base_threat.is_similar_to(other_threat):
+                base_threat = base_threat.merge_with(other_threat)
+            else:
+                # For proximity-grouped threats that don't meet strict similarity,
+                # manually merge by combining the information
+                base_threat = self._force_merge_threats(base_threat, other_threat)
 
         return base_threat
+
+    def _force_merge_threats(
+        self, base: ThreatMatch, other: ThreatMatch
+    ) -> ThreatMatch:
+        """Force merge two threats that are proximity-grouped but not strictly similar."""
+        # Use the higher confidence
+        best_confidence = max(base.confidence, other.confidence)
+
+        # Use the higher severity
+        best_severity = max(base.severity, other.severity)
+
+        # Combine exploit examples
+        combined_exploits = list(set(base.exploit_examples + other.exploit_examples))
+
+        # Combine remediation advice
+        combined_remediation = base.remediation
+        if other.remediation and other.remediation != base.remediation:
+            combined_remediation = f"{base.remediation}; {other.remediation}"
+
+        # Combine descriptions if different
+        combined_description = base.description
+        if other.description and other.description != base.description:
+            combined_description = f"{base.description}; {other.description}"
+
+        # Create merged threat with combined information
+        return ThreatMatch(
+            rule_id=base.rule_id,  # Keep base rule_id
+            rule_name=(
+                f"{base.rule_name} + {other.rule_name}"
+                if base.rule_name != other.rule_name
+                else base.rule_name
+            ),
+            description=combined_description,
+            category=base.category,  # Keep base category
+            severity=best_severity,
+            file_path=base.file_path,
+            line_number=min(
+                base.line_number, other.line_number
+            ),  # Use the earlier line
+            column_number=base.column_number,
+            code_snippet=base.code_snippet,  # Keep base code snippet
+            function_name=base.function_name or other.function_name,
+            exploit_examples=combined_exploits,
+            remediation=combined_remediation,
+            references=base.references
+            + [ref for ref in other.references if ref not in base.references],
+            cwe_id=base.cwe_id or other.cwe_id,
+            owasp_category=base.owasp_category or other.owasp_category,
+            confidence=best_confidence,
+            source_scanner=(
+                f"{base.source_scanner}+{other.source_scanner}"
+                if base.source_scanner != other.source_scanner
+                else base.source_scanner
+            ),
+            is_false_positive=base.is_false_positive and other.is_false_positive,
+            uuid=base.uuid,  # Keep base UUID
+        )
 
 
 class FingerprintBasedAggregationStrategy(BaseThreatAggregationStrategy):
@@ -240,7 +304,7 @@ class FingerprintBasedAggregationStrategy(BaseThreatAggregationStrategy):
                     owasp_category=base_threat.owasp_category
                     or other_threat.owasp_category,
                     confidence=base_threat.confidence,
-                    source=f"{base_threat.source}+{other_threat.source}",
+                    source_scanner=f"{base_threat.source_scanner}+{other_threat.source_scanner}",
                     is_false_positive=base_threat.is_false_positive
                     and other_threat.is_false_positive,
                     uuid=base_threat.uuid,

@@ -7,6 +7,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from ..cache import CacheKey, CacheType
 from ..logger import get_logger
 from .token_estimator import TokenEstimator
 from .types import (
@@ -19,25 +20,53 @@ from .types import (
 
 logger = get_logger("batch_processor")
 
+# Model-specific context limits for dynamic batch sizing
+MODEL_CONTEXT_LIMITS = {
+    # OpenAI models
+    "gpt-4": 8192,
+    "gpt-4-turbo": 128000,
+    "gpt-4-turbo-preview": 128000,
+    "gpt-4o": 128000,
+    "gpt-4o-mini": 128000,
+    "gpt-3.5-turbo": 16384,
+    "gpt-3.5-turbo-16k": 16384,
+    # Anthropic models
+    "claude-3-5-sonnet-20241022": 200000,
+    "claude-3-5-haiku-20241022": 200000,
+    "claude-3-opus-20240229": 200000,
+    "claude-3-sonnet-20240229": 200000,
+    "claude-3-haiku-20240307": 200000,
+    # Default fallback
+    "default": 8192,
+}
+
 
 class BatchProcessor:
     """Advanced batch processor for efficient LLM operations."""
 
-    def __init__(self, config: BatchConfig, metrics_collector=None):
+    def __init__(self, config: BatchConfig, metrics_collector=None, cache_manager=None):
         """Initialize batch processor.
 
         Args:
             config: Batch processing configuration
             metrics_collector: Optional metrics collector for batch processing analytics
+            cache_manager: Optional cache manager for content deduplication
         """
         self.config = config
         self.token_estimator = TokenEstimator()
         self.metrics = BatchMetrics()
         self.metrics_collector = metrics_collector
+        self.cache_manager = cache_manager
 
         # Batch deduplication tracking
         self.processed_batch_hashes: set[str] = set()
         self.batch_results_cache: dict[str, Any] = {}
+
+        # Content deduplication for similar files
+        self.content_similarity_threshold = 0.85  # 85% similarity threshold
+        self.deduplicated_content_map: dict[str, str] = (
+            {}
+        )  # content_hash -> representative_content_hash
 
         logger.info(f"BatchProcessor initialized with strategy: {config.strategy}")
 
@@ -238,11 +267,17 @@ class BatchProcessor:
             batches = self._create_token_based_batches(sorted_contexts, model)
         elif self.config.strategy == BatchStrategy.COMPLEXITY_BASED:
             batches = self._create_complexity_based_batches(sorted_contexts)
+        elif self.config.strategy == BatchStrategy.ADAPTIVE_TOKEN_OPTIMIZED:
+            batches = self._create_adaptive_token_optimized_batches(
+                sorted_contexts, model
+            )
         else:
             logger.warning(
-                f"Unknown strategy {self.config.strategy}, using dynamic_size"
+                f"Unknown strategy {self.config.strategy}, using adaptive_token_optimized"
             )
-            batches = self._create_dynamic_size_batches(sorted_contexts)
+            batches = self._create_adaptive_token_optimized_batches(
+                sorted_contexts, model
+            )
 
         # Update metrics
         self.metrics.total_files = len(file_contexts)
@@ -307,25 +342,515 @@ class BatchProcessor:
     def _sort_contexts(
         self, contexts: list[FileAnalysisContext]
     ) -> list[FileAnalysisContext]:
-        """Sort file contexts for optimal batching.
+        """Sort file contexts for optimal batching with smart prioritization.
 
         Args:
             contexts: File contexts to sort
 
         Returns:
-            Sorted file contexts
+            Sorted file contexts with high-risk files prioritized
         """
+        # Apply smart prioritization before sorting
+        prioritized_contexts = self._apply_smart_prioritization(contexts)
 
         def sort_key(ctx: FileAnalysisContext) -> tuple:
-            # Sort by: priority (desc), language, complexity, size
+            # Sort by: security_priority (desc), complexity, language, size
             return (
-                -ctx.priority,  # Higher priority first
+                -ctx.priority,  # Higher priority first (security-aware)
+                -ctx.complexity_score,  # More complex files first (likely more bugs)
                 ctx.language.value if self.config.group_by_language else "",
-                ctx.complexity_score if self.config.group_by_complexity else 0,
-                ctx.file_size_bytes if self.config.prefer_similar_file_sizes else 0,
+                (
+                    -ctx.file_size_bytes if self.config.prefer_similar_file_sizes else 0
+                ),  # Larger files first
             )
 
-        return sorted(contexts, key=sort_key)
+        return sorted(prioritized_contexts, key=sort_key)
+
+    def _apply_smart_prioritization(
+        self, contexts: list[FileAnalysisContext]
+    ) -> list[FileAnalysisContext]:
+        """Apply intelligent prioritization based on security risk indicators.
+
+        Analyzes file paths, extensions, and content characteristics to identify
+        high-risk files that should be scanned first for maximum security impact.
+
+        Args:
+            contexts: File contexts to prioritize
+
+        Returns:
+            File contexts with updated priority scores
+        """
+        logger.debug(f"Applying smart prioritization to {len(contexts)} files")
+
+        for ctx in contexts:
+            security_score = self._calculate_security_priority_score(ctx)
+            # Override the basic priority with security-aware priority
+            ctx.priority = security_score
+
+        return contexts
+
+    def _calculate_security_priority_score(self, ctx: FileAnalysisContext) -> int:
+        """Calculate security-based priority score for a file.
+
+        Higher scores indicate files more likely to contain security vulnerabilities
+        that should be analyzed first for maximum impact.
+
+        Args:
+            ctx: File analysis context
+
+        Returns:
+            Priority score (higher = more important, 0-1000)
+        """
+        score = 0
+        file_path_str = str(ctx.file_path).lower()
+        file_name = ctx.file_path.name.lower()
+
+        # Base score from complexity (0-200 points)
+        score += int(ctx.complexity_score * 200)
+
+        # High-risk file patterns (200 points each)
+        high_risk_patterns = [
+            "auth",
+            "login",
+            "password",
+            "token",
+            "jwt",
+            "session",
+            "cookie",
+            "admin",
+            "user",
+            "account",
+            "privilege",
+            "permission",
+            "role",
+            "api",
+            "endpoint",
+            "route",
+            "handler",
+            "controller",
+            "db",
+            "database",
+            "sql",
+            "query",
+            "model",
+            "entity",
+            "upload",
+            "download",
+            "file",
+            "stream",
+            "input",
+            "form",
+            "crypto",
+            "encrypt",
+            "decrypt",
+            "hash",
+            "secret",
+            "key",
+            "config",
+            "settings",
+            "env",
+            "environment",
+            "server",
+            "client",
+            "network",
+            "http",
+            "request",
+            "response",
+        ]
+
+        for pattern in high_risk_patterns:
+            if pattern in file_path_str or pattern in file_name:
+                score += 200
+                break  # Only count once per file
+
+        # High-risk directories (150 points)
+        high_risk_dirs = [
+            "/auth",
+            "/security",
+            "/admin",
+            "/api",
+            "/routes",
+            "/controllers",
+            "/models",
+            "/middleware",
+            "/handlers",
+            "/services",
+            "/utils",
+            "/config",
+            "/settings",
+            "/env",
+            "/secrets",
+            "/keys",
+        ]
+
+        for dir_pattern in high_risk_dirs:
+            if dir_pattern in file_path_str:
+                score += 150
+                break
+
+        # Language-specific security multipliers
+        language_risk_multipliers = {
+            Language.JAVASCRIPT: 1.3,  # High risk due to eval, innerHTML, etc.
+            Language.TYPESCRIPT: 1.2,  # Slightly safer than JS
+            Language.PYTHON: 1.2,  # eval, exec, os.system risks
+            Language.PHP: 1.4,  # Very high risk language
+            Language.C: 1.1,  # Buffer overflows, memory issues
+            Language.CPP: 1.1,  # Similar to C
+            Language.JAVA: 1.0,  # Relatively safer
+            Language.CSHARP: 1.0,  # Relatively safer
+            Language.GO: 0.9,  # Generally safer
+            Language.RUST: 0.8,  # Memory safe by design
+            Language.RUBY: 1.1,  # Some eval/injection risks
+            Language.KOTLIN: 1.0,  # Similar to Java
+            Language.SWIFT: 0.9,  # Relatively safe
+            Language.GENERIC: 1.0,  # Unknown risk
+        }
+
+        score = int(score * language_risk_multipliers.get(ctx.language, 1.0))
+
+        # File size factor (larger files potentially more complex/risky)
+        # But cap it to avoid de-prioritizing small critical files
+        size_bonus = min(
+            100, ctx.file_size_bytes // 1000
+        )  # Up to 100 points for large files
+        score += size_bonus
+
+        # Critical file extensions (100 points)
+        critical_extensions = {
+            ".env",
+            ".config",
+            ".conf",
+            ".ini",
+            ".yaml",
+            ".yml",
+            ".json",
+            ".key",
+            ".pem",
+            ".cert",
+            ".crt",
+            ".p12",
+            ".jks",
+        }
+
+        if ctx.file_path.suffix.lower() in critical_extensions:
+            score += 100
+
+        # De-prioritize low-value files (negative scores)
+        low_value_patterns = [
+            "test",
+            "spec",
+            "mock",
+            ".test.",
+            ".spec.",
+            "_test",
+            "_spec",
+            "readme",
+            "license",
+            "changelog",
+            "todo",
+            "doc",
+            "docs",
+            "example",
+            "sample",
+            "demo",
+            "tutorial",
+        ]
+
+        for pattern in low_value_patterns:
+            if pattern in file_path_str or pattern in file_name:
+                score -= 200  # Significantly lower priority
+                break
+
+        # Test directories get very low priority
+        if any(
+            test_dir in file_path_str
+            for test_dir in ["/test", "/tests", "/spec", "/specs", "/__tests__"]
+        ):
+            score -= 300
+
+        # Documentation and non-executable files get low priority
+        doc_extensions = {
+            ".md",
+            ".txt",
+            ".rst",
+            ".adoc",
+            ".html",
+            ".css",
+            ".scss",
+            ".less",
+        }
+        if ctx.file_path.suffix.lower() in doc_extensions:
+            score -= 150
+
+        # Ensure score stays in reasonable range
+        score = max(0, min(1000, score))
+
+        if score > 500:  # Log high-priority files for debugging
+            logger.debug(
+                f"High-priority file detected: {ctx.file_path} "
+                f"(score={score}, complexity={ctx.complexity_score:.2f}, lang={ctx.language})"
+            )
+
+        return score
+
+    def should_continue_progressive_scan(
+        self,
+        processed_file_count: int,
+        total_findings: list[Any],
+        high_severity_findings: list[Any],
+    ) -> bool:
+        """Determine if progressive scanning should continue or exit early.
+
+        Args:
+            processed_file_count: Number of files processed so far
+            total_findings: All findings discovered so far
+            high_severity_findings: High/critical severity findings
+
+        Returns:
+            True if scanning should continue, False to exit early
+        """
+        if not self.config.enable_progressive_scanning:
+            return True  # Progressive scanning disabled, continue normally
+
+        # Exit early if we've found enough findings
+        if len(total_findings) >= self.config.max_findings_before_early_exit:
+            logger.info(
+                f"Progressive scan: Early exit due to {len(total_findings)} findings "
+                f"(limit: {self.config.max_findings_before_early_exit})"
+            )
+            return False
+
+        # Exit early if we have enough high-severity findings and have processed some files
+        if (
+            len(high_severity_findings)
+            >= self.config.min_high_severity_findings_for_exit
+            and processed_file_count >= 20
+        ):  # Process at least 20 files before considering early exit
+            logger.info(
+                f"Progressive scan: Early exit due to {len(high_severity_findings)} high-severity findings "
+                f"after {processed_file_count} files"
+            )
+            return False
+
+        # Exit if we've hit the file processing limit with reasonable findings
+        if (
+            processed_file_count >= self.config.progressive_scan_file_limit
+            and len(total_findings) >= 10
+        ):  # Need at least some findings to justify early exit
+            logger.info(
+                f"Progressive scan: Early exit after processing {processed_file_count} files "
+                f"with {len(total_findings)} findings"
+            )
+            return False
+
+        return True  # Continue scanning
+
+    def deduplicate_similar_content(
+        self, contexts: list[FileAnalysisContext]
+    ) -> list[FileAnalysisContext]:
+        """Deduplicate files with similar content to improve cache efficiency.
+
+        Identifies files with very similar content and marks them for shared analysis results.
+        This significantly improves performance when scanning codebases with generated files,
+        templates, or repeated patterns.
+
+        Args:
+            contexts: List of file contexts to deduplicate
+
+        Returns:
+            Deduplicated list with similar files marked
+        """
+        if not self.cache_manager or len(contexts) < 2:
+            return contexts
+
+        logger.debug(f"Performing content deduplication on {len(contexts)} files")
+
+        # Group files by size buckets for efficient comparison
+        size_buckets: dict[int, list[FileAnalysisContext]] = {}
+        for ctx in contexts:
+            # Use size bucket (rounded to nearest 1KB) for initial filtering
+            size_bucket = (ctx.file_size_bytes // 1024) * 1024
+            if size_bucket not in size_buckets:
+                size_buckets[size_bucket] = []
+            size_buckets[size_bucket].append(ctx)
+
+        deduplicated_contexts = []
+        similarity_groups: list[list[FileAnalysisContext]] = []
+
+        for bucket_size, bucket_contexts in size_buckets.items():
+            if len(bucket_contexts) == 1:
+                # No duplicates possible in this bucket
+                deduplicated_contexts.extend(bucket_contexts)
+                continue
+
+            # Find similarity groups within this bucket
+            remaining_contexts = bucket_contexts[:]
+
+            while remaining_contexts:
+                representative = remaining_contexts.pop(0)
+                similarity_group = [representative]
+
+                # Find similar files to the representative
+                to_remove = []
+                for i, candidate in enumerate(remaining_contexts):
+                    if self._are_contents_similar(representative, candidate):
+                        similarity_group.append(candidate)
+                        to_remove.append(i)
+
+                # Remove similar files from remaining (in reverse order to maintain indices)
+                for i in reversed(to_remove):
+                    remaining_contexts.pop(i)
+
+                similarity_groups.append(similarity_group)
+
+        # Process similarity groups
+        deduplication_count = 0
+        for group in similarity_groups:
+            if len(group) == 1:
+                # No duplicates
+                deduplicated_contexts.append(group[0])
+            else:
+                # Choose the best representative (highest priority, then complexity)
+                representative = max(
+                    group, key=lambda ctx: (ctx.priority, ctx.complexity_score)
+                )
+                deduplicated_contexts.append(representative)
+
+                # Cache the similarity mapping for later result sharing
+                representative_hash = hashlib.sha256(
+                    representative.content.encode()
+                ).hexdigest()
+                for similar_ctx in group:
+                    if similar_ctx != representative:
+                        similar_hash = hashlib.sha256(
+                            similar_ctx.content.encode()
+                        ).hexdigest()
+                        self.deduplicated_content_map[similar_hash] = (
+                            representative_hash
+                        )
+                        deduplication_count += 1
+
+                        # Store in cache for future reference
+                        if self.cache_manager:
+                            cache_key = CacheKey(
+                                cache_type=CacheType.DEDUPLICATED_CONTENT,
+                                content_hash=similar_hash,
+                                metadata_hash=representative_hash,
+                            )
+                            self.cache_manager.put(
+                                cache_key, {"representative_hash": representative_hash}
+                            )
+
+        if deduplication_count > 0:
+            logger.info(
+                f"Content deduplication: {deduplication_count} similar files identified, "
+                f"reduced from {len(contexts)} to {len(deduplicated_contexts)} unique files "
+                f"({deduplication_count/len(contexts)*100:.1f}% reduction)"
+            )
+
+            # Record deduplication metrics
+            if self.metrics_collector:
+                self.metrics_collector.record_metric(
+                    "content_deduplication_files_reduced", deduplication_count
+                )
+                self.metrics_collector.record_histogram(
+                    "content_deduplication_reduction_ratio",
+                    deduplication_count / len(contexts),
+                )
+
+        return deduplicated_contexts
+
+    def _are_contents_similar(
+        self, ctx1: FileAnalysisContext, ctx2: FileAnalysisContext
+    ) -> bool:
+        """Check if two file contents are similar enough to be deduplicated.
+
+        Uses multiple similarity metrics to determine if files are similar enough
+        to share analysis results.
+
+        Args:
+            ctx1: First file context
+            ctx2: Second file context
+
+        Returns:
+            True if files are similar enough to deduplicate
+        """
+        # Quick size check - files must be reasonably similar in size
+        size_ratio = min(ctx1.file_size_bytes, ctx2.file_size_bytes) / max(
+            ctx1.file_size_bytes, ctx2.file_size_bytes
+        )
+        if size_ratio < 0.8:  # Files differ by more than 20% in size
+            return False
+
+        # Different languages are unlikely to be meaningfully similar
+        if ctx1.language != ctx2.language:
+            return False
+
+        # Calculate content similarity using multiple methods
+        content1_lines = set(ctx1.content.strip().split("\n"))
+        content2_lines = set(ctx2.content.strip().split("\n"))
+
+        # Jaccard similarity of lines
+        intersection = len(content1_lines & content2_lines)
+        union = len(content1_lines | content2_lines)
+        jaccard_similarity = intersection / union if union > 0 else 0
+
+        # Character-level similarity for smaller files
+        if len(ctx1.content) < 5000 and len(ctx2.content) < 5000:
+            # Use simple character similarity for small files
+            char_similarity = self._calculate_character_similarity(
+                ctx1.content, ctx2.content
+            )
+            # Weight both similarities
+            combined_similarity = (jaccard_similarity * 0.7) + (char_similarity * 0.3)
+        else:
+            # For larger files, rely more on line-based similarity
+            combined_similarity = jaccard_similarity
+
+        is_similar = combined_similarity >= self.content_similarity_threshold
+
+        if is_similar:
+            logger.debug(
+                f"Similar content detected: {ctx1.file_path.name} <-> {ctx2.file_path.name} "
+                f"(similarity: {combined_similarity:.3f})"
+            )
+
+        return is_similar
+
+    def _calculate_character_similarity(self, content1: str, content2: str) -> float:
+        """Calculate character-level similarity between two strings.
+
+        Uses a simple difflib-like approach for character similarity.
+
+        Args:
+            content1: First content string
+            content2: Second content string
+
+        Returns:
+            Similarity ratio (0.0 to 1.0)
+        """
+        # Remove whitespace for more semantic comparison
+        clean1 = "".join(content1.split())
+        clean2 = "".join(content2.split())
+
+        if not clean1 and not clean2:
+            return 1.0
+        if not clean1 or not clean2:
+            return 0.0
+
+        # Simple longest common subsequence approximation
+        # This is a simplified version for performance
+        shorter, longer = (
+            (clean1, clean2) if len(clean1) <= len(clean2) else (clean2, clean1)
+        )
+
+        common_chars = 0
+        for char in shorter:
+            if char in longer:
+                common_chars += 1
+                longer = longer.replace(char, "", 1)  # Remove to avoid double counting
+
+        return common_chars / len(shorter)
 
     def _create_fixed_size_batches(
         self, contexts: list[FileAnalysisContext]
@@ -491,6 +1016,212 @@ class BatchProcessor:
                 batches.append(batch)
 
         return batches
+
+    def _create_adaptive_token_optimized_batches(
+        self, contexts: list[FileAnalysisContext], model: str | None
+    ) -> list[list[FileAnalysisContext]]:
+        """Create adaptively optimized batches with model-aware token limits.
+
+        This advanced strategy maximizes context window utilization while
+        considering file complexity, language types, and model-specific limits.
+
+        Args:
+            contexts: Sorted file contexts
+            model: LLM model name for context limit lookup
+
+        Returns:
+            List of highly optimized batches for maximum throughput
+        """
+        logger.debug(f"Creating adaptive token optimized batches for model: {model}")
+
+        # Step 1: Apply content deduplication to reduce redundant processing
+        deduplicated_contexts = self.deduplicate_similar_content(contexts)
+        logger.debug(
+            f"After deduplication: {len(deduplicated_contexts)} unique files to process"
+        )
+
+        # Get model-specific context limit
+        model_context_limit = MODEL_CONTEXT_LIMITS.get(
+            model or "default", MODEL_CONTEXT_LIMITS["default"]
+        )
+        logger.debug(
+            f"Using context limit: {model_context_limit} tokens for model {model}"
+        )
+
+        # Calculate dynamic limits based on model capacity
+        # Reserve tokens for system prompt (typically 1000-2000 tokens)
+        # Reserve tokens for response generation (typically 2000-4000 tokens)
+        system_prompt_reserve = min(2000, model_context_limit * 0.1)  # 10% or 2K max
+        response_reserve = min(4000, model_context_limit * 0.2)  # 20% or 4K max
+        overhead_reserve = 1000  # Buffer for prompt formatting overhead
+
+        available_tokens = (
+            model_context_limit
+            - system_prompt_reserve
+            - response_reserve
+            - overhead_reserve
+        )
+        target_tokens_per_batch = int(
+            available_tokens * 0.85
+        )  # 85% utilization for safety
+
+        logger.info(
+            f"Adaptive batching: model_limit={model_context_limit}, "
+            f"available={available_tokens}, target_per_batch={target_tokens_per_batch}"
+        )
+
+        batches = []
+        current_batch = []
+        current_tokens = 0
+
+        # Group contexts by language for better batch efficiency
+        language_groups = {}
+        for context in deduplicated_contexts:
+            lang = context.language
+            if lang not in language_groups:
+                language_groups[lang] = []
+            language_groups[lang].append(context)
+
+        # Process each language group to create homogeneous batches when possible
+        for language, lang_contexts in language_groups.items():
+            logger.debug(f"Processing {len(lang_contexts)} {language} files")
+
+            for context in lang_contexts:
+                # Enhanced token estimation including language-specific overhead
+                base_tokens = context.estimated_tokens
+
+                # Language-specific prompt overhead estimation
+                language_overhead = {
+                    Language.PYTHON: 300,
+                    Language.JAVASCRIPT: 350,
+                    Language.TYPESCRIPT: 350,
+                    Language.JAVA: 400,
+                    Language.CSHARP: 400,
+                    Language.CPP: 350,
+                    Language.C: 300,
+                    Language.GO: 300,
+                    Language.RUST: 350,
+                    Language.PHP: 300,
+                    Language.RUBY: 300,
+                }.get(context.language, 250)
+
+                # Complexity-based overhead (more complex files need more instruction tokens)
+                complexity_overhead = int(
+                    context.complexity_score * 200
+                )  # 0-200 extra tokens
+
+                # File size overhead (larger files need more formatting tokens)
+                size_overhead = min(
+                    100, context.file_size_bytes // 1000
+                )  # Up to 100 tokens for large files
+
+                total_context_tokens = (
+                    base_tokens
+                    + language_overhead
+                    + complexity_overhead
+                    + size_overhead
+                )
+
+                # Adaptive batch size limits based on complexity
+                if context.complexity_score > 0.8:
+                    # Very complex files: smaller batches for better analysis quality
+                    max_files_in_batch = min(self.config.max_batch_size // 2, 8)
+                elif context.complexity_score > 0.5:
+                    # Medium complexity: moderate batch sizes
+                    max_files_in_batch = min(self.config.max_batch_size, 12)
+                else:
+                    # Low complexity: can handle larger batches
+                    max_files_in_batch = self.config.max_batch_size
+
+                # Decision logic: create new batch if limits exceeded
+                should_start_new_batch = (
+                    # Token limit would be exceeded
+                    (
+                        current_tokens + total_context_tokens > target_tokens_per_batch
+                        and current_batch
+                    )
+                    # Or file count limit reached
+                    or len(current_batch) >= max_files_in_batch
+                    # Or mixing languages would hurt performance (prefer homogeneous batches)
+                    or (
+                        current_batch
+                        and current_batch[0].language != context.language
+                        and len(current_batch) >= 3
+                    )
+                )
+
+                if should_start_new_batch:
+                    if current_batch:
+                        logger.debug(
+                            f"Completed batch: {len(current_batch)} files, {current_tokens} tokens, "
+                            f"avg_complexity={sum(c.complexity_score for c in current_batch)/len(current_batch):.2f}"
+                        )
+                        batches.append(current_batch)
+                    current_batch = [context]
+                    current_tokens = total_context_tokens
+                else:
+                    current_batch.append(context)
+                    current_tokens += total_context_tokens
+
+        # Add final batch if not empty
+        if current_batch:
+            logger.debug(
+                f"Final batch: {len(current_batch)} files, {current_tokens} tokens, "
+                f"avg_complexity={sum(c.complexity_score for c in current_batch)/len(current_batch):.2f}"
+            )
+            batches.append(current_batch)
+
+        # Post-processing optimization: merge small batches if possible
+        optimized_batches = []
+        i = 0
+        while i < len(batches):
+            current = batches[i]
+            current_tokens = sum(
+                ctx.estimated_tokens + 250 for ctx in current  # Rough overhead estimate
+            )
+
+            # Try to merge with next batch if both are small
+            if (
+                i + 1 < len(batches)
+                and len(current) < self.config.min_batch_size
+                and len(batches[i + 1]) < self.config.min_batch_size
+            ):
+
+                next_batch = batches[i + 1]
+                next_tokens = sum(ctx.estimated_tokens + 250 for ctx in next_batch)
+
+                if current_tokens + next_tokens <= target_tokens_per_batch:
+                    merged_batch = current + next_batch
+                    logger.debug(
+                        f"Merged two small batches: {len(current)} + {len(next_batch)} = {len(merged_batch)} files"
+                    )
+                    optimized_batches.append(merged_batch)
+                    i += 2  # Skip next batch since we merged it
+                    continue
+
+            optimized_batches.append(current)
+            i += 1
+
+        # Log final batch statistics
+        if optimized_batches:
+            total_files = sum(len(batch) for batch in optimized_batches)
+            avg_batch_size = total_files / len(optimized_batches)
+            token_utilization = (
+                sum(
+                    sum(ctx.estimated_tokens for ctx in batch)
+                    for batch in optimized_batches
+                )
+                / (len(optimized_batches) * target_tokens_per_batch)
+                * 100
+            )
+
+            logger.info(
+                f"Adaptive batching complete: {len(optimized_batches)} batches, "
+                f"avg_size={avg_batch_size:.1f} files/batch, "
+                f"token_utilization={token_utilization:.1f}%"
+            )
+
+        return optimized_batches
 
     async def process_batches(
         self,

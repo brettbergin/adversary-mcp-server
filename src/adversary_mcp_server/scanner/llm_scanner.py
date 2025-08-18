@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -258,7 +259,7 @@ class LLMScanner:
                 max_batch_size = getattr(self.config, "llm_batch_size", base_batch_size)
 
             batch_config = BatchConfig(
-                strategy=BatchStrategy.DYNAMIC_SIZE,
+                strategy=BatchStrategy.ADAPTIVE_TOKEN_OPTIMIZED,  # Use new optimized strategy
                 min_batch_size=1,
                 max_batch_size=max_batch_size,
                 target_tokens_per_batch=target_tokens,
@@ -268,7 +269,9 @@ class LLMScanner:
                 group_by_language=True,
                 group_by_complexity=True,
             )
-            self.batch_processor = BatchProcessor(batch_config, self.metrics_collector)
+            self.batch_processor = BatchProcessor(
+                batch_config, self.metrics_collector, self.cache_manager
+            )
             logger.info(
                 f"Initialized BatchProcessor for {self.config.llm_provider or 'unknown'} provider - "
                 f"max_batch_size: {max_batch_size}, target_tokens: {target_tokens}"
@@ -465,6 +468,93 @@ class LLMScanner:
 
         return response_text.strip()
 
+    def _sanitize_json_string(self, json_str: str) -> str:
+        """Sanitize JSON string to fix common escape sequence issues.
+
+        Args:
+            json_str: Raw JSON string that may contain invalid escape sequences
+
+        Returns:
+            Sanitized JSON string
+        """
+        import re
+
+        # Fix common invalid escape sequences in string values
+        # This regex finds string values and fixes invalid escapes within them
+        def fix_string_escapes(match):
+            string_content = match.group(1)
+            # Fix invalid escape sequences while preserving valid ones
+            string_content = re.sub(
+                r'\\(?!["\\/bfnrt]|u[0-9a-fA-F]{4})', r"\\\\", string_content
+            )
+            return f'"{string_content}"'
+
+        # Apply the fix to all string values in the JSON
+        sanitized = re.sub(r'"([^"\\]*(\\.[^"\\]*)*)"', fix_string_escapes, json_str)
+        return sanitized
+
+    def _robust_json_parse(self, json_str: str) -> dict:
+        """Parse JSON with error recovery for malformed content.
+
+        Args:
+            json_str: JSON string to parse
+
+        Returns:
+            Parsed JSON data
+
+        Raises:
+            ValueError: If JSON cannot be parsed after recovery attempts
+        """
+        try:
+            return json.loads(json_str)
+        except json.JSONDecodeError as e:
+            logger.warning(f"Initial JSON parse failed: {e}")
+
+            # Try to fix common JSON issues
+            recovery_attempts = [
+                # Attempt 1: Fix trailing commas
+                lambda s: re.sub(r",(\s*[}\]])", r"\1", s),
+                # Attempt 2: Fix unescaped quotes in strings
+                lambda s: re.sub(r'(?<!\\)"(?=.*".*:)', r'\\"', s),
+                # Attempt 3: Fix missing quotes around property names
+                lambda s: re.sub(
+                    r"([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:", r'\1"\2":', s
+                ),
+                # Attempt 4: Extract first valid JSON object
+                lambda s: self._extract_first_json_object(s),
+            ]
+
+            for i, fix_func in enumerate(recovery_attempts):
+                try:
+                    fixed_json = fix_func(json_str)
+                    if fixed_json and fixed_json != json_str:
+                        result = json.loads(fixed_json)
+                        logger.info(f"JSON recovery successful with attempt {i+1}")
+                        return result
+                except (json.JSONDecodeError, AttributeError):
+                    continue
+
+            # If all recovery attempts fail, raise the original error
+            logger.error(f"All JSON recovery attempts failed for: {json_str[:200]}...")
+            raise e
+
+    def _extract_first_json_object(self, text: str) -> str:
+        """Extract the first complete JSON object from text."""
+        brace_count = 0
+        start_idx = -1
+
+        for i, char in enumerate(text):
+            if char == "{":
+                if start_idx == -1:
+                    start_idx = i
+                brace_count += 1
+            elif char == "}":
+                brace_count -= 1
+                if brace_count == 0 and start_idx != -1:
+                    return text[start_idx : i + 1]
+
+        return text  # Return original if no complete object found
+
     def parse_analysis_response(
         self, response_text: str, file_path: str
     ) -> list[LLMSecurityFinding]:
@@ -488,8 +578,10 @@ class LLMScanner:
         try:
             # Strip markdown code blocks first
             clean_response = self._strip_markdown_code_blocks(response_text)
+            # Sanitize JSON to fix escape sequence issues
+            clean_response = self._sanitize_json_string(clean_response)
             logger.debug("Attempting to parse response as JSON")
-            data = json.loads(clean_response)
+            data = self._robust_json_parse(clean_response)
             logger.debug(
                 f"Successfully parsed JSON, data keys: {list(data.keys()) if isinstance(data, dict) else type(data)}"
             )
@@ -783,8 +875,9 @@ Response format:
             logger.debug(f"Sending analysis request to LLM for {file_path}")
 
             # Make LLM request with comprehensive error handling and circuit breaker
+            # Use streaming for faster time-to-first-token and better performance
             async def llm_call():
-                return await self.llm_client.complete_with_retry(
+                return await self.llm_client.complete_streaming_with_retry(
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
                     temperature=self.config.llm_temperature,
@@ -1416,8 +1509,9 @@ Response format:
         )
 
         # Define the batch operation for resilience handling
+        # Use streaming for faster time-to-first-token and better batch performance
         async def batch_operation():
-            response = await self.llm_client.complete_with_retry(
+            response = await self.llm_client.complete_streaming_with_retry(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 temperature=self.config.llm_temperature,
@@ -1478,20 +1572,35 @@ Response format:
         """
         findings = []
 
-        for file_info in batch_content:
+        # Process files in parallel for better performance in fallback mode
+        async def analyze_single_file(file_info):
             try:
-                file_findings = await self._analyze_code_async(
+                return await self._analyze_code_async(
                     file_info["content"],
                     file_info["file_path"],
                     file_info["language"],
                     max_findings_per_file,
                 )
-                findings.extend(file_findings)
-
             except Exception as e:
                 logger.warning(
                     f"Individual analysis failed for {file_info['file_path']}: {e}"
                 )
+                return []
+
+        # Run all file analyses in parallel
+        file_analysis_tasks = [
+            analyze_single_file(file_info) for file_info in batch_content
+        ]
+        file_results = await asyncio.gather(
+            *file_analysis_tasks, return_exceptions=True
+        )
+
+        # Collect all findings from successful analyses
+        for result in file_results:
+            if isinstance(result, list):  # Successful result
+                findings.extend(result)
+            elif isinstance(result, Exception):
+                logger.warning(f"File analysis failed: {result}")
 
         logger.info(f"Fallback analysis completed: {len(findings)} findings")
         return findings
@@ -1588,7 +1697,9 @@ Response format:
         try:
             # Strip markdown code blocks first
             clean_response = self._strip_markdown_code_blocks(response_text)
-            data = json.loads(clean_response)
+            # Sanitize JSON to fix escape sequence issues
+            clean_response = self._sanitize_json_string(clean_response)
+            data = self._robust_json_parse(clean_response)
             findings = []
 
             for finding_data in data.get("findings", []):
@@ -1784,7 +1895,9 @@ Provide up to {total_findings_limit} security findings total (max {max_findings_
         try:
             # Strip markdown code blocks first
             clean_response = self._strip_markdown_code_blocks(response_text)
-            data = json.loads(clean_response)
+            # Sanitize JSON to fix escape sequence issues
+            clean_response = self._sanitize_json_string(clean_response)
+            data = self._robust_json_parse(clean_response)
             findings = []
 
             # Extract summary information if available
@@ -2079,7 +2192,7 @@ Provide up to {total_findings_limit} security findings total (max {max_findings_
                     recommendation=getattr(
                         finding, "remediation", "Review and fix this vulnerability"
                     ),
-                    confidence=finding.confidence_score,
+                    confidence=finding.confidence,
                     file_path=str(file_path),
                     cwe_id=getattr(finding, "cwe_id", None),
                     owasp_category=getattr(finding, "owasp_category", None),
@@ -2179,7 +2292,7 @@ File: {file_name}
                     recommendation=getattr(
                         finding, "remediation", "Review and fix this vulnerability"
                     ),
-                    confidence=finding.confidence_score,
+                    confidence=finding.confidence,
                     file_path=file_name,
                     cwe_id=getattr(finding, "cwe_id", None),
                     owasp_category=getattr(finding, "owasp_category", None),
@@ -2281,7 +2394,7 @@ Focus on systemic and architectural vulnerabilities.
                 recommendation=getattr(
                     finding, "remediation", "Review and fix this vulnerability"
                 ),
-                confidence=finding.confidence_score,
+                confidence=finding.confidence,
                 file_path=getattr(finding, "file_path", ""),
                 cwe_id=getattr(finding, "cwe_id", None),
                 owasp_category=getattr(finding, "owasp_category", None),

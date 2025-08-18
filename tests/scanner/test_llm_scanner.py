@@ -523,7 +523,7 @@ class TestLLMScanner:
 
         analyzer = LLMScanner(mock_manager)
 
-        with pytest.raises(LLMAnalysisError, match="Invalid JSON response"):
+        with pytest.raises(LLMAnalysisError, match="Invalid JSON response from LLM"):
             analyzer.parse_analysis_response("invalid json", "test.py")
 
     def test_parse_analysis_response_no_findings(self):
@@ -3217,7 +3217,7 @@ def function3():
         # Mock successful LLM response
         mock_response = Mock()
         mock_response.content = '{"findings": []}'
-        scanner.llm_client.complete_with_retry.return_value = mock_response
+        scanner.llm_client.complete_streaming_with_retry.return_value = mock_response
 
         result = await scanner._analyze_code_async(
             "test code", "/test/file.py", "python"
@@ -3225,7 +3225,7 @@ def function3():
 
         # Should get cache miss and proceed with LLM call
         mock_cache_manager.get.assert_called_once()
-        scanner.llm_client.complete_with_retry.assert_called()  # May be called multiple times
+        scanner.llm_client.complete_streaming_with_retry.assert_called()  # May be called multiple times
         assert isinstance(result, list)
 
 

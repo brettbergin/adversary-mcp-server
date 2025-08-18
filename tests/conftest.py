@@ -55,6 +55,16 @@ def reset_config_manager_singleton():
     reset_config_manager()
 
 
+@pytest.fixture(autouse=True, scope="session")
+def setup_test_logging():
+    """Configure separate test logging to avoid polluting main log file."""
+    # Import here to avoid circular imports
+    from adversary_mcp_server.logger import setup_test_logging
+
+    setup_test_logging()
+    yield
+
+
 @pytest.fixture(autouse=True)
 def mute_logs():
     logging.getLogger().setLevel(logging.WARNING)

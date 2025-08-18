@@ -22,6 +22,9 @@ from adversary_mcp_server.application.services.scan_persistence_service import (
     OutputFormat,
     ScanResultPersistenceService,
 )
+from adversary_mcp_server.domain.entities.scan_request import (
+    ScanRequest as DomainScanRequest,
+)
 from adversary_mcp_server.domain.entities.scan_result import ScanResult
 from adversary_mcp_server.domain.entities.threat_match import ThreatMatch
 from adversary_mcp_server.domain.interfaces import (
@@ -149,41 +152,17 @@ class CleanMCPServer:
             language = validated_args.get("language")
             output_format = validated_args.get("output_format", "json")
 
-            # Automatically use session-aware analysis when available
-            if self._session_manager and (use_llm or use_validation):
-                # Auto-warm cache for first scan of a project
-                file_path_obj = Path(path).resolve()
-                project_root = self._find_project_root(file_path_obj)
-
-                # Check if project context is already cached
-                if not self._session_manager.session_cache.get_cached_project_context(
-                    project_root
-                ):
-                    self._session_manager.warm_project_cache(project_root)
-
-                # Use session-aware file analysis
-                result = await self._handle_session_file_analysis(
-                    path=path,
-                    use_semgrep=use_semgrep,
-                    use_llm=use_llm,
-                    use_validation=use_validation,
-                    severity_threshold=severity_threshold,
-                    timeout_seconds=timeout_seconds,
-                    language=language,
-                    output_format=output_format,
-                )
-            else:
-                # Fall back to standard scan
-                result = await self._scan_service.scan_file(
-                    file_path=path,
-                    requester="mcp_client",
-                    enable_semgrep=use_semgrep,
-                    enable_llm=use_llm,
-                    enable_validation=use_validation,
-                    severity_threshold=severity_threshold,
-                    timeout_seconds=timeout_seconds,
-                    language=language,
-                )
+            # Use the same scan service as CLI for consistency and proper orchestration
+            result = await self._scan_service.scan_file(
+                file_path=path,
+                requester="cli",
+                enable_semgrep=use_semgrep,
+                enable_llm=use_llm,
+                enable_validation=use_validation,
+                severity_threshold=severity_threshold,
+                timeout_seconds=timeout_seconds,
+                language=language,
+            )
 
             # Persist scan result automatically
             try:
@@ -240,40 +219,17 @@ class CleanMCPServer:
             recursive = validated_args.get("recursive", True)
             output_format = validated_args.get("output_format", "json")
 
-            # Automatically use session-aware analysis when available
-            if self._session_manager and (use_llm or use_validation):
-                # Auto-warm cache for first scan of a project
-                project_root = Path(path).resolve()
-
-                # Check if project context is already cached
-                if not self._session_manager.session_cache.get_cached_project_context(
-                    project_root
-                ):
-                    self._session_manager.warm_project_cache(project_root)
-
-                # Use session-aware project analysis with comprehensive focus
-                result = await self._handle_session_folder_analysis(
-                    path=path,
-                    use_semgrep=use_semgrep,
-                    use_llm=use_llm,
-                    use_validation=use_validation,
-                    severity_threshold=severity_threshold,
-                    timeout_seconds=timeout_seconds,
-                    recursive=recursive,
-                    output_format=output_format,
-                )
-            else:
-                # Fall back to standard directory scan
-                result = await self._scan_service.scan_directory(
-                    directory_path=path,
-                    requester="mcp_client",
-                    enable_semgrep=use_semgrep,
-                    enable_llm=use_llm,
-                    enable_validation=use_validation,
-                    severity_threshold=severity_threshold,
-                    timeout_seconds=timeout_seconds,
-                    recursive=recursive,
-                )
+            # Use the same scan service as CLI for consistency and proper orchestration
+            result = await self._scan_service.scan_directory(
+                directory_path=path,
+                requester="cli",
+                enable_semgrep=use_semgrep,
+                enable_llm=use_llm,
+                enable_validation=use_validation,
+                severity_threshold=severity_threshold,
+                timeout_seconds=timeout_seconds,
+                recursive=recursive,
+            )
 
             # Persist scan result automatically
             try:
@@ -428,7 +384,7 @@ class CleanMCPServer:
             # Add session management information if available
             if self._session_manager:
                 status["session_management"]["active_sessions"] = len(
-                    self._session_manager.sessions
+                    self._session_manager.list_active_sessions()
                 )
                 status["session_management"][
                     "cache_statistics"
@@ -739,8 +695,8 @@ class CleanMCPServer:
                             else str(finding.severity)
                         ),
                         "confidence": (
-                            finding.confidence_score
-                            if hasattr(finding, "confidence_score")
+                            finding.confidence
+                            if hasattr(finding, "confidence")
                             else 0.7
                         ),
                         "session_context": getattr(finding, "session_context", {}),
@@ -883,8 +839,8 @@ class CleanMCPServer:
                             else str(finding.severity)
                         ),
                         "confidence": (
-                            finding.confidence_score
-                            if hasattr(finding, "confidence_score")
+                            finding.confidence
+                            if hasattr(finding, "confidence")
                             else 0.7
                         ),
                         "session_context": getattr(finding, "session_context", {}),
@@ -948,7 +904,9 @@ class CleanMCPServer:
             }
 
             if self._session_manager:
-                status["active_sessions"] = len(self._session_manager.sessions)
+                status["active_sessions"] = len(
+                    self._session_manager.list_active_sessions()
+                )
                 status["cache_statistics"] = (
                     self._session_manager.get_cache_statistics()
                 )
@@ -1241,22 +1199,29 @@ Focus on systemic and architectural vulnerabilities.
         self, findings, target_path, use_semgrep, use_llm, use_validation
     ):
         """Convert session findings to standard scan result format."""
-        from ..domain.entities.scan_request import ScanRequest
         from ..domain.entities.scan_result import ScanResult
-        from ..scanner.types import Severity, ThreatMatch
+        from ..domain.entities.threat_match import ThreatMatch as DomainThreatMatch
 
-        # Convert session findings to ThreatMatch objects
+        # Convert session findings to ThreatMatch objects using domain entity
         threat_matches = []
         for finding in findings:
-            threat_match = ThreatMatch(
+            # Get severity as string first, then convert via domain value object
+            severity_str = getattr(finding, "severity", "medium")
+            if hasattr(severity_str, "name"):  # If it's an enum
+                severity_str = severity_str.name.lower()
+            elif hasattr(severity_str, "value"):  # If it's a value object
+                severity_str = str(severity_str).lower()
+
+            threat_match = DomainThreatMatch.create_llm_threat(
                 rule_id=getattr(finding, "rule_id", "session_finding"),
                 rule_name=getattr(finding, "rule_name", "Session Analysis Finding"),
                 description=getattr(finding, "description", str(finding)),
-                severity=getattr(finding, "severity", Severity.MEDIUM),
+                category=getattr(finding, "category", "session_analysis"),
+                severity=severity_str,
                 file_path=str(target_path),
                 line_number=getattr(finding, "line_number", 1),
+                confidence=getattr(finding, "confidence", 0.8),
                 code_snippet=getattr(finding, "code_snippet", ""),
-                confidence_score=getattr(finding, "confidence", 0.8),
                 metadata={
                     "session_analysis": True,
                     "session_context": getattr(finding, "session_context", {}),
@@ -1265,9 +1230,9 @@ Focus on systemic and architectural vulnerabilities.
             )
             threat_matches.append(threat_match)
 
-        # Create scan request
-        scan_request = ScanRequest(
-            target_path=target_path,
+        # Create scan request using domain entity factory method
+        scan_request = DomainScanRequest.for_file_scan(
+            file_path=target_path,
             requester="mcp_session",
             enable_semgrep=use_semgrep,
             enable_llm=use_llm,
@@ -1276,8 +1241,8 @@ Focus on systemic and architectural vulnerabilities.
 
         # Create scan result
         result = ScanResult(
-            scan_request=scan_request,
-            threat_matches=threat_matches,
+            request=scan_request,
+            threats=threat_matches,
             scan_metadata={
                 "session_enhanced": True,
                 "findings_count": len(threat_matches),

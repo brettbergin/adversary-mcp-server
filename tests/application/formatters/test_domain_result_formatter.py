@@ -316,7 +316,7 @@ class TestDomainScanResultFormatter:
         # Our threat has severity SeverityLevel.HIGH which should match "high"
         # NOTE: Due to duplicate method definitions in ScanResult, the string version
         # of get_threats_by_severity doesn't work as expected - it's overridden by the SeverityLevel version
-        assert summary["threat_count_by_severity"]["high"] == 0  # Bug: should be 1
+        assert summary["threat_count_by_severity"]["high"] == 1
         assert summary["has_critical_threats"] is False
         assert summary["is_empty"] is False
         assert "high_confidence_threats" in summary

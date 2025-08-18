@@ -339,11 +339,15 @@ class SessionPersistenceStore:
                             "file_path": finding.file_path,
                             "line_number": finding.line_number,
                             "confidence": finding.confidence,
-                            "session_context": finding.session_context,
+                            "session_context": self._serialize_session_context(
+                                finding.session_context
+                            ),
                         }
                         for finding in session.findings
                     ],
-                    "project_context": session.project_context,
+                    "project_context": self._serialize_project_context(
+                        session.project_context
+                    ),
                 }
 
                 if existing:
@@ -398,7 +402,9 @@ class SessionPersistenceStore:
                     created_at=session_data["created_at"],
                     last_activity=session_data["last_activity"],
                     metadata=session_data["metadata"],
-                    project_context=session_data["project_context"],
+                    project_context=self._deserialize_project_context(
+                        session_data["project_context"]
+                    ),
                 )
 
                 # Reconstruct messages
@@ -476,3 +482,139 @@ class SessionPersistenceStore:
         except Exception as e:
             logger.error(f"Failed to list database sessions: {e}")
             return []
+
+    def _serialize_session_context(
+        self, session_context: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Serialize session context dict, handling ProjectContext objects."""
+        if not session_context:
+            return {}
+
+        serialized = {}
+        for key, value in session_context.items():
+            try:
+                from .project_context import ProjectContext
+
+                if isinstance(value, ProjectContext):
+                    serialized[key] = self._serialize_project_context(value)
+                else:
+                    # For other types, try to serialize directly
+                    import json
+
+                    json.dumps(value)  # Test if serializable
+                    serialized[key] = value
+            except (TypeError, ImportError):
+                # If not serializable, convert to string
+                serialized[key] = str(value)
+
+        return serialized
+
+    def _serialize_project_context(self, project_context: Any) -> dict[str, Any] | None:
+        """Serialize ProjectContext to JSON-compatible format."""
+        if project_context is None:
+            return None
+
+        try:
+            from .project_context import ProjectContext
+
+            if isinstance(project_context, ProjectContext):
+                return {
+                    "project_root": str(project_context.project_root),
+                    "project_type": project_context.project_type,
+                    "structure_overview": project_context.structure_overview,
+                    "key_files": [
+                        {
+                            "path": str(f.path),
+                            "language": f.language,
+                            "size_bytes": f.size_bytes,
+                            "priority_score": f.priority_score,
+                            "security_relevance": f.security_relevance,
+                            "content_preview": f.content_preview,
+                            "is_entry_point": f.is_entry_point,
+                            "is_config": f.is_config,
+                            "is_security_critical": f.is_security_critical,
+                        }
+                        for f in project_context.key_files
+                    ],
+                    "security_modules": project_context.security_modules,
+                    "entry_points": project_context.entry_points,
+                    "dependencies": project_context.dependencies,
+                    "architecture_summary": project_context.architecture_summary,
+                    "total_files": project_context.total_files,
+                    "total_size_bytes": project_context.total_size_bytes,
+                    "languages_used": list(project_context.languages_used),
+                    "estimated_tokens": project_context.estimated_tokens,
+                }
+            elif isinstance(project_context, dict):
+                # Handle nested structure like {"context": ProjectContext, "loaded_at": time, ...}
+                serialized = {}
+                for key, value in project_context.items():
+                    if isinstance(value, ProjectContext):
+                        serialized[key] = self._serialize_project_context(value)
+                    else:
+                        # For other types, try to serialize directly
+                        import json
+
+                        try:
+                            json.dumps(value)  # Test if serializable
+                            serialized[key] = value
+                        except (TypeError, ValueError):
+                            # If not serializable, convert to string
+                            serialized[key] = str(value)
+                return serialized
+            else:
+                # If it's already a dict or other serializable type
+                return project_context
+
+        except Exception as e:
+            logger.warning(f"Failed to serialize project context: {e}")
+            return None
+
+    def _deserialize_project_context(self, context_data: dict[str, Any] | None) -> Any:
+        """Deserialize ProjectContext from JSON-compatible format."""
+        if context_data is None:
+            return None
+
+        try:
+            from .project_context import ProjectContext, ProjectFile
+
+            if isinstance(context_data, dict) and "project_root" in context_data:
+                key_files = []
+                for file_data in context_data.get("key_files", []):
+                    key_files.append(
+                        ProjectFile(
+                            path=Path(file_data["path"]),
+                            language=file_data["language"],
+                            size_bytes=file_data["size_bytes"],
+                            priority_score=file_data.get("priority_score", 0.0),
+                            security_relevance=file_data.get("security_relevance", 0.0),
+                            content_preview=file_data.get("content_preview", ""),
+                            is_entry_point=file_data.get("is_entry_point", False),
+                            is_config=file_data.get("is_config", False),
+                            is_security_critical=file_data.get(
+                                "is_security_critical", False
+                            ),
+                        )
+                    )
+
+                return ProjectContext(
+                    project_root=Path(context_data["project_root"]),
+                    project_type=context_data.get("project_type", "unknown"),
+                    structure_overview=context_data.get("structure_overview", ""),
+                    key_files=key_files,
+                    security_modules=context_data.get("security_modules", []),
+                    entry_points=context_data.get("entry_points", []),
+                    dependencies=context_data.get("dependencies", []),
+                    architecture_summary=context_data.get("architecture_summary", ""),
+                    total_files=context_data.get("total_files", 0),
+                    total_size_bytes=context_data.get("total_size_bytes", 0),
+                    languages_used=set(context_data.get("languages_used", [])),
+                    estimated_tokens=context_data.get("estimated_tokens", 0),
+                )
+            else:
+                # Return as-is if it's not our expected format
+                return context_data
+
+        except Exception as e:
+            logger.warning(f"Failed to deserialize project context: {e}")
+            return context_data

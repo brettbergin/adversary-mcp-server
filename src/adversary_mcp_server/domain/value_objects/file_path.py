@@ -18,8 +18,12 @@ class FilePath:
     _is_virtual: bool = False
 
     @classmethod
-    def from_string(cls, path_str: str) -> "FilePath":
-        """Create FilePath from string, with validation and normalization."""
+    def from_string(cls, path_str: str | Path) -> "FilePath":
+        """Create FilePath from string or Path object, with validation and normalization."""
+        # Convert Path object to string if needed
+        if isinstance(path_str, Path):
+            path_str = str(path_str)
+
         if not path_str.strip():
             raise ValueError("Path cannot be empty")
 

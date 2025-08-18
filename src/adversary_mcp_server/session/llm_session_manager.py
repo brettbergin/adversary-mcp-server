@@ -223,7 +223,18 @@ class LLMSessionManager:
                 )
                 if cached_result:
                     logger.info("Using cached analysis result")
-                    return cached_result
+                    # Ensure cached results are SecurityFinding objects, not dicts
+                    converted_results = []
+                    for item in cached_result:
+                        if isinstance(item, dict):
+                            # Convert dict to SecurityFinding
+                            finding = self._create_finding_from_data(item, session)
+                            if finding:
+                                converted_results.append(finding)
+                        else:
+                            # Already a SecurityFinding object
+                            converted_results.append(item)
+                    return converted_results
 
             # Create contextual analysis prompt
             full_query = self._create_analysis_query(
