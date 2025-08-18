@@ -48,7 +48,7 @@ brew install semgrep  # macOS
 pip install semgrep   # Other platforms
 
 # Install Adversary MCP Server
-pip install adversary-mcp-server
+uv pip install adversary-mcp-server
 ```
 
 ### Verify Installation
