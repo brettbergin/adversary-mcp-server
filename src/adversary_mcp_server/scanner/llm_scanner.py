@@ -1646,6 +1646,9 @@ Response format:
                 f"\n=== File {i}: {file_info['file_path']} ({file_info['language']}) ===\n"
             )
             prompt_parts.append(
+                f"IMPORTANT: All findings for this file MUST include file_path=\"{file_info['file_path']}\""
+            )
+            prompt_parts.append(
                 f"```{file_info['language']}\n{file_info['content']}\n```"
             )
 
@@ -1659,6 +1662,7 @@ Requirements:
 - Provide specific line numbers (1-indexed, exactly as they appear in the source code)
 - Include the vulnerable code snippet
 - IMPORTANT: Line numbers must match the exact line numbers in the provided source code (1-indexed)
+- CRITICAL: Each finding MUST include the exact file_path as shown above for the file containing the vulnerability
 
 Response format:
 {
@@ -1706,9 +1710,56 @@ Response format:
                 try:
                     # Ensure file_path is included in finding
                     file_path = finding_data.get("file_path", "")
-                    if not file_path and batch_content:
-                        # Default to first file if not specified
-                        file_path = batch_content[0]["file_path"]
+                    if not file_path:
+                        # Try to determine file from context (line number + code snippet)
+                        code_snippet = finding_data.get("code_snippet", "").strip()
+                        line_number = int(finding_data.get("line_number", 0))
+
+                        # Search for the code snippet in batch files
+                        matched_file = None
+                        for fc in batch_content:
+                            if code_snippet and code_snippet in fc["content"]:
+                                # Verify line number if possible
+                                lines = fc["content"].split("\n")
+                                if line_number > 0 and line_number <= len(lines):
+                                    if code_snippet in lines[line_number - 1]:
+                                        matched_file = fc["file_path"]
+                                        logger.debug(
+                                            f"Matched finding to {matched_file} by line {line_number} + code snippet"
+                                        )
+                                        break
+                                else:
+                                    matched_file = fc["file_path"]
+                                    logger.debug(
+                                        f"Matched finding to {matched_file} by code snippet only"
+                                    )
+                                    break
+
+                        if matched_file:
+                            file_path = matched_file
+                            logger.warning(
+                                f"LLM didn't provide file_path, matched to {file_path}"
+                            )
+                        else:
+                            # Fall back to first file if we can't determine the file but have batch content
+                            if batch_content:
+                                file_path = batch_content[0]["file_path"]
+                                logger.warning(
+                                    f"LLM didn't provide file_path, falling back to first file: {file_path}"
+                                )
+                            else:
+                                # Skip this finding if we truly can't determine the file
+                                logger.error(
+                                    f"Cannot determine file for finding: {finding_data.get('type', 'unknown')}"
+                                )
+                                continue  # Skip this finding
+
+                    # Validate file path before creating finding
+                    from pathlib import Path
+
+                    if not file_path or Path(file_path).is_dir():
+                        logger.error(f"Invalid file_path for finding: {file_path}")
+                        continue  # Skip this finding
 
                     finding = LLMSecurityFinding(
                         finding_type=finding_data.get("type", "unknown"),
@@ -1909,33 +1960,87 @@ Provide up to {total_findings_limit} security findings total (max {max_findings_
                 try:
                     # Validate file_path is in the batch
                     file_path = finding_data.get("file_path", "")
-                    if not any(fc["file_path"] == file_path for fc in batch_content):
-                        # Try to match by filename if full path doesn't match
-                        file_name = (
-                            file_path.split("/")[-1] if "/" in file_path else file_path
+
+                    # Handle missing or invalid file path
+                    if not file_path:
+                        logger.error(
+                            f"LLM returned finding without file_path: {finding_data}"
                         )
+                        # Use code snippet matching logic
+                        file_path = ""
+
+                    if not file_path or not any(
+                        fc["file_path"] == file_path for fc in batch_content
+                    ):
+                        # Try to match by filename if full path doesn't match
                         matched_file = None
-                        for fc in batch_content:
-                            if fc["file_path"].endswith(file_name):
-                                matched_file = fc["file_path"]
-                                break
+                        if file_path:
+                            file_name = (
+                                file_path.split("/")[-1]
+                                if "/" in file_path
+                                else file_path
+                            )
+                            for fc in batch_content:
+                                if fc["file_path"].endswith(file_name):
+                                    matched_file = fc["file_path"]
+                                    logger.debug(
+                                        f"Matched file by name: {file_name} -> {matched_file}"
+                                    )
+                                    break
+
+                        # If filename matching failed, try code snippet matching
+                        if not matched_file:
+                            code_snippet = finding_data.get("code_snippet", "").strip()
+                            line_number = int(finding_data.get("line_number", 0))
+
+                            for fc in batch_content:
+                                if code_snippet and code_snippet in fc["content"]:
+                                    # Verify line number if possible
+                                    lines = fc["content"].split("\n")
+                                    if line_number > 0 and line_number <= len(lines):
+                                        if code_snippet in lines[line_number - 1]:
+                                            matched_file = fc["file_path"]
+                                            logger.debug(
+                                                f"Matched finding to {matched_file} by line {line_number} + code snippet"
+                                            )
+                                            break
+                                    else:
+                                        matched_file = fc["file_path"]
+                                        logger.debug(
+                                            f"Matched finding to {matched_file} by code snippet only"
+                                        )
+                                        break
 
                         if matched_file:
                             file_path = matched_file
-                            logger.debug(
-                                f"Matched file by name: {file_name} -> {file_path}"
+                            logger.warning(
+                                f"File path corrected from '{finding_data.get('file_path', '')}' to '{file_path}'"
                             )
                         else:
-                            logger.warning(
-                                f"Finding references unknown file: {file_path}"
-                            )
-                            continue
+                            # Fall back to first file if we can't determine the file but have batch content
+                            if batch_content and not finding_data.get("file_path", ""):
+                                file_path = batch_content[0]["file_path"]
+                                logger.warning(
+                                    f"Cannot match file, falling back to first file: {file_path}"
+                                )
+                            else:
+                                logger.error(
+                                    f"Cannot determine file for finding: {finding_data.get('type', 'unknown')}"
+                                )
+                                continue
 
                     # Enhanced validation
                     line_number = max(1, int(finding_data.get("line_number", 1)))
                     confidence = max(
                         0.0, min(1.0, float(finding_data.get("confidence", 0.5)))
                     )
+
+                    # Validate file path before creating finding
+                    from pathlib import Path
+
+                    if not file_path or Path(file_path).is_dir():
+                        logger.error(f"Invalid file_path for finding: {file_path}")
+                        continue  # Skip this finding
 
                     finding = LLMSecurityFinding(
                         finding_type=finding_data.get("type", "unknown"),

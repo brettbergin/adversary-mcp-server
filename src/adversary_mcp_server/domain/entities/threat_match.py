@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..exceptions import ValidationError
+from ..utils import merge_scanner_names
 from ..value_objects.confidence_score import ConfidenceScore
 from ..value_objects.file_path import FilePath
 from ..value_objects.severity_level import SeverityLevel
@@ -440,7 +441,9 @@ class ThreatMatch:
             cwe_id=self.cwe_id or other.cwe_id,
             owasp_category=self.owasp_category or other.owasp_category,
             confidence=best_confidence,
-            source_scanner=f"{self.source_scanner}+{other.source_scanner}",
+            source_scanner=merge_scanner_names(
+                self.source_scanner, other.source_scanner
+            ),
             is_false_positive=self.is_false_positive and other.is_false_positive,
             uuid=self.uuid,  # Keep original UUID
         )

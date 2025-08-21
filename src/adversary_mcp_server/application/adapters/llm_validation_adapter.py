@@ -80,11 +80,8 @@ class LLMValidationStrategy(IValidationStrategy):
             return threats
 
         try:
-            # Convert domain objects to infrastructure format
-            validation_input = self._prepare_validation_input(threats, context)
-
-            # Execute LLM validation
-            validation_results = await self._execute_validation(validation_input)
+            # Execute LLM validation directly with domain objects
+            validation_results = await self._execute_validation(threats, context)
 
             # Update threat confidence based on validation results
             validated_threats = self._apply_validation_results(
@@ -101,66 +98,41 @@ class LLMValidationStrategy(IValidationStrategy):
             print(f"Warning: LLM validation failed, returning original threats: {e}")
             return threats
 
-    def _prepare_validation_input(
+    async def _execute_validation(
         self, threats: list[ThreatMatch], context: ScanContext
     ) -> dict[str, Any]:
-        """Prepare validation input from domain objects."""
-        validation_input = {
-            "scan_context": {
-                "file_path": str(context.target_path) if context.target_path else None,
-                "language": context.language,
-                "scan_type": context.metadata.scan_type,
-            },
-            "threats": [],
-        }
-
-        for threat in threats:
-            threat_data = {
-                "id": threat.rule_id,
-                "title": threat.rule_name,
-                "description": threat.description,
-                "category": threat.category,
-                "severity": str(threat.severity),
-                "confidence": threat.confidence.get_decimal(),
-                "file_path": str(threat.file_path),
-                "line_number": threat.line_number,
-                "column_number": threat.column_number,
-                "code_snippet": threat.code_snippet,
-                "source_scanner": threat.source_scanner,
-            }
-            validation_input["threats"].append(threat_data)
-
-        return validation_input
-
-    async def _execute_validation(
-        self, validation_input: dict[str, Any]
-    ) -> list[dict[str, Any]]:
         """Execute LLM validation using infrastructure layer."""
+        # Extract parameters for validate_findings
+        source_code = context.content or ""
+        file_path = str(context.target_path) if context.target_path else "unknown.py"
+
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(
-            None, lambda: self._validator.validate_threats(validation_input)
+            None,
+            lambda: self._validator.validate_findings(
+                findings=threats,
+                source_code=source_code,
+                file_path=file_path,
+                generate_exploits=False,  # Conservative default for validation
+            ),
         )
 
     def _apply_validation_results(
-        self, threats: list[ThreatMatch], validation_results: list[dict[str, Any]]
+        self, threats: list[ThreatMatch], validation_results: dict[str, Any]
     ) -> list[ThreatMatch]:
         """Apply validation results to update threat confidence scores."""
-        # Create mapping from threat ID to validation result
-        validation_map = {
-            result.get("threat_id", ""): result for result in validation_results
-        }
-
+        # validation_results is a dict[str, ValidationResult] mapping finding UUID to validation result
         validated_threats = []
 
         for threat in threats:
-            validation_result = validation_map.get(threat.rule_id)
+            validation_result = validation_results.get(threat.uuid)
 
             if validation_result:
+                # validation_result is a ValidationResult object
                 # Update confidence based on validation
-                new_confidence = validation_result.get(
-                    "confidence", threat.confidence.get_decimal()
+                new_confidence = ConfidenceScore(
+                    min(1.0, max(0.0, validation_result.confidence))
                 )
-                new_confidence = ConfidenceScore(min(1.0, max(0.0, new_confidence)))
 
                 # Update threat with new confidence
                 updated_threat = threat.update_confidence(new_confidence)
@@ -169,15 +141,13 @@ class LLMValidationStrategy(IValidationStrategy):
                 validation_metadata = {
                     "validated_by": "llm",
                     "validation_confidence": new_confidence.get_decimal(),
-                    "validation_reasoning": validation_result.get("reasoning", ""),
-                    "is_false_positive": validation_result.get(
-                        "is_false_positive", False
-                    ),
-                    "validation_notes": validation_result.get("notes", ""),
+                    "validation_reasoning": validation_result.reasoning,
+                    "is_false_positive": not validation_result.is_legitimate,
+                    "validation_notes": validation_result.exploitation_vector or "",
                 }
 
                 # Mark as false positive if validation determined it
-                if validation_result.get("is_false_positive", False):
+                if not validation_result.is_legitimate:
                     updated_threat = updated_threat.mark_false_positive(
                         reason="LLM validation determined this is a false positive",
                         validated_by="llm_validator",
