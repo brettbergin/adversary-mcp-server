@@ -525,7 +525,11 @@ class CleanMCPServer:
                 "requester": result.request.context.metadata.requester,
                 "language": result.request.context.language,
                 "scanners_used": result.get_active_scanners(),
-                **result.scan_metadata,
+                **{
+                    k: v
+                    for k, v in result.scan_metadata.items()
+                    if k != "scanners_used"
+                },
             },
             "statistics": result.get_statistics(),
             "threats": [self._format_threat(threat) for threat in result.threats],

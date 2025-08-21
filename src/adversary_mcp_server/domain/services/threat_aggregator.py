@@ -197,10 +197,8 @@ class ProximityBasedAggregationStrategy(BaseThreatAggregationStrategy):
             cwe_id=base.cwe_id or other.cwe_id,
             owasp_category=base.owasp_category or other.owasp_category,
             confidence=best_confidence,
-            source_scanner=(
-                f"{base.source_scanner}+{other.source_scanner}"
-                if base.source_scanner != other.source_scanner
-                else base.source_scanner
+            source_scanner=merge_scanner_names(
+                base.source_scanner, other.source_scanner
             ),
             is_false_positive=base.is_false_positive and other.is_false_positive,
             uuid=base.uuid,  # Keep base UUID
