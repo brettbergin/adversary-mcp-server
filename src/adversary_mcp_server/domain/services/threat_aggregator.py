@@ -5,6 +5,7 @@ from abc import ABC, abstractmethod
 
 from ..entities.threat_match import ThreatMatch
 from ..interfaces import AggregationError
+from ..utils import merge_scanner_names
 
 logger = logging.getLogger(__name__)
 
@@ -304,7 +305,9 @@ class FingerprintBasedAggregationStrategy(BaseThreatAggregationStrategy):
                     owasp_category=base_threat.owasp_category
                     or other_threat.owasp_category,
                     confidence=base_threat.confidence,
-                    source_scanner=f"{base_threat.source_scanner}+{other_threat.source_scanner}",
+                    source_scanner=merge_scanner_names(
+                        base_threat.source_scanner, other_threat.source_scanner
+                    ),
                     is_false_positive=base_threat.is_false_positive
                     and other_threat.is_false_positive,
                     uuid=base_threat.uuid,
