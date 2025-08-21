@@ -148,31 +148,13 @@ class LLMValidationStrategy(IValidationStrategy):
 
                 # Mark as false positive if validation determined it
                 if not validation_result.is_legitimate:
-                    updated_threat = updated_threat.mark_false_positive(
-                        reason="LLM validation determined this is a false positive",
-                        validated_by="llm_validator",
+                    updated_threat = updated_threat.mark_as_false_positive(
+                        reason="LLM validation determined this is a false positive"
                     )
 
                 # Update metadata
                 combined_metadata = {**threat.metadata, **validation_metadata}
-                updated_threat = ThreatMatch(
-                    rule_id=updated_threat.rule_id,
-                    rule_name=updated_threat.rule_name,
-                    description=updated_threat.description,
-                    category=updated_threat.category,
-                    severity=updated_threat.severity,
-                    file_path=updated_threat.file_path,
-                    line_number=updated_threat.line_number,
-                    column_number=updated_threat.column_number,
-                    code_snippet=updated_threat.code_snippet,
-                    confidence=updated_threat.confidence,
-                    source_scanner=updated_threat.source_scanner,
-                    metadata=combined_metadata,
-                    is_false_positive=updated_threat.is_false_positive,
-                    false_positive_reason=updated_threat.false_positive_reason,
-                    exploit_examples=updated_threat.exploit_examples,
-                    remediation_advice=updated_threat.remediation_advice,
-                )
+                updated_threat = updated_threat.add_metadata(validation_metadata)
 
                 validated_threats.append(updated_threat)
             else:

@@ -267,7 +267,14 @@ class ScanResult:
 
     def get_active_scanners(self) -> list[str]:
         """Get list of scanners that were used in this scan."""
-        return list({threat.source_scanner for threat in self.threats})
+        # Collect all unique scanner components from all threats
+        all_scanners = set()
+        for threat in self.threats:
+            # Split scanner names by "+" and add individual components
+            scanner_parts = threat.source_scanner.split("+")
+            all_scanners.update(scanner_parts)
+
+        return sorted(all_scanners)
 
     def has_critical_threats(self) -> bool:
         """Check if this result has any critical severity threats."""
