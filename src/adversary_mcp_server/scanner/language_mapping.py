@@ -122,6 +122,13 @@ DEFAULT_EXCLUDE_PATTERNS: set[str] = {
     "*.min.css",
     "package-lock.json",
     "yarn.lock",
+    # Adversary MCP server output files
+    "adversary*.json",
+    ".adversary*.json",
+    "adversary*.md",
+    ".adversary*.md",
+    "adversary*.csv",
+    ".adversary*.csv",
     "Cargo.lock",
     "Pipfile.lock",
     "poetry.lock",
