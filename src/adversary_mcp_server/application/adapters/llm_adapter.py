@@ -156,9 +156,16 @@ class LLMScanStrategy(IScanStrategy):
                 # Fall back to legacy analysis methods
                 logger.info(f"Using legacy analysis for {scan_type} scan")
                 if scan_type == "file":
-                    # File analysis
-                    file_path = str(context.target_path)
-                    llm_results = await self._analyze_file(file_path, context.language)
+                    # File analysis - use content from context if available, otherwise read file
+                    if context.content:
+                        llm_results = await self._analyze_code(
+                            context.content, context.language
+                        )
+                    else:
+                        file_path = str(context.target_path)
+                        llm_results = await self._analyze_file(
+                            file_path, context.language
+                        )
 
                 elif scan_type == "directory":
                     # Directory analysis
@@ -411,11 +418,34 @@ class LLMScanStrategy(IScanStrategy):
                 line_number = result.get("line_number", 1)
                 column_number = result.get("column_number", 1)
 
-                # Extract file path
-                file_path_str = result.get(
-                    "file_path", str(request.context.target_path)
-                )
+                # Extract file path - use unique placeholder for missing paths
+                file_path_str = result.get("file_path")
+                if not file_path_str:
+                    # For directory scans, generate unique placeholder instead of using directory path
+                    if request.context.metadata.scan_type == "directory":
+                        import uuid
+
+                        placeholder_name = f"<unknown-file-{uuid.uuid4().hex[:8]}>"
+                        logger.warning(
+                            f"LLM finding missing file_path, using placeholder: {placeholder_name}"
+                        )
+                        file_path_str = placeholder_name
+                    else:
+                        # For file/code scans, fall back to target path
+                        file_path_str = str(request.context.target_path)
+
                 file_path = FilePath.from_string(file_path_str)
+
+                # Validate that file_path is not a directory (unless it's a placeholder)
+                if (
+                    not file_path_str.startswith("<unknown-file-")
+                    and file_path.exists()
+                    and file_path.is_directory()
+                ):
+                    logger.warning(
+                        f"Skipping LLM finding with directory path: {file_path_str}"
+                    )
+                    continue
 
                 # Extract code snippet
                 code_snippet = result.get("code_snippet", "")

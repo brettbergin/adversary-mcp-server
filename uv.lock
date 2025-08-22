@@ -4,7 +4,7 @@ requires-python = ">=3.10, <3.14"
 
 [[package]]
 name = "adversary-mcp-server"
-version = "1.10.10"
+version = "1.10.11"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },

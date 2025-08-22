@@ -331,15 +331,41 @@ class ScanOrchestrator:
                 LLMValidationStrategy,
             )
 
+            scan_id = request.context.metadata.scan_id
+            logger.debug(f"Looking for validation metadata for scan_id: {scan_id}")
+
             if hasattr(LLMValidationStrategy, "_validation_metadata_cache"):
-                scan_id = request.context.metadata.scan_id
-                validation_metadata = (
-                    LLMValidationStrategy._validation_metadata_cache.get(scan_id)
+                cache = LLMValidationStrategy._validation_metadata_cache
+                logger.debug(
+                    f"Validation metadata cache exists with keys: {list(cache.keys())}"
                 )
-                # Clean up the cache entry to prevent memory leaks
+                validation_metadata = cache.get(scan_id)
                 if validation_metadata:
+                    logger.debug(f"Found validation metadata: {validation_metadata}")
+                    # Clean up the cache entry to prevent memory leaks
                     del LLMValidationStrategy._validation_metadata_cache[scan_id]
-        except ImportError:
+                else:
+                    logger.warning(
+                        f"No validation metadata found for scan_id: {scan_id}"
+                    )
+                    # Try backup cache
+                    if hasattr(LLMValidationStrategy, "_module_validation_cache"):
+                        backup_cache = LLMValidationStrategy._module_validation_cache
+                        logger.debug(
+                            f"Checking backup cache with keys: {list(backup_cache.keys())}"
+                        )
+                        validation_metadata = backup_cache.get(scan_id)
+                        if validation_metadata:
+                            logger.debug(
+                                f"Found validation metadata in backup cache: {validation_metadata}"
+                            )
+                            del LLMValidationStrategy._module_validation_cache[scan_id]
+            else:
+                logger.warning(
+                    "LLMValidationStrategy has no _validation_metadata_cache attribute"
+                )
+        except ImportError as e:
+            logger.warning(f"Failed to import LLMValidationStrategy: {e}")
             pass
 
         metadata = {

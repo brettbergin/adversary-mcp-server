@@ -1016,9 +1016,10 @@ Be thorough but practical - focus on real security impact."""
                     "uuid": finding.uuid,
                     "rule_name": finding.rule_name,
                     "description": finding.description,
-                    "category": finding.category.value,
+                    "category": finding.category,
                     "severity": str(finding.severity),
                     "line_number": finding.line_number,
+                    "file_path": file_path,
                     "code_snippet": finding.code_snippet,
                     "confidence": finding.confidence,
                 }

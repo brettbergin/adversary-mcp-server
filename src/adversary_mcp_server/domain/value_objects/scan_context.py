@@ -33,7 +33,22 @@ class ScanContext:
         metadata = ScanMetadata.for_file_scan(**metadata_kwargs)
         language = cls._detect_language(target)
 
-        return cls(target_path=target, metadata=metadata, language=language)
+        # Load file content for LLM analysis when LLM is enabled
+        content = None
+        enable_llm = metadata_kwargs.get("enable_llm", False)
+        if enable_llm:
+            try:
+                content = target.read_text()
+            except Exception as e:
+                # Log but don't fail - LLM adapter can still read the file
+                import logging
+
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Failed to load file content for {file_path}: {e}")
+
+        return cls(
+            target_path=target, metadata=metadata, language=language, content=content
+        )
 
     @classmethod
     def for_directory(cls, directory_path: str, **metadata_kwargs) -> "ScanContext":

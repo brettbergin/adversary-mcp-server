@@ -714,17 +714,21 @@ Analysis Approach:
 8. Evaluate authentication and authorization mechanisms
 
 Guidelines:
-1. Report ALL security-relevant issues, including potential concerns
-2. Provide specific line numbers and vulnerable code snippets
-3. Include detailed explanations of exploitability
-4. Offer concrete remediation steps
-5. Assign appropriate severity levels (low, medium, high, critical)
-6. Map to CWE IDs and OWASP categories when applicable
-7. Be thorough - it's better to report a potential issue than miss a real vulnerability
-8. Consider the full context and data flow when making assessments
+1. Report EVERY security issue you find, no matter how minor
+2. Each distinct vulnerability should be a separate finding - DO NOT combine or summarize similar issues
+3. Provide specific line numbers and vulnerable code snippets
+4. Include detailed explanations of exploitability
+5. Offer concrete remediation steps
+6. Assign appropriate severity levels (low, medium, high, critical)
+7. Map to CWE IDs and OWASP categories when applicable
+8. Be thorough - it's better to report a potential issue than miss a real vulnerability
+9. Consider the full context and data flow when making assessments
+10. Aim for comprehensive coverage - find 5-15 distinct vulnerabilities in vulnerable code
 
 Response format: JSON object with "findings" array containing security issues.
-Each finding should have: type, severity, description, line_number, code_snippet, explanation, recommendation, confidence, cwe_id (optional), owasp_category (optional).
+Each finding should have: type, severity, description, file_path,line_number, code_snippet, explanation, recommendation, confidence, cwe_id (optional), owasp_category (optional).
+
+CRITICAL: Always include a "file_path" field in each finding to specify exactly which file contains the vulnerability. This is required for proper tracking and deduplication.
 
 Vulnerability types to look for:
 - SQL injection, Command injection, Code injection
@@ -809,6 +813,7 @@ Response format:
 {{
   "findings": [
     {{
+      "file_path": "path/to/file.ext",
       "type": "vulnerability_type",
       "severity": "low|medium|high|critical",
       "description": "brief description",
@@ -821,7 +826,9 @@ Response format:
       "owasp_category": "A03:2021"
     }}
   ]
-}}"""
+}}
+
+CRITICAL: Each finding MUST include the "file_path" field with the exact file path being analyzed."""
 
         logger.debug(f"Generated user prompt, final length: {len(prompt)} characters")
         return prompt
@@ -1963,6 +1970,8 @@ Guidelines:
 Response format: JSON object with "findings" array containing security issues.
 Each finding should have: file_path, type, severity, description, line_number, code_snippet, explanation, recommendation, confidence, cwe_id (optional), owasp_category (optional).
 
+CRITICAL: The "file_path" field is MANDATORY for every finding. Use the exact file path from the analysis above to specify which file contains each vulnerability. This is essential for proper issue tracking and deduplication.
+
 Priority vulnerability types to look for:
 - Authentication/authorization bypasses across modules
 - SQL injection, Command injection, Code injection
@@ -2162,17 +2171,16 @@ Provide ALL security findings you discover across all files.
                                 f"File path corrected from '{finding_data.get('file_path', '')}' to '{file_path}'"
                             )
                         else:
-                            # Fall back to first file if we can't determine the file but have batch content
-                            if batch_content and not finding_data.get("file_path", ""):
-                                file_path = batch_content[0]["file_path"]
-                                logger.warning(
-                                    f"Cannot match file, falling back to first file: {file_path}"
-                                )
-                            else:
-                                logger.error(
-                                    f"Cannot determine file for finding: {finding_data.get('type', 'unknown')}"
-                                )
-                                continue
+                            # Generate unique placeholder for unmatchable findings instead of dropping them
+                            import uuid
+
+                            original_path = finding_data.get("file_path", "")
+                            placeholder_name = f"<unknown-file-{uuid.uuid4().hex[:8]}>"
+                            file_path = placeholder_name
+                            logger.warning(
+                                f"Cannot match file for finding '{finding_data.get('type', 'unknown')}' "
+                                f"(original: '{original_path}'), using placeholder: {placeholder_name}"
+                            )
 
                     # Enhanced validation
                     line_number = max(1, int(finding_data.get("line_number", 1)))
@@ -2183,8 +2191,19 @@ Provide ALL security findings you discover across all files.
                     # Validate file path before creating finding
                     from pathlib import Path
 
-                    if not file_path or Path(file_path).is_dir():
-                        logger.error(f"Invalid file_path for finding: {file_path}")
+                    if not file_path:
+                        logger.error("Finding has empty file_path, skipping")
+                        continue  # Skip this finding
+
+                    # Allow placeholder files (they start with <unknown-file-)
+                    if (
+                        not file_path.startswith("<unknown-file-")
+                        and Path(file_path).exists()
+                        and Path(file_path).is_dir()
+                    ):
+                        logger.error(
+                            f"file_path points to directory, not file: {file_path}"
+                        )
                         continue  # Skip this finding
 
                     finding = LLMSecurityFinding(
