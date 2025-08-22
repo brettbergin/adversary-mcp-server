@@ -105,41 +105,14 @@ Create or update `~/.config/claude-code/mcp.json`:
 
 ```json
 {
-  "mcpServers": {
-    "adversary": {
-      "command": "adversary-mcp-server"
+    "mcpServers": {
+        "adversary": {
+            "command": "uvx",
+            "args": ["adversary-mcp-server"]
+        }
     }
-  }
 }
 ```
-
-<details>
-<summary>Alternative Claude Code setups (click to expand)</summary>
-
-#### Using pip installation path:
-```json
-{
-  "mcpServers": {
-    "adversary": {
-      "command": "python",
-      "args": ["-m", "adversary_mcp_server.sync_main"]
-    }
-  }
-}
-```
-
-#### For development:
-```json
-{
-  "mcpServers": {
-    "adversary": {
-      "command": "/path/to/.venv/bin/python",
-      "args": ["-m", "adversary_mcp_server.sync_main"]
-    }
-  }
-}
-```
-</details>
 
 ### Using MCP Tools in Claude Code
 
@@ -157,11 +130,12 @@ Create `.cursor/mcp.json` in your project:
 
 ```json
 {
-  "mcpServers": {
-    "adversary": {
-      "command": "adversary-mcp-server"
+    "mcpServers": {
+        "adversary": {
+            "command": "uvx",
+            "args": ["adversary-mcp-server"]
+        }
     }
-  }
 }
 ```
 

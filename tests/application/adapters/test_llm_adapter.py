@@ -555,6 +555,7 @@ class TestLLMScanStrategy:
     ):
         """Test handling conversion error."""
         # Create a result that will cause conversion error during ThreatMatch creation
+        # Use invalid confidence score that will cause ConfidenceScore validation to fail
         bad_result = {
             "finding_id": "test-llm-1",
             "title": "Test Security Issue",
@@ -562,9 +563,9 @@ class TestLLMScanStrategy:
             "severity": "high",
             "line_number": 10,
             "column_number": 5,
-            "file_path": None,  # This will cause FilePath.from_string to fail
+            "file_path": "/test/file.py",
             "code_snippet": "vulnerable code",
-            "confidence": 0.8,
+            "confidence": "invalid_confidence",  # This will cause ConfidenceScore to fail
             "category": "injection",
         }
 
@@ -575,6 +576,33 @@ class TestLLMScanStrategy:
 
             # Should continue processing and return empty list when conversion fails
             assert len(threats) == 0
+
+    def test_convert_to_domain_threats_none_file_path(
+        self, llm_strategy, sample_scan_request
+    ):
+        """Test handling None file_path with graceful fallback."""
+        result_with_none_path = {
+            "finding_id": "test-llm-none",
+            "title": "Test Security Issue",
+            "description": "Test vulnerability description",
+            "severity": "high",
+            "line_number": 10,
+            "column_number": 5,
+            "file_path": None,  # This should now be handled gracefully
+            "code_snippet": "vulnerable code",
+            "confidence": 0.8,
+            "category": "injection",
+        }
+
+        threats = llm_strategy._convert_to_domain_threats(
+            [result_with_none_path], sample_scan_request
+        )
+
+        # Should successfully create threat with fallback file path
+        assert len(threats) == 1
+        threat = threats[0]
+        assert threat.rule_id == "test-llm-none"
+        assert str(threat.file_path) == str(sample_scan_request.context.target_path)
 
     def test_map_severity(self, llm_strategy):
         """Test severity mapping from LLM to domain."""

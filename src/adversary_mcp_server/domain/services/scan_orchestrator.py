@@ -324,7 +324,51 @@ class ScanOrchestrator:
                 "metadata": result.scan_metadata,
             }
 
-        return {
+        # Extract validation metadata from the adapter cache if available
+        validation_metadata = None
+        try:
+            from ...application.adapters.llm_validation_adapter import (
+                LLMValidationStrategy,
+            )
+
+            scan_id = request.context.metadata.scan_id
+            logger.debug(f"Looking for validation metadata for scan_id: {scan_id}")
+
+            if hasattr(LLMValidationStrategy, "_validation_metadata_cache"):
+                cache = LLMValidationStrategy._validation_metadata_cache
+                logger.debug(
+                    f"Validation metadata cache exists with keys: {list(cache.keys())}"
+                )
+                validation_metadata = cache.get(scan_id)
+                if validation_metadata:
+                    logger.debug(f"Found validation metadata: {validation_metadata}")
+                    # Clean up the cache entry to prevent memory leaks
+                    del LLMValidationStrategy._validation_metadata_cache[scan_id]
+                else:
+                    logger.warning(
+                        f"No validation metadata found for scan_id: {scan_id}"
+                    )
+                    # Try backup cache
+                    if hasattr(LLMValidationStrategy, "_module_validation_cache"):
+                        backup_cache = LLMValidationStrategy._module_validation_cache
+                        logger.debug(
+                            f"Checking backup cache with keys: {list(backup_cache.keys())}"
+                        )
+                        validation_metadata = backup_cache.get(scan_id)
+                        if validation_metadata:
+                            logger.debug(
+                                f"Found validation metadata in backup cache: {validation_metadata}"
+                            )
+                            del LLMValidationStrategy._module_validation_cache[scan_id]
+            else:
+                logger.warning(
+                    "LLMValidationStrategy has no _validation_metadata_cache attribute"
+                )
+        except ImportError as e:
+            logger.warning(f"Failed to import LLMValidationStrategy: {e}")
+            pass
+
+        metadata = {
             "scan_id": request.context.metadata.scan_id,
             "orchestration_version": "domain_v1",
             "scan_duration_seconds": duration,
@@ -338,6 +382,12 @@ class ScanOrchestrator:
             "execution_timestamp": end_time.isoformat(),
             "request_configuration": request.get_configuration_summary(),
         }
+
+        # Include validation metadata if available
+        if validation_metadata:
+            metadata.update(validation_metadata)
+
+        return metadata
 
     def get_registered_strategies(self) -> dict[str, list[str]]:
         """Get information about registered strategies."""

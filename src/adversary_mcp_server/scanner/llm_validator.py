@@ -241,7 +241,7 @@ class LLMValidator:
                 "LLM client not initialized - using security-first fallback for validation",
                 extra={
                     "finding_count": len(findings),
-                    "finding_severities": [f.severity.value for f in findings],
+                    "finding_severities": [str(f.severity) for f in findings],
                     "fallback_mode": getattr(
                         self.config, "validation_fallback_mode", "security_first"
                     ),
@@ -366,14 +366,15 @@ class LLMValidator:
             # Create fallback function for graceful degradation
             async def validation_fallback(*args, **kwargs):
                 logger.warning(
-                    f"Validation service degraded, using fallback for {len(batch_findings)} findings"
+                    f"Validation service degraded, using fallback for {len(batch_findings)} findings. "
+                    f"Fallback will mark all findings as legitimate with confidence 0.75"
                 )
                 fallback_results = {}
                 for finding in batch_findings:
                     fallback_results[finding.uuid] = ValidationResult(
                         finding_uuid=finding.uuid,
                         is_legitimate=True,  # Fail open - keep finding as precaution
-                        confidence=0.6,  # Medium confidence for fallback
+                        confidence=0.75,  # Above default threshold to ensure findings pass confidence filter
                         reasoning="Validation service degraded, keeping finding as precaution",
                     )
                 return fallback_results
@@ -629,8 +630,8 @@ class LLMValidator:
                     "error_type": type(e).__name__,
                     "error_message": str(e),
                     "batch_size": len(batch_findings),
-                    "finding_severities": [f.severity.value for f in batch_findings],
-                    "finding_categories": [f.category.value for f in batch_findings],
+                    "finding_severities": [str(f.severity) for f in batch_findings],
+                    "finding_categories": [f.category for f in batch_findings],
                     "file_path": file_path,
                     "security_impact": "high",
                     "component": "llm_validator",
@@ -777,7 +778,7 @@ class LLMValidator:
                 return (
                     False,  # Not legitimate (suspicious)
                     0.8,  # High confidence in being suspicious
-                    f"LLM validation unavailable. {finding.severity.value.upper()} severity finding "
+                    f"LLM validation unavailable. {str(finding.severity).upper()} severity finding "
                     f"treated as suspicious for security (fallback mode: security-first)",
                 )
             elif finding.confidence >= confidence_threshold:
@@ -819,7 +820,7 @@ class LLMValidator:
                 return (
                     False,  # Suspicious
                     combined_score,
-                    f"LLM validation unavailable. Combined severity ({finding.severity.value}) "
+                    f"LLM validation unavailable. Combined severity ({str(finding.severity)}) "
                     f"and confidence ({finding.confidence:.2f}) score {combined_score:.2f} "
                     f"exceeds threshold {confidence_threshold:.2f} (fallback mode: mixed)",
                 )
@@ -827,7 +828,7 @@ class LLMValidator:
                 return (
                     True,  # Legitimate
                     max(0.3, 1.0 - combined_score),
-                    f"LLM validation unavailable. Combined severity ({finding.severity.value}) "
+                    f"LLM validation unavailable. Combined severity ({str(finding.severity)}) "
                     f"and confidence ({finding.confidence:.2f}) score {combined_score:.2f} "
                     f"below threshold {confidence_threshold:.2f} (fallback mode: mixed)",
                 )
@@ -1015,9 +1016,10 @@ Be thorough but practical - focus on real security impact."""
                     "uuid": finding.uuid,
                     "rule_name": finding.rule_name,
                     "description": finding.description,
-                    "category": finding.category.value,
-                    "severity": finding.severity.value,
+                    "category": finding.category,
+                    "severity": str(finding.severity),
                     "line_number": finding.line_number,
+                    "file_path": file_path,
                     "code_snippet": finding.code_snippet,
                     "confidence": finding.confidence,
                 }

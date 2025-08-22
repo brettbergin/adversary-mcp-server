@@ -134,10 +134,16 @@ class CleanMCPServer:
     ) -> list[types.TextContent]:
         """Handle file scanning requests."""
         try:
+            # Log raw arguments received
+            logger.debug(f"MCP scan_file raw arguments: {arguments}")
+
             # Comprehensive input validation
             validated_args = self._input_validator.validate_mcp_arguments(
                 arguments, tool_name="adv_scan_file"
             )
+
+            # Log validated arguments
+            logger.debug(f"MCP scan_file validated arguments: {validated_args}")
 
             # Extract validated parameters
             path = validated_args.get("path", "")
@@ -147,6 +153,11 @@ class CleanMCPServer:
             use_semgrep = validated_args.get("use_semgrep", True)
             use_llm = validated_args.get("use_llm", False)
             use_validation = validated_args.get("use_validation", False)
+
+            # Log extracted parameters for debugging
+            logger.debug(
+                f"MCP scan_file parameters - use_semgrep: {use_semgrep}, use_llm: {use_llm}, use_validation: {use_validation}"
+            )
             severity_threshold = validated_args.get("severity_threshold", "medium")
             timeout_seconds = validated_args.get("timeout_seconds")
             language = validated_args.get("language")

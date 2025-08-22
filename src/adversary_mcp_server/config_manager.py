@@ -67,7 +67,7 @@ class DynamicLimits:
 
     # ========== LLM TOKEN LIMITS ==========
     # Controls LLM context window usage
-    llm_max_findings: int = 20  # Max findings per analysis
+    llm_max_findings: int = 99999  # Effectively unlimited findings per analysis
     llm_target_tokens: int = 80000  # Target token count
     llm_max_tokens: int = 100000  # Hard limit on tokens
     llm_max_code_length: int = 10000  # Max code snippet length

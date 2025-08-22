@@ -362,20 +362,25 @@ class TokenEstimator:
         Returns:
             Estimated response tokens
         """
-        if max_findings == 0:
+        # Handle None max_findings (unlimited) by using a reasonable default for estimation
+        effective_max_findings = max_findings if max_findings is not None else 50
+
+        if effective_max_findings == 0:
             return 50  # Minimal response
 
         # Base tokens per finding
         base_tokens_per_finding = 100 if detailed_analysis else 50
 
         # JSON structure overhead
-        json_overhead = 20 + (max_findings * 10)
+        json_overhead = 20 + (effective_max_findings * 10)
 
         # Response envelope
         response_overhead = 30
 
         total_tokens = (
-            max_findings * base_tokens_per_finding + json_overhead + response_overhead
+            effective_max_findings * base_tokens_per_finding
+            + json_overhead
+            + response_overhead
         )
 
         return total_tokens
@@ -386,7 +391,7 @@ class TokenEstimator:
         language: Language,
         system_prompt: str,
         user_prompt_template: str,
-        max_findings: int = 20,
+        max_findings: int | None = None,
         model: str | None = None,
     ) -> int:
         """Estimate total tokens for a complete analysis request.
@@ -411,8 +416,8 @@ class TokenEstimator:
             system_prompt, full_user_prompt, model
         )
 
-        # Estimate response tokens
-        response_tokens = self.estimate_response_tokens(max_findings)
+        # Estimate response tokens (use a reasonable default for unlimited scans)
+        response_tokens = self.estimate_response_tokens(max_findings or 50)
 
         return prompt_tokens + response_tokens
 
