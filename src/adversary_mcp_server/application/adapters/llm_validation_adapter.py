@@ -91,11 +91,16 @@ class LLMValidationStrategy(IValidationStrategy):
             # Filter threats based on confidence threshold
             high_confidence_threats = self._filter_by_confidence(validated_threats)
 
+            # Record validation metadata
+            self._record_validation_metadata(
+                threats, validated_threats, high_confidence_threats, context
+            )
+
             return high_confidence_threats
 
         except Exception as e:
             # If validation fails, return original threats with warning
-            print(f"Warning: LLM validation failed, returning original threats: {e}")
+            logger.warning(f"LLM validation failed, returning original threats: {e}")
             return threats
 
     async def _execute_validation(
@@ -169,12 +174,96 @@ class LLMValidationStrategy(IValidationStrategy):
 
     def _filter_by_confidence(self, threats: list[ThreatMatch]) -> list[ThreatMatch]:
         """Filter threats based on confidence threshold."""
-        return [
-            threat
-            for threat in threats
-            if threat.confidence.meets_threshold(self._default_confidence_threshold)
-            and not threat.is_false_positive
-        ]
+        threshold = self._default_confidence_threshold
+
+        logger.info(
+            f"Filtering {len(threats)} threats with confidence threshold {threshold.get_percentage()}%"
+        )
+
+        filtered_threats = []
+        confidence_filtered_count = 0
+        false_positive_filtered_count = 0
+
+        for threat in threats:
+            # Check confidence threshold
+            if not threat.confidence.meets_threshold(threshold):
+                confidence_filtered_count += 1
+                logger.info(
+                    f"Filtering threat {threat.uuid} - confidence {threat.confidence.get_percentage()}% "
+                    f"below threshold {threshold.get_percentage()}%"
+                )
+                continue
+
+            # Check false positive status
+            if threat.is_false_positive:
+                false_positive_filtered_count += 1
+                logger.info(
+                    f"Filtering threat {threat.uuid} - marked as false positive"
+                )
+                continue
+
+            # Threat passes all filters
+            logger.debug(
+                f"Keeping threat {threat.uuid} - confidence {threat.confidence.get_percentage()}%, "
+                f"not false positive"
+            )
+            filtered_threats.append(threat)
+
+        logger.info(
+            f"Validation filtering results: {len(filtered_threats)}/{len(threats)} threats kept, "
+            f"{confidence_filtered_count} filtered by confidence, "
+            f"{false_positive_filtered_count} filtered as false positives"
+        )
+
+        return filtered_threats
+
+    def _record_validation_metadata(
+        self,
+        original_threats: list[ThreatMatch],
+        validated_threats: list[ThreatMatch],
+        final_threats: list[ThreatMatch],
+        context: ScanContext,
+    ) -> None:
+        """Record validation metadata for debugging and transparency."""
+        false_positives_count = len(
+            [t for t in validated_threats if t.is_false_positive]
+        )
+        confidence_filtered_count = (
+            len(validated_threats) - len(final_threats) - false_positives_count
+        )
+
+        # Extract unique scanners from original threats
+        active_scanners = set()
+        for threat in original_threats:
+            scanner_parts = threat.source_scanner.split("+")
+            active_scanners.update(scanner_parts)
+
+        validation_metadata = {
+            "validation_applied": True,
+            "validation_stats": {
+                "original_threat_count": len(original_threats),
+                "validated_threat_count": len(validated_threats),
+                "final_threat_count": len(final_threats),
+                "false_positives_filtered": false_positives_count,
+                "confidence_filtered": confidence_filtered_count,
+                "validation_filter_rate": (
+                    1.0 - (len(final_threats) / len(original_threats))
+                    if original_threats
+                    else 0.0
+                ),
+                "active_scanners_original": sorted(active_scanners),
+                "confidence_threshold": self._default_confidence_threshold.get_percentage(),
+            },
+        }
+
+        logger.info(f"Validation completed: {validation_metadata['validation_stats']}")
+
+        # Store validation metadata in a global dict keyed by scan_id for retrieval
+        # This works around the frozen dataclass limitation
+        scan_id = context.metadata.scan_id
+        if not hasattr(self.__class__, "_validation_metadata_cache"):
+            self.__class__._validation_metadata_cache = {}
+        self.__class__._validation_metadata_cache[scan_id] = validation_metadata
 
     def set_confidence_threshold(self, threshold: ConfidenceScore) -> None:
         """Set the confidence threshold for filtering validated threats."""

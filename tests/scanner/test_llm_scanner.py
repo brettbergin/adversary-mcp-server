@@ -328,13 +328,13 @@ class TestLLMScanner:
         analyzer = LLMScanner(mock_manager)
 
         source_code = "SELECT * FROM users WHERE id = user_input"
-        prompt = analyzer.create_analysis_prompt(source_code, "test.py", "python", 5)
+        prompt = analyzer.create_analysis_prompt(source_code, "test.py", "python", None)
 
         assert isinstance(prompt, LLMAnalysisPrompt)
         assert prompt.file_path == "test.py"
-        assert prompt.max_findings == 5
+        assert prompt.max_findings is None
         assert "SELECT * FROM users WHERE id = user_input" in prompt.user_prompt
-        assert "security vulnerabilities" in prompt.user_prompt.lower()
+        assert "comprehensive security analysis" in prompt.user_prompt.lower()
         assert "JSON format" in prompt.user_prompt
         assert "senior security engineer" in prompt.system_prompt.lower()
 
@@ -1004,14 +1004,14 @@ def function3():
 
         source_code = "SELECT * FROM users WHERE id = user_input"
         language = "python"
-        max_findings = 15
+        max_findings = None
 
         prompt = analyzer._create_user_prompt(source_code, language, max_findings)
 
         assert isinstance(prompt, str)
         assert "python" in prompt
         assert "SELECT * FROM users WHERE id = user_input" in prompt
-        assert "up to 15 security findings" in prompt
+        assert "ALL security findings" in prompt
         assert "JSON format" in prompt
         assert "line_number" in prompt
         assert "vulnerability_type" in prompt
@@ -1055,7 +1055,7 @@ def function3():
             },
         ]
 
-        prompt = analyzer._create_batch_user_prompt(batch_content, 10)
+        prompt = analyzer._create_batch_user_prompt(batch_content, None)
 
         assert isinstance(prompt, str)
         assert "File 1: /test/file1.py" in prompt
@@ -1064,7 +1064,7 @@ def function3():
         assert "javascript" in prompt
         assert "print('hello')" in prompt
         assert "console.log('world')" in prompt
-        assert "up to 10 security findings per file" in prompt
+        assert "ALL security findings" in prompt
 
     def test_parse_batch_response_success(self):
         """Test successful batch response parsing."""
@@ -1262,7 +1262,7 @@ def function3():
             },
         ]
 
-        prompt = analyzer._create_enhanced_batch_user_prompt(batch_content, 10)
+        prompt = analyzer._create_enhanced_batch_user_prompt(batch_content, None)
 
         assert isinstance(prompt, str)
         assert "PYTHON Files (1 files)" in prompt
@@ -1271,7 +1271,7 @@ def function3():
         assert "/test/file2.js" in prompt
         assert "simple" in prompt  # complexity indicator for file1
         assert "complex" in prompt  # complexity indicator for file2
-        assert "up to 20 security findings total" in prompt  # 10 per file * 2 files
+        assert "ALL security findings" in prompt
 
     def test_parse_enhanced_batch_response_success(self):
         """Test enhanced batch response parsing."""
@@ -2586,27 +2586,36 @@ def function3():
         scanner = LLMScanner(mock_manager)
         scanner.batch_processor = MagicMock()
 
-        # Mock file content data with various languages
-        file_content_data = [
-            {
-                "file_path": "test.py",
-                "content": "print('hello')",
-                "language": "python",
-                "priority": 1,
-            },
-            {
-                "file_path": "test.js",
-                "content": "console.log('hello')",
-                "language": "javascript",
-                "priority": 2,
-            },
-            {
-                "file_path": "test.unknown",
-                "content": "unknown code",
-                "language": "unknown",
-                "priority": 0,
-            },
-        ]
+        # Mock file content data with various languages (enough files to trigger batch processing)
+        file_content_data = []
+        for i in range(30):  # Create 30 files to trigger batch processor
+            if i % 3 == 0:
+                file_content_data.append(
+                    {
+                        "file_path": f"test{i}.py",
+                        "content": "print('hello')",
+                        "language": "python",
+                        "priority": 1,
+                    }
+                )
+            elif i % 3 == 1:
+                file_content_data.append(
+                    {
+                        "file_path": f"test{i}.js",
+                        "content": "console.log('hello')",
+                        "language": "javascript",
+                        "priority": 2,
+                    }
+                )
+            else:
+                file_content_data.append(
+                    {
+                        "file_path": f"test{i}.unknown",
+                        "content": "unknown code",
+                        "language": "unknown",
+                        "priority": 0,
+                    }
+                )
 
         # Mock batch processor methods
         mock_context = MagicMock()
@@ -2622,27 +2631,31 @@ def function3():
             ):
 
                 async def run_test():
-                    result = await scanner._analyze_batch_async(
-                        [Path("test.py"), Path("test.js"), Path("test.unknown")]
-                    )
+                    file_paths = [
+                        Path(f"test{i}.py") for i in range(30)
+                    ]  # 30 files to trigger batch processing
+                    result = await scanner._analyze_batch_async(file_paths)
 
                     # Verify create_file_context was called with correct language mappings
                     calls = scanner.batch_processor.create_file_context.call_args_list
-                    assert len(calls) == 3
+                    assert len(calls) == 30
 
-                    # Check first call (Python)
-                    args, kwargs = calls[0]
-                    from adversary_mcp_server.batch.types import Language
+                    # Check that we have the expected language mappings
+                    python_calls = [
+                        call for call in calls if call[1]["language"].value == "python"
+                    ]
+                    js_calls = [
+                        call
+                        for call in calls
+                        if call[1]["language"].value == "javascript"
+                    ]
+                    generic_calls = [
+                        call for call in calls if call[1]["language"].value == "generic"
+                    ]
 
-                    assert kwargs["language"] == Language.PYTHON
-
-                    # Check second call (JavaScript)
-                    args, kwargs = calls[1]
-                    assert kwargs["language"] == Language.JAVASCRIPT
-
-                    # Check third call (unknown -> generic)
-                    args, kwargs = calls[2]
-                    assert kwargs["language"] == Language.GENERIC
+                    assert len(python_calls) == 10  # Every 3rd file starting from 0
+                    assert len(js_calls) == 10  # Every 3rd file starting from 1
+                    assert len(generic_calls) == 10  # Every 3rd file starting from 2
 
                     return result
 
@@ -2675,7 +2688,7 @@ def function3():
             # Verify the async method was called with correct parameters
             # Note: Due to event loop handling, it might be called more than once
             assert mock_async.call_count >= 1
-            mock_async.assert_called_with([("code", "test.py", "python")], 20)
+            mock_async.assert_called_with([("code", "test.py", "python")], None)
 
             # Verify we got the expected result
             assert result == [mock_findings]
@@ -2751,7 +2764,9 @@ def function3():
                 result = scanner.batch_analyze_code([("code", "test.py", "python")])
 
                 # Verify the async method was called
-                mock_async.assert_called_once_with([("code", "test.py", "python")], 20)
+                mock_async.assert_called_once_with(
+                    [("code", "test.py", "python")], None
+                )
 
                 # Verify initial logging happens
                 mock_logger.info.assert_any_call(

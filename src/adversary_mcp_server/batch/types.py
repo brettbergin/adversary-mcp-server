@@ -69,7 +69,7 @@ class BatchConfig:
 
     # Progressive scanning settings
     enable_progressive_scanning: bool = True
-    max_findings_before_early_exit: int = 50
+    max_findings_before_early_exit: int = 99999  # Effectively unlimited findings
     min_high_severity_findings_for_exit: int = 5
     progressive_scan_file_limit: int = (
         100  # Stop after scanning this many files if enough findings

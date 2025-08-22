@@ -205,9 +205,18 @@ class ScanResult:
                 "scan_duration_seconds", 0.0
             )
             stats.lines_analyzed = self.scan_metadata.get("lines_analyzed", 0)
-            stats.false_positives_filtered = len(
-                [t for t in self.threats if t.is_false_positive]
-            )
+
+            # Use validation metadata if available for accurate false positive count
+            if "validation_stats" in self.scan_metadata:
+                validation_stats = self.scan_metadata["validation_stats"]
+                stats.false_positives_filtered = validation_stats.get(
+                    "false_positives_filtered", 0
+                )
+            else:
+                # Fallback to counting false positives in final threats
+                stats.false_positives_filtered = len(
+                    [t for t in self.threats if t.is_false_positive]
+                )
 
             # Convert to dictionary format expected by formatters
             self._statistics = {
@@ -267,7 +276,14 @@ class ScanResult:
 
     def get_active_scanners(self) -> list[str]:
         """Get list of scanners that were used in this scan."""
-        # Collect all unique scanner components from all threats
+        # Use validation metadata if available for accurate scanner list
+        if "validation_stats" in self.scan_metadata:
+            validation_stats = self.scan_metadata["validation_stats"]
+            original_scanners = validation_stats.get("active_scanners_original", [])
+            if original_scanners:
+                return original_scanners
+
+        # Fallback: Collect all unique scanner components from remaining threats
         all_scanners = set()
         for threat in self.threats:
             # Split scanner names by "+" and add individual components

@@ -673,36 +673,48 @@ class BatchProcessor:
         if not self.config.enable_progressive_scanning:
             return True  # Progressive scanning disabled, continue normally
 
-        # Exit early if we've found enough findings
-        if len(total_findings) >= self.config.max_findings_before_early_exit:
-            logger.info(
-                f"Progressive scan: Early exit due to {len(total_findings)} findings "
-                f"(limit: {self.config.max_findings_before_early_exit})"
-            )
-            return False
+        # Check if we're in unlimited findings mode (comprehensive scanning)
+        unlimited_mode = self.config.max_findings_before_early_exit >= 99999
 
-        # Exit early if we have enough high-severity findings and have processed some files
-        if (
-            len(high_severity_findings)
-            >= self.config.min_high_severity_findings_for_exit
-            and processed_file_count >= 20
-        ):  # Process at least 20 files before considering early exit
-            logger.info(
-                f"Progressive scan: Early exit due to {len(high_severity_findings)} high-severity findings "
-                f"after {processed_file_count} files"
-            )
-            return False
+        if not unlimited_mode:
+            # Exit early if we've found enough findings (only in limited mode)
+            if len(total_findings) >= self.config.max_findings_before_early_exit:
+                logger.info(
+                    f"Progressive scan: Early exit due to {len(total_findings)} findings "
+                    f"(limit: {self.config.max_findings_before_early_exit})"
+                )
+                return False
 
-        # Exit if we've hit the file processing limit with reasonable findings
-        if (
-            processed_file_count >= self.config.progressive_scan_file_limit
-            and len(total_findings) >= 10
-        ):  # Need at least some findings to justify early exit
-            logger.info(
-                f"Progressive scan: Early exit after processing {processed_file_count} files "
-                f"with {len(total_findings)} findings"
-            )
-            return False
+            # Exit early if we have enough high-severity findings and have processed some files
+            if (
+                len(high_severity_findings)
+                >= self.config.min_high_severity_findings_for_exit
+                and processed_file_count >= 20
+            ):  # Process at least 20 files before considering early exit
+                logger.info(
+                    f"Progressive scan: Early exit due to {len(high_severity_findings)} high-severity findings "
+                    f"after {processed_file_count} files"
+                )
+                return False
+
+            # Exit if we've hit the file processing limit with reasonable findings
+            if (
+                processed_file_count >= self.config.progressive_scan_file_limit
+                and len(total_findings) >= 10
+            ):  # Need at least some findings to justify early exit
+                logger.info(
+                    f"Progressive scan: Early exit after processing {processed_file_count} files "
+                    f"with {len(total_findings)} findings"
+                )
+                return False
+        else:
+            # In unlimited mode, log progress but never exit early
+            if processed_file_count % 50 == 0:  # Log every 50 files
+                logger.info(
+                    f"Comprehensive scan: Processed {processed_file_count} files, "
+                    f"found {len(total_findings)} total findings "
+                    f"({len(high_severity_findings)} high-severity)"
+                )
 
         return True  # Continue scanning
 

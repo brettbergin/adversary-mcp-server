@@ -169,7 +169,7 @@ class LLMAnalysisPrompt:
     system_prompt: str
     user_prompt: str
     file_path: str
-    max_findings: int = field(
+    max_findings: int | None = field(
         default_factory=lambda: get_config_manager().dynamic_limits.llm_max_findings
     )
 
@@ -401,7 +401,7 @@ class LLMScanner:
         source_code: str,
         file_path: str,
         language: str,
-        max_findings: int = 20,
+        max_findings: int | None = None,
     ) -> LLMAnalysisPrompt:
         """Create analysis prompt for the given code.
 
@@ -426,7 +426,9 @@ class LLMScanner:
                 f"System prompt created, length: {len(system_prompt)} characters"
             )
 
-            user_prompt = self._create_user_prompt(source_code, language, max_findings)
+            user_prompt = self._create_user_prompt(
+                source_code, language, max_findings or 50
+            )
             logger.debug(f"User prompt created, length: {len(user_prompt)} characters")
 
             prompt = LLMAnalysisPrompt(
@@ -586,8 +588,53 @@ class LLMScanner:
                 f"Successfully parsed JSON, data keys: {list(data.keys()) if isinstance(data, dict) else type(data)}"
             )
 
-            findings = []
+            findings: list[LLMSecurityFinding] = []
             raw_findings = data.get("findings", [])
+
+            # Handle case where LLM returns nested vulnerabilities structure
+            if raw_findings and len(raw_findings) == 1:
+                single_finding = raw_findings[0]
+                if "description" in single_finding and isinstance(
+                    single_finding["description"], str
+                ):
+                    # Check if description contains JSON with vulnerabilities
+                    desc = single_finding["description"].strip()
+                    if desc.startswith("```json") or desc.startswith("{"):
+                        try:
+                            # Extract and parse nested JSON
+                            clean_desc = self._strip_markdown_code_blocks(desc)
+                            nested_data = self._robust_json_parse(clean_desc)
+                            if "vulnerabilities" in nested_data:
+                                logger.info(
+                                    f"Found nested vulnerabilities structure with {len(nested_data['vulnerabilities'])} items"
+                                )
+                                # Convert vulnerabilities to findings format
+                                raw_findings = []
+                                for vuln in nested_data["vulnerabilities"]:
+                                    finding_dict = {
+                                        "type": vuln.get(
+                                            "title", vuln.get("rule_id", "unknown")
+                                        ),
+                                        "severity": vuln.get(
+                                            "severity", "medium"
+                                        ).lower(),
+                                        "description": vuln.get("description", ""),
+                                        "line_number": vuln.get("line_number", 1),
+                                        "code_snippet": vuln.get("code_snippet", ""),
+                                        "explanation": vuln.get("description", ""),
+                                        "recommendation": vuln.get(
+                                            "remediation_advice", ""
+                                        ),
+                                        "confidence": 0.8,  # Default high confidence
+                                        "cwe_id": vuln.get("cwe_id"),
+                                        "owasp_category": vuln.get("owasp_category"),
+                                    }
+                                    raw_findings.append(finding_dict)
+                        except Exception as e:
+                            logger.warning(
+                                f"Failed to parse nested JSON structure: {e}"
+                            )
+
             logger.info(f"Found {len(raw_findings)} raw findings in response")
 
             for i, finding_data in enumerate(raw_findings):
@@ -653,18 +700,28 @@ class LLMScanner:
             System prompt string
         """
         logger.debug("Generating system prompt for LLM analysis")
-        return """You are a senior security engineer performing static code analysis.
-Your task is to analyze code for security vulnerabilities and provide detailed, actionable findings.
+        return """You are a senior security engineer performing comprehensive static code analysis.
+Your task is to thoroughly analyze code for security vulnerabilities and provide detailed, actionable findings.
+
+Analysis Approach:
+1. Be comprehensive - analyze every function, class, and code pattern
+2. Look for both obvious and subtle security issues
+3. Consider attack scenarios and exploit potential
+4. Examine data flow and trust boundaries
+5. Check for proper input validation and sanitization
+6. Review error handling and information disclosure
+7. Assess cryptographic implementations and key management
+8. Evaluate authentication and authorization mechanisms
 
 Guidelines:
-1. Focus on real security issues, not code style or minor concerns
-2. Provide specific line numbers and code snippets
-3. Include detailed explanations of why something is vulnerable
-4. Offer concrete remediation advice
+1. Report ALL security-relevant issues, including potential concerns
+2. Provide specific line numbers and vulnerable code snippets
+3. Include detailed explanations of exploitability
+4. Offer concrete remediation steps
 5. Assign appropriate severity levels (low, medium, high, critical)
-6. Be precise about vulnerability types and CWE mappings
-7. Avoid false positives - only report genuine security concerns
-8. Consider the full context of the code when making assessments
+6. Map to CWE IDs and OWASP categories when applicable
+7. Be thorough - it's better to report a potential issue than miss a real vulnerability
+8. Consider the full context and data flow when making assessments
 
 Response format: JSON object with "findings" array containing security issues.
 Each finding should have: type, severity, description, line_number, code_snippet, explanation, recommendation, confidence, cwe_id (optional), owasp_category (optional).
@@ -718,21 +775,32 @@ Vulnerability types to look for:
                 f"Code length {original_length} is within limit, no truncation needed"
             )
 
-        prompt = f"""Analyze the following {language} code for security vulnerabilities:
+        prompt = f"""Perform a comprehensive security analysis of the following {language} code:
 
 ```{language}
 {source_code}
 ```
 
-Please provide up to {max_findings} security findings in JSON format.
+Please provide ALL security findings you discover in JSON format. Be thorough and comprehensive in your analysis.
 
-Requirements:
-- Focus on genuine security vulnerabilities
+Security Analysis Requirements:
+- Examine EVERY function, method, and code block for potential security issues
+- Look for both obvious vulnerabilities and subtle security concerns
+- Consider data flow, input validation, output encoding, and error handling
+- Analyze authentication, authorization, and session management
+- Check for injection vulnerabilities (SQL, command, code, XSS, etc.)
+- Review cryptographic implementations and key management
+- Assess file operations, network calls, and external system interactions
+- Evaluate business logic for potential security bypasses
+- Consider information disclosure through error messages or logs
+- Check for race conditions, memory safety issues, and DoS vectors
+
+Technical Requirements:
 - Provide specific line numbers (1-indexed, exactly as they appear in the source code)
-- Include the vulnerable code snippet
-- Explain why each finding is a security risk
+- Include the vulnerable code snippet for each finding
+- Explain the security risk and potential exploitation
 - Suggest specific remediation steps
-- Assign confidence scores (0.0-1.0)
+- Assign confidence scores (0.0-1.0) based on certainty
 - Map to CWE IDs where applicable
 - Classify by OWASP categories where relevant
 - IMPORTANT: Line numbers must match the exact line numbers in the provided source code (1-indexed)
@@ -763,7 +831,7 @@ Response format:
         source_code: str,
         file_path: str,
         language: str,
-        max_findings: int = 20,
+        max_findings: int | None = None,
     ) -> list[LLMSecurityFinding]:
         """Analyze code for security vulnerabilities.
 
@@ -800,7 +868,7 @@ Response format:
         source_code: str,
         file_path: str,
         language: str,
-        max_findings: int = 20,
+        max_findings: int | None = None,
     ) -> list[LLMSecurityFinding]:
         """Async implementation of code analysis with intelligent caching.
 
@@ -839,7 +907,7 @@ Response format:
                     model=self.config.llm_model or "default",
                     system_prompt=self._get_system_prompt(),
                     user_prompt=self._create_user_prompt(
-                        source_code, language, max_findings
+                        source_code, language, max_findings or 50
                     ),
                     temperature=self.config.llm_temperature,
                     max_tokens=self.config.llm_max_tokens,
@@ -870,7 +938,9 @@ Response format:
         try:
             # Create prompts
             system_prompt = self._get_system_prompt()
-            user_prompt = self._create_user_prompt(source_code, language, max_findings)
+            user_prompt = self._create_user_prompt(
+                source_code, language, max_findings or 50
+            )
 
             logger.debug(f"Sending analysis request to LLM for {file_path}")
 
@@ -1034,7 +1104,7 @@ Response format:
         self,
         file_path,
         language: str,
-        max_findings: int = 20,
+        max_findings: int | None = None,
     ) -> list[LLMSecurityFinding]:
         """Analyze a single file for security vulnerabilities.
 
@@ -1071,7 +1141,7 @@ Response format:
         self,
         directory_path,
         recursive: bool = True,
-        max_findings_per_file: int = 20,
+        max_findings_per_file: int | None = None,
     ) -> list[LLMSecurityFinding]:
         """Analyze an entire directory for security vulnerabilities.
 
@@ -1189,7 +1259,7 @@ Response format:
     async def analyze_files(
         self,
         file_paths: list[Path],
-        max_findings_per_file: int = 20,
+        max_findings_per_file: int | None = None,
     ) -> list[LLMSecurityFinding]:
         """Analyze a pre-filtered list of files for security vulnerabilities.
 
@@ -1280,9 +1350,9 @@ Response format:
     async def _analyze_batch_async(
         self,
         file_paths: list[Path],
-        max_findings_per_file: int = 20,
+        max_findings_per_file: int | None = None,
     ) -> list[LLMSecurityFinding]:
-        """Analyze a batch of files efficiently with advanced optimization.
+        """Analyze a batch of files efficiently with true parallel processing.
 
         Args:
             file_paths: List of file paths to analyze
@@ -1294,7 +1364,16 @@ Response format:
         if not self.llm_client:
             return []
 
-        logger.info(f"Starting optimized batch analysis for {len(file_paths)} files")
+        # For small to medium batches, use parallel individual analysis for better performance
+        if len(file_paths) <= 25:
+            logger.info(
+                f"Using parallel individual analysis for {len(file_paths)} files"
+            )
+            return await self._analyze_files_in_parallel(
+                file_paths, max_findings_per_file
+            )
+
+        logger.info(f"Starting batch processor analysis for {len(file_paths)} files")
 
         # Step 1: Collect and preprocess all file content
         file_content_data = await self._collect_file_content(file_paths)
@@ -1357,7 +1436,7 @@ Response format:
                 )
 
             return await self._process_single_batch(
-                batch_content, max_findings_per_file, 0
+                batch_content, max_findings_per_file or 50, 0
             )
 
         def progress_callback(completed: int, total: int):
@@ -1386,6 +1465,73 @@ Response format:
         logger.info(
             f"Batch analysis complete: {len(all_findings)} total findings from {len(file_paths)} files"
         )
+        return all_findings
+
+    async def _analyze_files_in_parallel(
+        self,
+        file_paths: list[Path],
+        max_findings_per_file: int | None = None,
+    ) -> list[LLMSecurityFinding]:
+        """Analyze files in parallel for better performance with small batches.
+
+        Args:
+            file_paths: List of file paths to analyze
+            max_findings_per_file: Maximum findings per file
+
+        Returns:
+            List of security findings from all files
+        """
+        logger.info(f"Analyzing {len(file_paths)} files in parallel")
+
+        async def analyze_single_file(file_path: Path) -> list[LLMSecurityFinding]:
+            """Analyze a single file and return findings."""
+            try:
+                language = self._detect_language(file_path)
+                return await self.analyze_file(
+                    file_path, language, max_findings_per_file
+                )
+            except Exception as e:
+                logger.warning(f"Failed to analyze {file_path}: {e}")
+                return []
+
+        # Run all file analyses concurrently
+        start_time = time.time()
+        file_tasks = [analyze_single_file(file_path) for file_path in file_paths]
+
+        # Use semaphore to limit concurrent API calls
+        max_concurrent = min(
+            10, len(file_paths)
+        )  # Increased to 10 concurrent calls for better throughput
+        semaphore = asyncio.Semaphore(max_concurrent)
+
+        async def analyze_with_semaphore(task):
+            async with semaphore:
+                return await task
+
+        # Execute with concurrency limit
+        results = await asyncio.gather(
+            *[analyze_with_semaphore(task) for task in file_tasks],
+            return_exceptions=True,
+        )
+
+        # Collect all findings from successful analyses
+        all_findings = []
+        successful_analyses = 0
+
+        for i, result in enumerate(results):
+            if isinstance(result, list):  # Successful result
+                all_findings.extend(result)
+                successful_analyses += 1
+            elif isinstance(result, Exception):
+                logger.warning(f"File analysis failed for {file_paths[i]}: {result}")
+
+        elapsed_time = time.time() - start_time
+        logger.info(
+            f"Parallel analysis completed: {successful_analyses}/{len(file_paths)} files, "
+            f"{len(all_findings)} findings, {elapsed_time:.2f}s "
+            f"({len(file_paths)/elapsed_time:.2f} files/sec)"
+        )
+
         return all_findings
 
     async def _collect_file_content(self, file_paths: list[Path]) -> list[dict]:
@@ -1653,7 +1799,7 @@ Response format:
             )
 
         prompt_parts.append(
-            f"\n\nProvide up to {max_findings_per_file} security findings per file."
+            "\n\nProvide ALL security findings you discover for each file."
         )
         prompt_parts.append(
             """
@@ -1878,12 +2024,11 @@ Priority vulnerability types to look for:
                 )
 
         total_files = len(batch_content)
-        total_findings_limit = max_findings_per_file * total_files
 
         prompt_parts.append(
             f"""\n\n## Analysis Requirements
 
-Provide up to {total_findings_limit} security findings total (max {max_findings_per_file} per file).
+Provide ALL security findings you discover across all files.
 
 **Critical Requirements:**
 - Focus on genuine security vulnerabilities, not code quality issues
@@ -2073,7 +2218,7 @@ Provide up to {total_findings_limit} security findings total (max {max_findings_
     def batch_analyze_code(
         self,
         code_samples: list[tuple[str, str, str]],
-        max_findings_per_sample: int = 20,
+        max_findings_per_sample: int | None = None,
     ) -> list[list[LLMSecurityFinding]]:
         """Analyze multiple code samples.
 
@@ -2121,7 +2266,7 @@ Provide up to {total_findings_limit} security findings total (max {max_findings_
     async def _batch_analyze_code_async(
         self,
         code_samples: list[tuple[str, str, str]],
-        max_findings_per_sample: int = 20,
+        max_findings_per_sample: int | None = None,
     ) -> list[list[LLMSecurityFinding]]:
         """Async implementation of batch code analysis.
 
@@ -2159,7 +2304,7 @@ Provide up to {total_findings_limit} security findings total (max {max_findings_
         project_root: Path,
         target_files: list[Path] | None = None,
         analysis_focus: str = "comprehensive security analysis",
-        max_findings: int = 50,
+        max_findings: int | None = None,
     ) -> list[LLMSecurityFinding]:
         """
         Analyze a project using session-aware context for better cross-file vulnerability detection.
@@ -2201,7 +2346,7 @@ Provide up to {total_findings_limit} security findings total (max {max_findings_
 
             # Perform comprehensive analysis with session context
             findings = await self._perform_session_analysis(
-                session.session_id, max_findings
+                session.session_id, max_findings or 50
             )
 
             logger.info(
@@ -2226,7 +2371,7 @@ Provide up to {total_findings_limit} security findings total (max {max_findings_
         file_path: Path,
         project_root: Path | None = None,
         context_hint: str | None = None,
-        max_findings: int = 20,
+        max_findings: int | None = None,
     ) -> list[LLMSecurityFinding]:
         """
         Analyze a specific file with project context for enhanced detection.
@@ -2282,7 +2427,7 @@ Provide up to {total_findings_limit} security findings total (max {max_findings_
 
             # Convert session findings to LLMSecurityFinding objects
             findings = []
-            for finding in session_findings[:max_findings]:
+            for finding in session_findings:
                 llm_finding = LLMSecurityFinding(
                     finding_type=finding.rule_id,
                     severity=(
@@ -2324,7 +2469,7 @@ Provide up to {total_findings_limit} security findings total (max {max_findings_
         language: str,
         file_name: str = "code_snippet",
         context_hint: str | None = None,
-        max_findings: int = 20,
+        max_findings: int | None = None,
     ) -> list[LLMSecurityFinding]:
         """
         Analyze code content with minimal context.
@@ -2382,7 +2527,7 @@ File: {file_name}
 
             # Convert to LLMSecurityFinding objects
             findings = []
-            for finding in session_findings[:max_findings]:
+            for finding in session_findings:
                 llm_finding = LLMSecurityFinding(
                     finding_type=finding.rule_id,
                     severity=(
@@ -2464,7 +2609,9 @@ Focus on real, exploitable vulnerabilities with high confidence.
         all_session_findings.extend(findings)
 
         # Phase 2: Architectural analysis (if we have findings to build on)
-        if len(all_session_findings) < max_findings // 2:
+        # When max_findings is None (unlimited), always do architectural analysis
+        threshold = (max_findings // 2) if max_findings is not None else 25
+        if len(all_session_findings) < threshold:
             arch_findings = await self.session_manager.continue_analysis(
                 session_id=session_id,
                 follow_up_query="""
@@ -2484,7 +2631,7 @@ Focus on systemic and architectural vulnerabilities.
 
         # Convert session findings to LLMSecurityFinding objects
         llm_findings = []
-        for finding in all_session_findings[:max_findings]:
+        for finding in all_session_findings:
             llm_finding = LLMSecurityFinding(
                 finding_type=finding.rule_id,
                 severity=(

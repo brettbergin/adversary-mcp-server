@@ -632,17 +632,12 @@ class CleanCLI:
             threats_table.add_column("Location", style="yellow")
             threats_table.add_column("Confidence", style="green")
 
-            for threat in result.threats[:10]:  # Show first 10
+            for threat in result.threats:  # Show all threats
                 threats_table.add_row(
                     str(threat.severity).upper(),
                     threat.rule_name,
                     f"{threat.file_path}:{threat.line_number}",
                     f"{threat.confidence.get_percentage():.1f}%",
-                )
-
-            if len(result.threats) > 10:
-                threats_table.add_row(
-                    "...", f"({len(result.threats) - 10} more)", "", ""
                 )
 
             console.print(threats_table)
@@ -1583,7 +1578,7 @@ Focus on systemic and architectural vulnerabilities.
         table.add_column("Description", style="white")
         table.add_column("Confidence", style="green")
 
-        for finding in findings[:10]:  # Show top 10 findings
+        for finding in findings:  # Show all findings
             severity = (
                 finding.severity.value
                 if hasattr(finding.severity, "value")
@@ -1596,20 +1591,11 @@ Focus on systemic and architectural vulnerabilities.
             table.add_row(
                 finding.rule_id,
                 severity.upper(),
-                (
-                    finding.description[:80] + "..."
-                    if len(finding.description) > 80
-                    else finding.description
-                ),
+                finding.description,
                 confidence,
             )
 
         console.print(table)
-
-        if len(findings) > 10:
-            console.print(
-                f"\n[yellow]Note:[/yellow] Showing top 10 of {len(findings)} findings. Use output file to see all results."
-            )
 
     async def _save_session_results(
         self, findings, output_file: str, output_format: str

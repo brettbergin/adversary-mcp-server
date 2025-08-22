@@ -1,6 +1,7 @@
 """Adapter for LLMScanner to implement domain IScanStrategy interface."""
 
 import asyncio
+import time
 from pathlib import Path
 from typing import Any
 
@@ -109,24 +110,51 @@ class LLMScanStrategy(IScanStrategy):
             # Return empty result if scanner not available
             return ScanResult.create_empty(request)
 
+        scan_start_time = time.time()
         try:
             context = request.context
             scan_type = context.metadata.scan_type
+
+            logger.info(
+                f"Starting LLM scan - Type: {scan_type}, Target: {context.target_path}"
+            )
 
             # Convert domain objects to infrastructure parameters
             llm_results = []
 
             # Use session-aware analysis when available and project context is provided
-            if (
-                self._scanner.is_session_aware_available()
+            session_available = (
+                self._scanner.is_session_aware_available() if self._scanner else False
+            )
+            has_project_context = self._has_project_context(context)
+
+            logger.info(
+                f"Session analysis check - Available: {session_available}, "
+                f"Scan type: {scan_type}, Has context: {has_project_context}"
+            )
+
+            use_session_analysis = (
+                session_available
                 and scan_type in ["file", "directory"]
-                and self._has_project_context(context)
-            ):
+                and has_project_context
+            )
 
-                llm_results = await self._analyze_with_session(context)
+            if use_session_analysis:
+                logger.info(f"Using session-aware analysis for {scan_type} scan")
+                try:
+                    llm_results = await self._analyze_with_session(context)
+                    logger.info(
+                        f"Session analysis completed with {len(llm_results)} results"
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Session analysis failed, falling back to legacy: {e}"
+                    )
+                    use_session_analysis = False
 
-            else:
+            if not use_session_analysis or not llm_results:
                 # Fall back to legacy analysis methods
+                logger.info(f"Using legacy analysis for {scan_type} scan")
                 if scan_type == "file":
                     # File analysis
                     file_path = str(context.target_path)
@@ -149,6 +177,10 @@ class LLMScanStrategy(IScanStrategy):
                     file_path = str(context.target_path)
                     llm_results = await self._analyze_file(file_path, context.language)
 
+                logger.info(
+                    f"Legacy analysis completed with {len(llm_results)} results"
+                )
+
             # Convert infrastructure results to domain objects
             domain_threats = self._convert_to_domain_threats(llm_results, request)
 
@@ -167,10 +199,19 @@ class LLMScanStrategy(IScanStrategy):
                 if threat.confidence.meets_threshold(confidence_threshold)
             ]
 
-            # Create domain scan result
+            # Create domain scan result with performance metrics
             analysis_type = "ai_powered"
             if self._scanner and self._scanner.is_session_aware_available():
                 analysis_type = "session_aware_ai"
+
+            scan_duration = time.time() - scan_start_time
+
+            logger.info(
+                f"LLM scan completed - Duration: {scan_duration:.2f}s, "
+                f"Total findings: {len(llm_results)}, "
+                f"High-confidence findings: {len(high_confidence_threats)}, "
+                f"Analysis type: {analysis_type}"
+            )
 
             return ScanResult.create_from_threats(
                 request=request,
@@ -186,10 +227,19 @@ class LLMScanStrategy(IScanStrategy):
                         if self._scanner
                         else False
                     ),
+                    "scan_duration_seconds": round(scan_duration, 2),
+                    "findings_per_second": round(
+                        len(llm_results) / max(scan_duration, 0.01), 2
+                    ),
                 },
             )
 
         except Exception as e:
+            # Log performance metrics even on failure
+            scan_duration = time.time() - scan_start_time
+            logger.error(
+                f"LLM scan failed after {scan_duration:.2f}s - Error: {str(e)}"
+            )
             # Convert infrastructure exceptions to domain exceptions
             raise ScanError(f"LLM scan failed: {str(e)}") from e
 
@@ -233,7 +283,7 @@ class LLMScanStrategy(IScanStrategy):
                 file_path=file_path,
                 project_root=project_root,
                 context_hint=context_hint,
-                max_findings=20,
+                max_findings=None,
             )
 
         elif scan_type == "directory":
@@ -246,7 +296,7 @@ class LLMScanStrategy(IScanStrategy):
             findings = await self._scanner.analyze_project_with_session(
                 project_root=project_root,
                 analysis_focus=analysis_focus,
-                max_findings=50,
+                max_findings=None,
             )
 
         elif scan_type == "incremental":

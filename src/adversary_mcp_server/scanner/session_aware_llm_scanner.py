@@ -350,7 +350,7 @@ Focus on vulnerabilities that require understanding of multiple files working to
         source_code: str,
         file_path: str,
         language: str,
-        max_findings: int = 20,
+        max_findings: int | None = None,
     ) -> list[LLMSecurityFinding]:
         """Legacy compatibility method - runs session analysis synchronously."""
         if not self.session_manager:
@@ -387,13 +387,13 @@ Focus on vulnerabilities that require understanding of multiple files working to
             )
             findings.append(finding)
 
-        return findings[:max_findings]
+        return findings
 
     async def analyze_file(
         self,
         file_path: Path,
         language: str,
-        max_findings: int = 20,
+        max_findings: int | None = None,
     ) -> list[LLMSecurityFinding]:
         """Legacy compatibility method for file analysis."""
         threat_matches = await self.analyze_file_with_context(file_path)
@@ -414,7 +414,7 @@ Focus on vulnerabilities that require understanding of multiple files working to
             )
             findings.append(finding)
 
-        return findings[:max_findings]
+        return findings
 
     def cleanup_expired_sessions(self) -> int:
         """Clean up expired sessions."""

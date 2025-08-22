@@ -324,7 +324,25 @@ class ScanOrchestrator:
                 "metadata": result.scan_metadata,
             }
 
-        return {
+        # Extract validation metadata from the adapter cache if available
+        validation_metadata = None
+        try:
+            from ...application.adapters.llm_validation_adapter import (
+                LLMValidationStrategy,
+            )
+
+            if hasattr(LLMValidationStrategy, "_validation_metadata_cache"):
+                scan_id = request.context.metadata.scan_id
+                validation_metadata = (
+                    LLMValidationStrategy._validation_metadata_cache.get(scan_id)
+                )
+                # Clean up the cache entry to prevent memory leaks
+                if validation_metadata:
+                    del LLMValidationStrategy._validation_metadata_cache[scan_id]
+        except ImportError:
+            pass
+
+        metadata = {
             "scan_id": request.context.metadata.scan_id,
             "orchestration_version": "domain_v1",
             "scan_duration_seconds": duration,
@@ -338,6 +356,12 @@ class ScanOrchestrator:
             "execution_timestamp": end_time.isoformat(),
             "request_configuration": request.get_configuration_summary(),
         }
+
+        # Include validation metadata if available
+        if validation_metadata:
+            metadata.update(validation_metadata)
+
+        return metadata
 
     def get_registered_strategies(self) -> dict[str, list[str]]:
         """Get information about registered strategies."""
