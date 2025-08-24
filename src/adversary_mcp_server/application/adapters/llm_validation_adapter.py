@@ -76,19 +76,14 @@ class LLMValidationStrategy(IValidationStrategy):
         3. Updates threat confidence scores based on validation results
         4. Filters out low-confidence threats
         """
-        print(
-            f"[DEBUG] LLM validation strategy called with {len(threats)} threats, validator available: {self._validator is not None}"
-        )
         logger.info(
             f"LLM validation strategy called with {len(threats)} threats, validator available: {self._validator is not None}"
         )
         if not threats or self._validator is None:
-            print(
-                f"[DEBUG] Validation skipped: threats={len(threats) if threats else 0}, validator_available={self._validator is not None}"
-            )
-            logger.info(
-                f"Validation skipped: threats={len(threats) if threats else 0}, validator_available={self._validator is not None}"
-            )
+            if self._validator is None:
+                logger.info("Validation skipped: LLM validator not available")
+            else:
+                logger.info("Validation skipped: no threats to validate")
             return threats
 
         try:

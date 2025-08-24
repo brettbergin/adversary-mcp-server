@@ -1006,6 +1006,10 @@ CRITICAL: Each finding MUST include the "file_path" field with the exact file pa
 
             logger.info(f"LLM analysis completed for {file_path}, parsing response")
 
+            # Debug: Log response content for comparison
+            logger.error(f"[NON_SESSION] Response length: {len(response.content)}")
+            logger.error(f"[NON_SESSION] Response preview: {response.content[:500]}...")
+
             # Parse response
             findings = self.parse_analysis_response(response.content, file_path)
 
@@ -2405,8 +2409,8 @@ Provide ALL security findings you discover across all files.
             List of security findings with context
         """
         if not self.session_manager:
-            logger.warning(
-                "Session manager not available, falling back to legacy file analysis"
+            logger.error(
+                "[SESSION_DEBUG] Session manager not available, falling back to legacy file analysis"
             )
             language = self._detect_language(file_path)
             return await self.analyze_file(file_path, language, max_findings)
@@ -2430,13 +2434,36 @@ Provide ALL security findings you discover across all files.
                 },
             )
 
-            # Analyze the specific file with context
+            # Analyze the specific file with context - include actual file content
             language = self._detect_language(file_path)
-            query = (
-                f"Analyze {file_path.name} ({language}) for security vulnerabilities"
-            )
-            if context_hint:
-                query += f". {context_hint}"
+
+            # Read the file content with line numbers
+            try:
+                with open(file_path, encoding="utf-8", errors="ignore") as f:
+                    file_lines = f.readlines()
+
+                # Format content with line numbers
+                numbered_content = ""
+                for i, line in enumerate(file_lines, 1):
+                    numbered_content += f"{i:4d} | {line}"
+
+                query = f"""Analyze {file_path.name} ({language}) for security vulnerabilities.
+
+## File Content with Line Numbers:
+```{language}
+{numbered_content}```
+
+Please analyze the above code for security vulnerabilities. Provide the EXACT line number where each vulnerability occurs."""
+
+                if context_hint:
+                    query += f"\n\nAdditional context: {context_hint}"
+
+            except Exception as e:
+                logger.warning(f"Failed to read file content for {file_path}: {e}")
+                # Fallback to original query without content
+                query = f"Analyze {file_path.name} ({language}) for security vulnerabilities"
+                if context_hint:
+                    query += f". {context_hint}"
 
             session_findings = await self.session_manager.analyze_with_session(
                 session_id=session.session_id,
@@ -2446,7 +2473,11 @@ Provide ALL security findings you discover across all files.
 
             # Convert session findings to LLMSecurityFinding objects
             findings = []
-            for finding in session_findings:
+            for i, finding in enumerate(session_findings):
+                logger.debug(
+                    f"[LLM_FINDING_DEBUG] Converting SecurityFinding {i+1}: rule_id='{finding.rule_id}', line_number={finding.line_number}"
+                )
+
                 llm_finding = LLMSecurityFinding(
                     finding_type=finding.rule_id,
                     severity=(
@@ -2466,6 +2497,10 @@ Provide ALL security findings you discover across all files.
                     cwe_id=getattr(finding, "cwe_id", None),
                     owasp_category=getattr(finding, "owasp_category", None),
                 )
+
+                logger.debug(
+                    f"[LLM_FINDING_DEBUG] Created LLMSecurityFinding {i+1}: finding_type='{llm_finding.finding_type}', line_number={llm_finding.line_number}"
+                )
                 findings.append(llm_finding)
 
             logger.info(
@@ -2474,7 +2509,8 @@ Provide ALL security findings you discover across all files.
             return findings
 
         except Exception as e:
-            logger.error(f"File analysis with context failed: {e}")
+            logger.error(f"[FALLBACK] File analysis with context failed: {e}")
+            logger.error(f"[FALLBACK] Falling back to legacy analysis for {file_path}")
             # Fallback to legacy analysis
             language = self._detect_language(file_path)
             return await self.analyze_file(file_path, language, max_findings)

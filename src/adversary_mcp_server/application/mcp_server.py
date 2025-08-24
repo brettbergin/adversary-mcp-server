@@ -97,6 +97,12 @@ class CleanMCPServer:
         # Register MCP tools
         self._register_tools()
 
+    def _detect_language(self, file_path: Path) -> str:
+        """Detect programming language from file extension using shared mapper."""
+        from ..scanner.language_mapping import LanguageMapper
+
+        return LanguageMapper.detect_language_from_extension(file_path)
+
     def _register_tools(self):
         """Register all MCP tools with their Clean Architecture implementations."""
 
@@ -822,10 +828,37 @@ class CleanMCPServer:
                 },
             )
 
-            # Analyze the specific file
-            query = f"Analyze {file_path.name} for security vulnerabilities"
-            if context_hint:
-                query += f". {context_hint}"
+            # Analyze the specific file with actual content (same enhancement as CLI path)
+            language = self._detect_language(file_path)
+
+            try:
+                with open(file_path, encoding="utf-8", errors="ignore") as f:
+                    file_lines = f.readlines()
+
+                # Format content with line numbers (same as CLI fix)
+                numbered_content = ""
+                for i, line in enumerate(file_lines, 1):
+                    numbered_content += f"{i:4d} | {line}"
+
+                query = f"""Analyze {file_path.name} ({language}) for security vulnerabilities.
+
+## File Content with Line Numbers:
+```{language}
+{numbered_content}```
+
+Please analyze the above code for security vulnerabilities. Provide the EXACT line number where each vulnerability occurs."""
+
+                if context_hint:
+                    query += f"\n\nAdditional context: {context_hint}"
+
+            except Exception as e:
+                logger.warning(
+                    f"Failed to read file content for MCP scan {file_path}: {e}"
+                )
+                # Fallback to original query without content
+                query = f"Analyze {file_path.name} for security vulnerabilities"
+                if context_hint:
+                    query += f". {context_hint}"
 
             findings = await self._session_manager.analyze_with_session(
                 session_id=session.session_id,

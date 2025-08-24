@@ -248,8 +248,18 @@ class LLMSessionManager:
                 "assistant", response.content, {"type": "analysis_response"}
             )
 
+            # Debug: Log response content for comparison
+            logger.error(f"[SESSION] Response length: {len(response.content)}")
+            logger.error(f"[SESSION] Response preview: {response.content[:500]}...")
+
             # Parse findings from response
+            logger.error(
+                f"[SESSION_DEBUG] About to parse findings from response content (length: {len(response.content)})"
+            )
             findings = self._parse_findings_from_response(response.content, session)
+            logger.error(
+                f"[SESSION_DEBUG] Parsed {len(findings)} findings from response"
+            )
 
             # Add findings to session
             for finding in findings:
@@ -898,7 +908,10 @@ This analysis will be used as a reference point for detecting new vulnerabilitie
         parts.append(
             "\\nPlease provide findings in JSON format with: "
             "rule_id, title, description, severity, file_path, line_number, "
-            "code_snippet, confidence, cross_file_references, architectural_context, remediation_advice"
+            "code_snippet, confidence, cross_file_references, architectural_context, remediation_advice\\n\\n"
+            "CRITICAL: For line_number, provide the EXACT line number where the vulnerability occurs in the code. "
+            "Carefully analyze the code_snippet and match it to the precise line in the file. "
+            "Do not use estimated or sequential numbers - each finding must have its actual line number from the source code."
         )
 
         return "\\n".join(parts)
@@ -978,56 +991,188 @@ This analysis will be used as a reference point for detecting new vulnerabilitie
         response_content: str,
         session: AnalysisSession,
     ) -> list[SecurityFinding]:
-        """Parse security findings from LLM response."""
+        """Parse security findings from LLM response with enhanced nested structure support."""
         findings = []
+        print(
+            f"******* SESSION_PARSER CALLED - PARSING {len(response_content)} chars *******"
+        )
+        logger.info(
+            f"[SESSION_PARSER] Parsing findings from response (length: {len(response_content)})"
+        )
 
         try:
             # Try to extract JSON from response
             json_content = self._extract_json_from_response(response_content)
 
             if json_content:
-                # Parse structured findings
-                findings_data = json_content.get("findings", [])
-                if not isinstance(findings_data, list):
-                    findings_data = [findings_data]
+                logger.debug(
+                    f"Successfully extracted JSON with keys: {list(json_content.keys())}"
+                )
 
-                for finding_data in findings_data:
-                    finding = self._create_finding_from_data(finding_data, session)
-                    if finding:
-                        findings.append(finding)
+                # Try multiple paths to find findings in the JSON structure
+                findings_data = self._extract_findings_from_json(json_content)
+
+                # Handle case similar to LLM scanner - if we have one finding with nested JSON in description
+                if not findings_data and "findings" in json_content:
+                    raw_findings = json_content.get("findings", [])
+                    if raw_findings and len(raw_findings) == 1:
+                        single_finding = raw_findings[0]
+                        if "description" in single_finding and isinstance(
+                            single_finding["description"], str
+                        ):
+                            # Check if description contains JSON with vulnerabilities
+                            desc = single_finding["description"].strip()
+                            if desc.startswith("```json") or desc.startswith("{"):
+                                try:
+                                    # Extract and parse nested JSON
+                                    clean_desc = desc
+                                    if "```json" in clean_desc:
+                                        start = clean_desc.find("```json") + 7
+                                        end = clean_desc.find("```", start)
+                                        if end > start:
+                                            clean_desc = clean_desc[start:end].strip()
+
+                                    nested_data = json.loads(clean_desc)
+                                    if (
+                                        "security_analysis" in nested_data
+                                        and "findings"
+                                        in nested_data["security_analysis"]
+                                    ):
+                                        nested_findings = nested_data[
+                                            "security_analysis"
+                                        ]["findings"]
+                                        logger.info(
+                                            f"[SESSION_PARSER] Found nested security_analysis with {len(nested_findings)} findings"
+                                        )
+
+                                        # Convert to expected format
+                                        findings_data = []
+                                        for vuln in nested_findings:
+                                            finding_dict = {
+                                                "rule_id": vuln.get(
+                                                    "rule_id", "llm_finding"
+                                                ),
+                                                "title": vuln.get(
+                                                    "title",
+                                                    vuln.get(
+                                                        "rule_id", "Security Issue"
+                                                    ),
+                                                ),
+                                                "description": vuln.get(
+                                                    "description", ""
+                                                ),
+                                                "severity": vuln.get(
+                                                    "severity", "medium"
+                                                ).lower(),
+                                                "line_number": self._extract_line_number(
+                                                    vuln.get("line_number", "1")
+                                                ),
+                                                "code_snippet": vuln.get(
+                                                    "code_snippet", ""
+                                                ),
+                                                "confidence": vuln.get(
+                                                    "confidence", "HIGH"
+                                                ),
+                                                "file_path": vuln.get("file_path", ""),
+                                                "remediation_advice": vuln.get(
+                                                    "remediation_advice", ""
+                                                ),
+                                                "architectural_context": vuln.get(
+                                                    "architectural_context", ""
+                                                ),
+                                            }
+                                            findings_data.append(finding_dict)
+                                except Exception as e:
+                                    logger.warning(
+                                        f"[SESSION_PARSER] Failed to parse nested JSON in description: {e}"
+                                    )
+
+                if findings_data:
+                    logger.info(
+                        f"Found {len(findings_data)} potential findings in JSON structure"
+                    )
+
+                    for i, finding_data in enumerate(findings_data):
+                        try:
+                            finding = self._create_finding_from_data(
+                                finding_data, session
+                            )
+                            if finding:
+                                findings.append(finding)
+                                logger.debug(
+                                    f"Successfully created finding {i+1}: {finding.rule_name}"
+                                )
+                            else:
+                                logger.warning(
+                                    f"Failed to create finding from data {i+1}"
+                                )
+                        except Exception as e:
+                            logger.warning(f"Error creating finding {i+1}: {e}")
+                            continue
+                else:
+                    logger.debug("No findings found in structured JSON paths")
 
             # If no structured findings, try to parse natural language response
             if not findings:
+                logger.debug("No JSON findings found, trying natural language parsing")
                 findings = self._parse_natural_language_findings(
                     response_content, session
                 )
 
+            if not findings:
+                logger.debug(
+                    "No structured or natural language findings found, creating generic finding"
+                )
+
         except Exception as e:
-            logger.warning(f"Failed to parse findings from response: {e}")
+            logger.error(
+                f"[SESSION_PARSER] FAILED to parse findings from response: {e}"
+            )
+            logger.error(
+                f"[SESSION_PARSER] Response preview (first 500 chars): {response_content[:500]}"
+            )
             # Create a generic finding from the response
             findings = [self._create_generic_finding(response_content, session)]
 
+        logger.info(f"Successfully parsed {len(findings)} findings from response")
         return findings
 
     def _extract_json_from_response(self, content: str) -> dict[str, Any] | None:
-        """Extract JSON content from LLM response."""
+        """Extract JSON content from LLM response with enhanced parsing."""
+        logger.error(
+            f"[SESSION_PARSER] FORCED DEBUG - Attempting to extract JSON from response (length: {len(content)})"
+        )
+        logger.error(f"[SESSION_PARSER] Content preview: {content[:200]}...")
+
         try:
-            # Try to find JSON in markdown code blocks
+            # Method 1: Try to find JSON in markdown code blocks
             if "```json" in content:
                 start = content.find("```json") + 7
                 end = content.find("```", start)
                 if end > start:
                     json_str = content[start:end].strip()
+                    logger.debug("Found JSON in markdown code block")
+                    # Sanitize the JSON before parsing
+                    json_str = self._sanitize_json_string(json_str)
                     return json.loads(json_str)
 
-            # Try to find JSON without code blocks
+            # Method 2: Try to find JSON without code blocks (full content is JSON)
             if content.strip().startswith("{") and content.strip().endswith("}"):
-                return json.loads(content.strip())
+                logger.debug("Content appears to be pure JSON")
+                sanitized = self._sanitize_json_string(content.strip())
+                return json.loads(sanitized)
 
-            # Try to find JSON anywhere in the response
-            start_idx = content.find("{")
-            if start_idx >= 0:
-                # Find matching closing brace
+            # Method 3: Try to find the largest valid JSON object in the response
+            json_candidates = []
+            start_positions = []
+
+            # Find all potential JSON starting positions
+            for i, char in enumerate(content):
+                if char == "{":
+                    start_positions.append(i)
+
+            # Try each starting position to find valid JSON
+            for start_idx in start_positions:
                 brace_count = 0
                 for i, char in enumerate(content[start_idx:], start_idx):
                     if char == "{":
@@ -1036,12 +1181,180 @@ This analysis will be used as a reference point for detecting new vulnerabilitie
                         brace_count -= 1
                         if brace_count == 0:
                             json_str = content[start_idx : i + 1]
-                            return json.loads(json_str)
+                            try:
+                                sanitized = self._sanitize_json_string(json_str)
+                                parsed_json = json.loads(sanitized)
+                                json_candidates.append((len(json_str), parsed_json))
+                                logger.debug(
+                                    f"Found valid JSON candidate of length {len(json_str)}"
+                                )
+                            except json.JSONDecodeError:
+                                continue
+                            break
+
+            # Return the largest valid JSON object found
+            if json_candidates:
+                json_candidates.sort(key=lambda x: x[0], reverse=True)
+                largest_json = json_candidates[0][1]
+                logger.debug(
+                    f"Selected largest JSON with keys: {list(largest_json.keys())}"
+                )
+                return largest_json
 
         except (json.JSONDecodeError, ValueError) as e:
-            logger.debug(f"No valid JSON found in response: {e}")
+            logger.debug(f"JSON extraction failed: {e}")
 
+        logger.debug("No valid JSON found in response")
         return None
+
+    def _extract_findings_from_json(
+        self, json_content: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        """Extract findings from JSON content supporting multiple nested structures."""
+        findings_data = []
+
+        # Common finding paths to try
+        finding_paths = [
+            ["findings"],  # Direct findings array
+            ["security_analysis", "findings"],  # security_analysis.findings
+            ["vulnerabilities"],  # vulnerabilities array
+            ["analysis", "findings"],  # analysis.findings
+            ["results", "findings"],  # results.findings
+            ["scan_results", "findings"],  # scan_results.findings
+        ]
+
+        # Try each path to find findings
+        for path in finding_paths:
+            current = json_content
+            try:
+                # Navigate through the path
+                for key in path:
+                    if isinstance(current, dict) and key in current:
+                        current = current[key]
+                    else:
+                        current = None
+                        break
+
+                if current is not None:
+                    if isinstance(current, list):
+                        logger.debug(
+                            f"Found findings array at path {'.'.join(path)} with {len(current)} items"
+                        )
+                        findings_data.extend(current)
+                        # Don't break - we might find more findings in other paths
+                    elif isinstance(current, dict):
+                        logger.debug(f"Found findings object at path {'.'.join(path)}")
+                        findings_data.append(current)
+            except Exception as e:
+                logger.debug(f"Error checking path {'.'.join(path)}: {e}")
+                continue
+
+        # Special handling for the format found in adversary-10.json
+        # Check if we have security_analysis with nested vulnerabilities
+        if "security_analysis" in json_content:
+            security_analysis = json_content["security_analysis"]
+            if isinstance(security_analysis, dict):
+                # Check for nested findings under security_analysis
+                for nested_key in ["findings", "vulnerabilities", "issues"]:
+                    if nested_key in security_analysis:
+                        nested_findings = security_analysis[nested_key]
+                        if isinstance(nested_findings, list):
+                            logger.debug(
+                                f"Found {len(nested_findings)} findings in security_analysis.{nested_key}"
+                            )
+                            # Convert the structure to match our expected format
+                            for finding in nested_findings:
+                                if isinstance(finding, dict):
+                                    # Map the fields to match our expected structure
+                                    converted_finding = {
+                                        "rule_id": finding.get(
+                                            "rule_id", "llm_finding"
+                                        ),
+                                        "title": finding.get(
+                                            "title",
+                                            finding.get("rule_id", "Security Issue"),
+                                        ),
+                                        "description": finding.get("description", ""),
+                                        "severity": finding.get(
+                                            "severity", "medium"
+                                        ).lower(),
+                                        "line_number": self._extract_line_number(
+                                            finding.get("line_number", "1")
+                                        ),
+                                        "code_snippet": finding.get("code_snippet", ""),
+                                        "confidence": finding.get("confidence", "HIGH"),
+                                        "file_path": finding.get("file_path", ""),
+                                        "remediation_advice": finding.get(
+                                            "remediation_advice", ""
+                                        ),
+                                        "architectural_context": finding.get(
+                                            "architectural_context", ""
+                                        ),
+                                    }
+                                    findings_data.append(converted_finding)
+
+        logger.debug(f"Total findings extracted: {len(findings_data)}")
+        return findings_data
+
+    def _extract_line_number(self, line_number_str: str | int) -> int:
+        """Extract line number from various formats (e.g., 'estimated_10-15' -> 10)."""
+        logger.debug(
+            f"[LINE_NUMBER_DEBUG] Extracting line number from: {line_number_str} (type: {type(line_number_str)})"
+        )
+
+        if isinstance(line_number_str, int):
+            result = max(1, line_number_str)
+            logger.debug(f"[LINE_NUMBER_DEBUG] Integer input -> {result}")
+            return result
+
+        if isinstance(line_number_str, str):
+            # Handle formats like "estimated_10-15"
+            if "estimated_" in line_number_str:
+                numbers = line_number_str.replace("estimated_", "").split("-")
+                try:
+                    result = max(1, int(numbers[0]))
+                    logger.debug(
+                        f"[LINE_NUMBER_DEBUG] Estimated format '{line_number_str}' -> {result}"
+                    )
+                    return result
+                except (ValueError, IndexError):
+                    logger.debug(
+                        f"[LINE_NUMBER_DEBUG] Failed to parse estimated format '{line_number_str}' -> defaulting to 1"
+                    )
+                    return 1
+
+            # Handle direct number strings
+            try:
+                result = max(1, int(line_number_str))
+                logger.debug(
+                    f"[LINE_NUMBER_DEBUG] Direct string '{line_number_str}' -> {result}"
+                )
+                return result
+            except ValueError:
+                logger.debug(
+                    f"[LINE_NUMBER_DEBUG] Failed to parse string '{line_number_str}' -> defaulting to 1"
+                )
+                return 1
+
+        logger.debug(
+            f"[LINE_NUMBER_DEBUG] Unknown format '{line_number_str}' -> defaulting to 1"
+        )
+        return 1
+
+    def _sanitize_json_string(self, json_str: str) -> str:
+        """Sanitize JSON string to fix common escape sequence issues."""
+        import re
+
+        def fix_string_escapes(match):
+            string_content = match.group(1)
+            # Fix common escape issues in string values
+            string_content = string_content.replace('\\"', '"')  # Fix escaped quotes
+            string_content = string_content.replace('"', '\\"')  # Re-escape quotes
+            return f'"{string_content}"'
+
+        # Apply the fix to all string values in the JSON
+        sanitized = re.sub(r'"([^"\\]*(\\.[^"\\]*)*)"', fix_string_escapes, json_str)
+        return sanitized
 
     def _create_finding_from_data(
         self,
@@ -1062,15 +1375,43 @@ This analysis will be used as a reference point for detecting new vulnerabilitie
             }
             severity = severity_map.get(severity_str, Severity.MEDIUM)
 
+            # Map confidence string to float
+            confidence_value = finding_data.get("confidence", 0.8)
+            if isinstance(confidence_value, str):
+                confidence_str = confidence_value.lower()
+                confidence_map = {
+                    "very_low": 0.1,
+                    "low": 0.3,
+                    "medium": 0.5,
+                    "high": 0.8,
+                    "very_high": 0.95,
+                }
+                confidence = confidence_map.get(confidence_str, 0.8)
+            else:
+                confidence = float(confidence_value)
+
+            # Extract and log line number processing
+            raw_line_number = finding_data.get("line_number", 1)
+            processed_line_number = (
+                int(raw_line_number)
+                if isinstance(raw_line_number, int)
+                else self._extract_line_number(raw_line_number)
+            )
+
+            rule_id = str(finding_data.get("rule_id", "llm_session_finding"))
+            logger.debug(
+                f"[SECURITY_FINDING_DEBUG] Creating SecurityFinding: rule_id='{rule_id}', raw_line_number='{raw_line_number}', processed_line_number={processed_line_number}"
+            )
+
             finding = SecurityFinding(
-                rule_id=str(finding_data.get("rule_id", "llm_session_finding")),
+                rule_id=rule_id,
                 rule_name=str(finding_data.get("title", "AI-Detected Security Issue")),
                 description=str(finding_data.get("description", "")),
                 severity=severity,
                 file_path=str(finding_data.get("file_path", "")),
-                line_number=int(finding_data.get("line_number", 1)),
+                line_number=processed_line_number,
                 code_snippet=str(finding_data.get("code_snippet", "")),
-                confidence=float(finding_data.get("confidence", 0.8)),
+                confidence=confidence,
                 cross_file_references=finding_data.get("cross_file_references", []),
                 architectural_context=str(
                     finding_data.get("architectural_context", "")
@@ -1147,6 +1488,10 @@ This analysis will be used as a reference point for detecting new vulnerabilitie
         self, content: str, session: AnalysisSession
     ) -> SecurityFinding:
         """Create a generic finding from response content."""
+        logger.error(
+            "[SESSION_PARSER] Creating GENERIC finding - this means parsing failed!"
+        )
+        logger.error(f"[SESSION_PARSER] Content length: {len(content)}")
         return SecurityFinding(
             rule_id="llm_session_generic",
             rule_name="LLM Analysis Result",

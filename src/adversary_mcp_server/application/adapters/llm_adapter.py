@@ -106,6 +106,7 @@ class LLMScanStrategy(IScanStrategy):
         2. Executes LLM analysis
         3. Converts LLM results to domain objects
         """
+        print("******* LLM ADAPTER execute_scan called *******")
         if self._scanner is None:
             # Return empty result if scanner not available
             return ScanResult.create_empty(request)
@@ -128,8 +129,8 @@ class LLMScanStrategy(IScanStrategy):
             )
             has_project_context = self._has_project_context(context)
 
-            logger.info(
-                f"Session analysis check - Available: {session_available}, "
+            logger.error(
+                f"[DEBUG] Session analysis check - Available: {session_available}, "
                 f"Scan type: {scan_type}, Has context: {has_project_context}"
             )
 
@@ -140,11 +141,13 @@ class LLMScanStrategy(IScanStrategy):
             )
 
             if use_session_analysis:
-                logger.info(f"Using session-aware analysis for {scan_type} scan")
+                logger.error(
+                    f"[DEBUG] Using session-aware analysis for {scan_type} scan"
+                )
                 try:
                     llm_results = await self._analyze_with_session(context)
-                    logger.info(
-                        f"Session analysis completed with {len(llm_results)} results"
+                    logger.error(
+                        f"[DEBUG] Session analysis completed with {len(llm_results)} results"
                     )
                 except Exception as e:
                     logger.error(
@@ -502,8 +505,12 @@ class LLMScanStrategy(IScanStrategy):
         # Convert file path
         file_path = FilePath.from_string(str(input_threat.file_path))
 
+        logger.debug(
+            f"[THREAT_MATCH_DEBUG] Creating ThreatMatch: rule_id='{input_threat.rule_id}', line_number={input_threat.line_number}"
+        )
+
         # Create domain threat with type-safe access
-        return ThreatMatch(
+        threat_match = ThreatMatch(
             rule_id=input_threat.rule_id,
             rule_name=input_threat.rule_name,
             description=input_threat.description,
@@ -523,6 +530,11 @@ class LLMScanStrategy(IScanStrategy):
             source_scanner="llm",
             is_false_positive=input_threat.is_false_positive,
         )
+
+        logger.debug(
+            f"[THREAT_MATCH_DEBUG] Created ThreatMatch with fingerprint: {threat_match.get_fingerprint()}"
+        )
+        return threat_match
 
     def _map_severity(self, llm_severity: str) -> SeverityLevel:
         """Map LLM severity to domain SeverityLevel."""

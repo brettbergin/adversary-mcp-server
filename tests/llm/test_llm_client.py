@@ -14,6 +14,7 @@ from adversary_mcp_server.llm import (
 from adversary_mcp_server.llm.llm_client import (
     LLMAPIError,
     LLMClientError,
+    LLMQuotaError,
     LLMRateLimitError,
     LLMResponse,
 )
@@ -281,7 +282,7 @@ class TestRetryLogic:
 
             with patch("asyncio.sleep") as mock_sleep:
                 result = await client.complete_with_retry(
-                    "System", "User", retry_delay=0.1
+                    "System", "User", retry_delay=0.1, use_jitter=False
                 )
 
                 assert result == mock_response
@@ -298,7 +299,11 @@ class TestRetryLogic:
             with patch("asyncio.sleep"):
                 with pytest.raises(LLMRateLimitError):
                     await client.complete_with_retry(
-                        "System", "User", max_retries=2, retry_delay=0.1
+                        "System",
+                        "User",
+                        max_retries=2,
+                        retry_delay=0.1,
+                        use_jitter=False,
                     )
 
                 assert mock_complete.call_count == 2
@@ -439,7 +444,9 @@ class TestLLMClientEdgeCases:
 
             with patch("asyncio.sleep") as mock_sleep:
                 with pytest.raises(LLMAPIError):
-                    await client.complete_with_retry("System", "User", max_retries=3)
+                    await client.complete_with_retry(
+                        "System", "User", max_retries=3, use_jitter=False
+                    )
 
                 # Should retry for API errors
                 assert mock_complete.call_count == 3
@@ -460,7 +467,7 @@ class TestLLMClientEdgeCases:
 
             with patch("asyncio.sleep") as mock_sleep:
                 result = await client.complete_with_retry(
-                    "System", "User", retry_delay=0.0
+                    "System", "User", retry_delay=0.0, use_jitter=False
                 )
 
                 assert result == mock_response
@@ -598,7 +605,7 @@ class TestStreamingRetryLogic:
 
             with patch("asyncio.sleep") as mock_sleep:
                 result = await client.complete_streaming_with_retry(
-                    "System", "User", retry_delay=0.1
+                    "System", "User", retry_delay=0.1, use_jitter=False
                 )
 
                 assert result == mock_response
@@ -615,7 +622,7 @@ class TestStreamingRetryLogic:
             with patch("asyncio.sleep") as mock_sleep:
                 with pytest.raises(LLMAPIError):
                     await client.complete_streaming_with_retry(
-                        "System", "User", max_retries=3
+                        "System", "User", max_retries=3, use_jitter=False
                     )
 
                 # Should retry for API errors
@@ -646,7 +653,11 @@ class TestStreamingRetryLogic:
             with patch("asyncio.sleep"):
                 with pytest.raises(LLMRateLimitError):
                     await client.complete_streaming_with_retry(
-                        "System", "User", max_retries=2, retry_delay=0.1
+                        "System",
+                        "User",
+                        max_retries=2,
+                        retry_delay=0.1,
+                        use_jitter=False,
                     )
 
                 assert mock_streaming.call_count == 2
@@ -666,7 +677,7 @@ class TestStreamingRetryLogic:
             with patch("asyncio.sleep"):
                 with patch("adversary_mcp_server.llm.llm_client.logger") as mock_logger:
                     result = await client.complete_streaming_with_retry(
-                        "System", "User", retry_delay=0.1
+                        "System", "User", retry_delay=0.1, use_jitter=False
                     )
 
                     assert result == mock_response
@@ -695,3 +706,228 @@ class TestLLMClientErrorHandling:
 
             # Should not retry for client errors
             assert mock_complete.call_count == 1
+
+
+class TestQuotaErrorHandling:
+    """Test quota error handling and non-retriable behavior."""
+
+    @pytest.mark.asyncio
+    async def test_openai_quota_error_detection_insufficient_quota(self):
+        """Test OpenAI quota error detection for insufficient_quota."""
+        mock_openai = MagicMock()
+        mock_client = AsyncMock()
+        mock_openai.AsyncOpenAI.return_value = mock_client
+
+        # Create proper exception classes that inherit from Exception
+        class MockRateLimitError(Exception):
+            def __str__(self):
+                return "Error code: 429 - {'error': {'type': 'insufficient_quota', 'code': 'insufficient_quota'}}"
+
+        mock_openai.RateLimitError = MockRateLimitError
+        mock_openai.APIError = Exception  # Add this to prevent other issues
+        mock_client.chat.completions.create.side_effect = MockRateLimitError()
+
+        with patch.dict("sys.modules", {"openai": mock_openai}):
+            client = OpenAIClient("test-key")
+            with pytest.raises(
+                LLMQuotaError, match="OpenAI quota exceeded - check billing"
+            ):
+                await client.complete("System", "User")
+
+    @pytest.mark.asyncio
+    async def test_openai_quota_error_detection_quota_in_lowercase(self):
+        """Test OpenAI quota error detection for 'quota' in lowercase."""
+        mock_openai = MagicMock()
+        mock_client = AsyncMock()
+        mock_openai.AsyncOpenAI.return_value = mock_client
+
+        class MockRateLimitError(Exception):
+            def __str__(self):
+                return "Error code: 429 - quota limit exceeded"
+
+        mock_openai.RateLimitError = MockRateLimitError
+        mock_openai.APIError = Exception
+        mock_client.chat.completions.create.side_effect = MockRateLimitError()
+
+        with patch.dict("sys.modules", {"openai": mock_openai}):
+            client = OpenAIClient("test-key")
+            with pytest.raises(
+                LLMQuotaError, match="OpenAI quota exceeded - check billing"
+            ):
+                await client.complete("System", "User")
+
+    @pytest.mark.asyncio
+    async def test_openai_true_rate_limit_error_still_works(self):
+        """Test OpenAI true rate limit errors (without quota) still raise LLMRateLimitError."""
+        mock_openai = MagicMock()
+        mock_client = AsyncMock()
+        mock_openai.AsyncOpenAI.return_value = mock_client
+
+        class MockRateLimitError(Exception):
+            def __str__(self):
+                return "Error code: 429 - Too many requests, please try again later"
+
+        mock_openai.RateLimitError = MockRateLimitError
+        mock_openai.APIError = Exception
+        mock_client.chat.completions.create.side_effect = MockRateLimitError()
+
+        with patch.dict("sys.modules", {"openai": mock_openai}):
+            client = OpenAIClient("test-key")
+            with pytest.raises(LLMRateLimitError, match="OpenAI rate limit exceeded"):
+                await client.complete("System", "User")
+
+    @pytest.mark.asyncio
+    async def test_openai_streaming_quota_error_detection(self):
+        """Test OpenAI streaming quota error detection."""
+        mock_openai = MagicMock()
+        mock_client = AsyncMock()
+        mock_openai.AsyncOpenAI.return_value = mock_client
+
+        class MockRateLimitError(Exception):
+            def __str__(self):
+                return "Error code: 429 - {'error': {'type': 'insufficient_quota'}}"
+
+        mock_openai.RateLimitError = MockRateLimitError
+        mock_openai.APIError = Exception
+        mock_client.chat.completions.create.side_effect = MockRateLimitError()
+
+        with patch.dict("sys.modules", {"openai": mock_openai}):
+            client = OpenAIClient("test-key")
+            with pytest.raises(
+                LLMQuotaError, match="OpenAI quota exceeded - check billing"
+            ):
+                await client.complete_streaming("System", "User")
+
+    @pytest.mark.asyncio
+    async def test_quota_error_no_retry_in_complete_with_retry(self):
+        """Test quota errors are not retried in complete_with_retry."""
+        client = OpenAIClient("test-key")
+        with patch.object(client, "complete") as mock_complete:
+            mock_complete.side_effect = LLMQuotaError("Quota exceeded")
+
+            with pytest.raises(LLMQuotaError, match="Quota exceeded"):
+                await client.complete_with_retry("System", "User", max_retries=3)
+
+            # Should fail immediately, no retries
+            assert mock_complete.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_quota_error_no_retry_in_streaming_with_retry(self):
+        """Test quota errors are not retried in complete_streaming_with_retry."""
+        client = OpenAIClient("test-key")
+        with patch.object(client, "complete_streaming") as mock_streaming:
+            mock_streaming.side_effect = LLMQuotaError("Quota exceeded")
+
+            with pytest.raises(LLMQuotaError, match="Quota exceeded"):
+                await client.complete_streaming_with_retry(
+                    "System", "User", max_retries=3
+                )
+
+            # Should fail immediately, no retries
+            assert mock_streaming.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_retry_with_jitter_and_max_delay(self):
+        """Test retry logic with jitter and maximum delay cap."""
+        mock_response = LLMResponse("content", "model", {"total_tokens": 30})
+
+        client = OpenAIClient("test-key")
+        with patch.object(client, "complete") as mock_complete:
+            mock_complete.side_effect = [
+                LLMRateLimitError("Rate limited"),
+                LLMRateLimitError("Rate limited"),
+                mock_response,
+            ]
+
+            with patch("asyncio.sleep") as mock_sleep:
+                with patch(
+                    "random.random", return_value=0.5
+                ) as mock_random:  # Fixed jitter for testing
+                    result = await client.complete_with_retry(
+                        "System",
+                        "User",
+                        max_retries=3,
+                        retry_delay=2.0,
+                        max_delay=3.0,  # Cap delay at 3 seconds
+                        use_jitter=True,
+                    )
+
+                    assert result == mock_response
+                    assert mock_complete.call_count == 3
+
+                    # Check delay calculations with jitter and max_delay cap
+                    # First retry: min(2.0 * 2^0, 3.0) * (0.5 + 0.5 * 0.5) = min(2.0, 3.0) * 0.75 = 1.5
+                    # Second retry: min(2.0 * 2^1, 3.0) * (0.5 + 0.5 * 0.5) = min(4.0, 3.0) * 0.75 = 2.25
+                    expected_calls = [pytest.approx(1.5), pytest.approx(2.25)]
+                    actual_calls = [call[0][0] for call in mock_sleep.call_args_list]
+                    assert actual_calls == expected_calls
+
+    @pytest.mark.asyncio
+    async def test_retry_without_jitter(self):
+        """Test retry logic without jitter."""
+        mock_response = LLMResponse("content", "model", {"total_tokens": 30})
+
+        client = OpenAIClient("test-key")
+        with patch.object(client, "complete") as mock_complete:
+            mock_complete.side_effect = [
+                LLMRateLimitError("Rate limited"),
+                LLMRateLimitError("Rate limited"),
+                mock_response,
+            ]
+
+            with patch("asyncio.sleep") as mock_sleep:
+                result = await client.complete_with_retry(
+                    "System",
+                    "User",
+                    max_retries=3,
+                    retry_delay=1.0,
+                    use_jitter=False,  # Disable jitter
+                )
+
+                assert result == mock_response
+                assert mock_complete.call_count == 3
+
+                # Check exact exponential backoff without jitter
+                # First retry: 1.0 * 2^0 = 1.0
+                # Second retry: 1.0 * 2^1 = 2.0
+                expected_calls = [1.0, 2.0]
+                actual_calls = [call[0][0] for call in mock_sleep.call_args_list]
+                assert actual_calls == expected_calls
+
+    def test_llm_quota_error_exception(self):
+        """Test LLMQuotaError exception class."""
+        error = LLMQuotaError("Quota exceeded")
+        assert str(error) == "Quota exceeded"
+        assert isinstance(error, LLMClientError)
+
+    @pytest.mark.asyncio
+    async def test_mixed_error_handling_quota_then_rate_limit(self):
+        """Test handling mixed error types - quota errors should not retry, rate limits should."""
+        client = OpenAIClient("test-key")
+
+        # Test quota error first (should fail immediately)
+        with patch.object(client, "complete") as mock_complete:
+            mock_complete.side_effect = LLMQuotaError("Quota exceeded")
+
+            with pytest.raises(LLMQuotaError):
+                await client.complete_with_retry("System", "User", max_retries=3)
+
+            assert mock_complete.call_count == 1
+
+        # Reset mock for second test
+        mock_complete.reset_mock()
+
+        # Test rate limit error (should retry)
+        mock_response = LLMResponse("content", "model", {"total_tokens": 30})
+        with patch.object(client, "complete") as mock_complete:
+            mock_complete.side_effect = [
+                LLMRateLimitError("Rate limited"),
+                mock_response,
+            ]
+
+            with patch("asyncio.sleep"):
+                result = await client.complete_with_retry(
+                    "System", "User", max_retries=3, use_jitter=False
+                )
+                assert result == mock_response
+                assert mock_complete.call_count == 2
