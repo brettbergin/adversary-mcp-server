@@ -144,7 +144,7 @@ class InteractiveModelSelector:
                 "Latest models",
                 "Budget models",
                 "Specialized models",
-                "📚 Legacy models",
+                "Legacy models",
             ],
         ).ask()
 
@@ -155,7 +155,7 @@ class InteractiveModelSelector:
             category_filter = ModelCategory.BUDGET
         elif category_choice == "Specialized models":
             category_filter = ModelCategory.SPECIALIZED
-        elif category_choice == "📚 Legacy models":
+        elif category_choice == "Legacy models":
             category_filter = ModelCategory.LEGACY
 
         # Cost filter

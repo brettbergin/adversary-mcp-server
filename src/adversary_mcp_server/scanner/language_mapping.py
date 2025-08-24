@@ -326,28 +326,6 @@ VENV_INDICATORS: list[str] = [
     "pyvenv.cfg",
 ]
 
-# Common project root indicators used across scanners
-PROJECT_ROOT_INDICATORS: list[str] = [
-    ".git",
-    ".hg",
-    ".svn",
-    ".bzr",
-    "package.json",
-    "pyproject.toml",
-    "requirements.txt",
-    "Cargo.toml",
-    "pom.xml",
-    "build.gradle",
-    "composer.json",
-    "go.mod",
-    ".project",
-    "Makefile",
-    "CMakeLists.txt",
-    "mix.exs",
-    "pubspec.yaml",
-    "Package.swift",
-]
-
 
 class LanguageMapper:
     """Utility class for consistent language mapping across all scanners."""
@@ -657,31 +635,6 @@ class LanguageMapper:
             Sorted list of supported file extensions
         """
         return sorted(cls.EXTENSION_TO_LANGUAGE.keys())
-
-    @classmethod
-    def find_project_root(cls, file_path: Path) -> Path:
-        """Find project root by looking for common project indicators.
-
-        This method provides centralized project root detection logic
-        used across all scanners to ensure consistency.
-
-        Args:
-            file_path: File or directory path to start search from
-
-        Returns:
-            Path to project root, or file's parent if no indicators found
-        """
-        current = file_path.parent if file_path.is_file() else file_path
-
-        while current.parent != current:
-            if any(
-                (current / indicator).exists() for indicator in PROJECT_ROOT_INDICATORS
-            ):
-                return current
-            current = current.parent
-
-        # If no project root found, use the file's parent directory
-        return file_path.parent if file_path.is_file() else file_path
 
     @classmethod
     def is_virtual_environment_path(cls, file_path: Path) -> bool:

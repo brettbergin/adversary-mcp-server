@@ -286,25 +286,25 @@ class LLMScanStrategy(IScanStrategy):
         if scan_type == "file":
             # Use session-aware file analysis
             file_path = Path(context.target_path)
-            project_root = self._find_project_root(file_path)
+            scan_scope = file_path.parent
             context_hint = getattr(context.metadata, "analysis_focus", None)
 
             findings = await self._scanner.analyze_file_with_context(
                 file_path=file_path,
-                project_root=project_root,
+                project_root=scan_scope,
                 context_hint=context_hint,
                 max_findings=None,
             )
 
         elif scan_type == "directory":
-            # Use session-aware project analysis
-            project_root = Path(context.target_path)
+            # Use session-aware directory analysis
+            scan_scope = Path(context.target_path)
             analysis_focus = getattr(
                 context.metadata, "analysis_focus", "comprehensive security analysis"
             )
 
             findings = await self._scanner.analyze_project_with_session(
-                project_root=project_root,
+                scan_scope=scan_scope,
                 analysis_focus=analysis_focus,
                 max_findings=None,
             )
@@ -353,37 +353,8 @@ class LLMScanStrategy(IScanStrategy):
         if not target_path.exists():
             return False
 
-        # For files, check if we can find a project root
-        if context.metadata.scan_type == "file":
-            project_root = self._find_project_root(target_path)
-            return project_root != target_path.parent  # Found actual project indicators
-
-        # For directories, assume they are project roots
-        elif context.metadata.scan_type == "directory":
-            return True
-
-        return False
-
-    def _find_project_root(self, file_path: Path) -> Path:
-        """Find project root by looking for common project indicators."""
-        current = file_path.parent if file_path.is_file() else file_path
-
-        while current.parent != current:
-            if any(
-                (current / indicator).exists()
-                for indicator in [
-                    ".git",
-                    "package.json",
-                    "pyproject.toml",
-                    "requirements.txt",
-                    ".project",
-                ]
-            ):
-                return current
-            current = current.parent
-
-        # Fallback to original directory
-        return file_path.parent if file_path.is_file() else file_path
+        # Session-aware analysis is always preferred when available
+        return True
 
     def _finding_to_dict(self, finding) -> dict[str, Any]:
         """Convert LLMSecurityFinding to dictionary format."""

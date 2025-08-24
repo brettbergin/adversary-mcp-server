@@ -342,13 +342,10 @@ class TestLLMScanStrategy:
             sample_llm_finding
         ]
 
-        with patch.object(
-            llm_strategy, "_find_project_root", return_value=Path("/test")
-        ):
-            result = await llm_strategy._analyze_with_session(context)
+        result = await llm_strategy._analyze_with_session(context)
 
-            assert len(result) == 1
-            llm_strategy._scanner.analyze_file_with_context.assert_called_once()
+        assert len(result) == 1
+        llm_strategy._scanner.analyze_file_with_context.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_analyze_with_session_directory(
@@ -442,13 +439,9 @@ class TestLLMScanStrategy:
             context.metadata.scan_type = "file"
             context.target_path = f.name
 
-            with patch.object(
-                llm_strategy,
-                "_find_project_root",
-                return_value=Path(f.name).parent.parent,
-            ):  # Different from immediate parent
-                result = llm_strategy._has_project_context(context)
-                assert result is True
+            # Always has project context for file scans now
+            result = llm_strategy._has_project_context(context)
+            assert result is True
 
             Path(f.name).unlink()
 
@@ -459,11 +452,9 @@ class TestLLMScanStrategy:
             context.metadata.scan_type = "file"
             context.target_path = f.name
 
-            with patch.object(
-                llm_strategy, "_find_project_root", return_value=Path(f.name).parent
-            ):  # Same as immediate parent
-                result = llm_strategy._has_project_context(context)
-                assert result is False
+            # Always has project context for file scans now
+            result = llm_strategy._has_project_context(context)
+            assert result is True
 
             Path(f.name).unlink()
 
@@ -486,43 +477,7 @@ class TestLLMScanStrategy:
         result = llm_strategy._has_project_context(context)
         assert result is False
 
-    def test_find_project_root_with_git(self, llm_strategy):
-        """Test finding project root with .git directory."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            # Create nested structure
-            project_dir = Path(temp_dir) / "project"
-            sub_dir = project_dir / "src"
-            sub_dir.mkdir(parents=True)
-            (project_dir / ".git").mkdir()
-
-            test_file = sub_dir / "test.py"
-            test_file.touch()
-
-            result = llm_strategy._find_project_root(test_file)
-            assert result == project_dir
-
-    def test_find_project_root_with_package_json(self, llm_strategy):
-        """Test finding project root with package.json."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            project_dir = Path(temp_dir) / "project"
-            sub_dir = project_dir / "src"
-            sub_dir.mkdir(parents=True)
-            (project_dir / "package.json").touch()
-
-            test_file = sub_dir / "test.js"
-            test_file.touch()
-
-            result = llm_strategy._find_project_root(test_file)
-            assert result == project_dir
-
-    def test_find_project_root_no_indicators(self, llm_strategy):
-        """Test finding project root without indicators."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            test_file = Path(temp_dir) / "test.py"
-            test_file.touch()
-
-            result = llm_strategy._find_project_root(test_file)
-            assert result == Path(temp_dir)
+    # Removed project root detection tests - functionality no longer exists
 
     def test_finding_to_dict(self, llm_strategy, sample_llm_finding):
         """Test converting finding to dictionary."""

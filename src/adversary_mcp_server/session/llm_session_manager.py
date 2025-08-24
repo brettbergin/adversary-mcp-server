@@ -94,26 +94,26 @@ class LLMSessionManager:
 
     async def create_session(
         self,
-        project_root: Path,
+        scan_scope: Path,
         target_files: list[Path] | None = None,
         session_metadata: dict[str, Any] | None = None,
     ) -> AnalysisSession:
         """
-        Create a new analysis session with project context.
+        Create a new analysis session with scan scope context.
 
         Args:
-            project_root: Root directory of the project to analyze
+            scan_scope: Directory or scope to analyze (defines boundary)
             target_files: Specific files to focus on (optional)
             session_metadata: Additional metadata for the session
 
         Returns:
             Initialized analysis session
         """
-        logger.info(f"Creating new analysis session for {project_root}")
+        logger.info(f"Creating new analysis session for scan scope: {scan_scope}")
 
         # Create session
         session = AnalysisSession(
-            project_root=project_root,
+            project_root=scan_scope,
             metadata=session_metadata or {},
         )
         session.update_state(SessionState.CONTEXT_LOADING)
@@ -125,15 +125,13 @@ class LLMSessionManager:
             else "general security analysis"
         )
         self.session_context_optimizer.register_session(
-            session.session_id, project_root, analysis_focus
+            session.session_id, scan_scope, analysis_focus
         )
 
         try:
-            # Try to get cached project context first
-            logger.info("Loading project context...")
-            project_context = self.session_cache.get_cached_project_context(
-                project_root
-            )
+            # Try to get cached scan context first
+            logger.info("Loading scan context...")
+            project_context = self.session_cache.get_cached_project_context(scan_scope)
 
             # Try to optimize context using reusable templates
             optimized_context = self.session_context_optimizer.optimize_session_context(
@@ -141,17 +139,17 @@ class LLMSessionManager:
             )
 
             if project_context is None:
-                # Build new project context
-                logger.info("Building new project context...")
+                # Build new scan context
+                logger.info("Building new scan context...")
                 project_context = self.context_builder.build_context(
-                    project_root, target_files
+                    scan_scope, target_files
                 )
 
                 # Cache the context for future use
-                self.session_cache.cache_project_context(project_root, project_context)
+                self.session_cache.cache_project_context(scan_scope, project_context)
                 self.session_cache._context_cache_misses += 1
             else:
-                logger.info("Using cached project context")
+                logger.info("Using cached scan context")
                 self.session_cache._context_cache_hits += 1
 
             session.project_context = {

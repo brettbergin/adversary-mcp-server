@@ -95,11 +95,11 @@ async def demo_session_scanning():
 
         print("\\n[+] Session-aware analysis complete!")
         print("\\nKey advantages of session-aware analysis:")
-        print("  ✓ Full project context understanding")
-        print("  ✓ Cross-file vulnerability detection")
-        print("  ✓ Architectural security insights")
-        print("  ✓ Reduced false positives through context")
-        print("  ✓ More intelligent threat analysis")
+        print("  [+] Full project context understanding")
+        print("  [+] Cross-file vulnerability detection")
+        print("  [+] Architectural security insights")
+        print("  [+] Reduced false positives through context")
+        print("  [+] More intelligent threat analysis")
 
     except Exception as e:
         print(f"[-] Analysis failed: {e}")
@@ -146,7 +146,7 @@ async def demo_file_analysis():
             print("[-] No Python files found to analyze")
             return
 
-        print(f"📄 Analyzing file with context: {target_file}")
+        print(f"[*] Analyzing file with context: {target_file}")
 
         threat_matches = await scanner.analyze_file_with_context(
             file_path=target_file,

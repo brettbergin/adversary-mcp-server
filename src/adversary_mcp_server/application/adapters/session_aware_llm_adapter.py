@@ -119,24 +119,24 @@ class SessionAwareLLMScanStrategy(IScanStrategy):
             raise ScanError(f"Session-aware LLM scan failed: {str(e)}") from e
 
     async def _analyze_file_with_context(self, request: ScanRequest) -> list[Any]:
-        """Analyze single file with project context."""
+        """Analyze single file with scan scope context."""
         file_path = Path(request.context.target_path)
 
-        # Try to determine project root from file path
-        project_root = self._find_project_root(file_path)
+        # Use file's parent directory as scan scope
+        scan_scope = file_path.parent
 
         # Create context hint based on scan parameters
         context_hint = self._create_context_hint(request)
 
         return await self._scanner.analyze_file_with_context(
             file_path=file_path,
-            project_root=project_root,
+            scan_scope=scan_scope,
             context_hint=context_hint,
         )
 
     async def _analyze_directory_with_context(self, request: ScanRequest) -> list[Any]:
-        """Analyze directory with full project context."""
-        project_root = Path(request.context.target_path)
+        """Analyze directory with scan scope context."""
+        scan_scope = Path(request.context.target_path)
 
         # For directory scans, analyze all relevant files
         target_files = None
@@ -146,7 +146,7 @@ class SessionAwareLLMScanStrategy(IScanStrategy):
         analysis_focus = self._create_analysis_focus(request)
 
         return await self._scanner.analyze_project_with_session(
-            project_root=project_root,
+            scan_scope=scan_scope,
             target_files=target_files,
             analysis_focus=analysis_focus,
         )
@@ -173,7 +173,7 @@ class SessionAwareLLMScanStrategy(IScanStrategy):
     async def _analyze_diff_with_context(self, request: ScanRequest) -> list[Any]:
         """Analyze git diff with change context."""
         file_path = Path(request.context.target_path)
-        project_root = self._find_project_root(file_path)
+        scan_scope = file_path.parent
 
         # For diff analysis, focus on the changed code
         context_hint = (
@@ -184,15 +184,9 @@ class SessionAwareLLMScanStrategy(IScanStrategy):
 
         return await self._scanner.analyze_file_with_context(
             file_path=file_path,
-            project_root=project_root,
+            scan_scope=scan_scope,
             context_hint=context_hint,
         )
-
-    def _find_project_root(self, file_path: Path) -> Path:
-        """Find the project root directory using centralized detection."""
-        from adversary_mcp_server.scanner.language_mapping import LanguageMapper
-
-        return LanguageMapper.find_project_root(file_path)
 
     def _create_context_hint(self, request: ScanRequest) -> str:
         """Create context hint based on scan request."""

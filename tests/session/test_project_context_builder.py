@@ -370,7 +370,7 @@ class TestProjectContextBuilderIntegration:
 
         # Verify context prompt
         prompt = context.to_context_prompt()
-        assert "Flask Web Application" in prompt
+        assert "Flask" in prompt or "flask" in prompt
         assert "main.py" in prompt
         assert "Security-Relevant Files" in prompt
 

@@ -70,15 +70,15 @@ class SessionAwareLLMScanner:
 
     async def analyze_project_with_session(
         self,
-        project_root: Path,
+        scan_scope: Path,
         target_files: list[Path] | None = None,
         analysis_focus: str = "comprehensive security analysis",
     ) -> list[ThreatMatch]:
         """
-        Analyze a project using session-aware context.
+        Analyze a directory using session-aware context.
 
         Args:
-            project_root: Root directory of the project
+            scan_scope: Directory to scan (defines the boundary of analysis)
             target_files: Specific files to focus on (optional)
             analysis_focus: Type of analysis to perform
 
@@ -91,13 +91,13 @@ class SessionAwareLLMScanner:
             )
             return []
 
-        logger.info(f"Starting session-aware analysis of {project_root}")
+        logger.info(f"Starting session-aware analysis of scan scope: {scan_scope}")
 
         session = None
         try:
             # Create analysis session
             session = await self.session_manager.create_session(
-                project_root=project_root,
+                scan_scope=scan_scope,
                 target_files=target_files,
                 session_metadata={
                     "analysis_focus": analysis_focus,
@@ -130,15 +130,15 @@ class SessionAwareLLMScanner:
     async def analyze_file_with_context(
         self,
         file_path: Path,
-        project_root: Path | None = None,
+        scan_scope: Path | None = None,
         context_hint: str | None = None,
     ) -> list[ThreatMatch]:
         """
-        Analyze a specific file with project context.
+        Analyze a specific file with scan scope context.
 
         Args:
             file_path: File to analyze
-            project_root: Project root for context (defaults to file's parent)
+            scan_scope: Scan scope for context (defaults to file's parent)
             context_hint: Hint about what to focus on
 
         Returns:
@@ -147,31 +147,16 @@ class SessionAwareLLMScanner:
         if not self.session_manager:
             return []
 
-        # Determine project root
-        if project_root is None:
-            project_root = file_path.parent
-            # Try to find actual project root by looking for common indicators
-            current = file_path.parent
-            while current.parent != current:
-                if any(
-                    (current / indicator).exists()
-                    for indicator in [
-                        ".git",
-                        "package.json",
-                        "pyproject.toml",
-                        "requirements.txt",
-                    ]
-                ):
-                    project_root = current
-                    break
-                current = current.parent
+        # Use scan scope approach - no upward traversal
+        if scan_scope is None:
+            scan_scope = file_path.parent
 
-        logger.info(f"Analyzing {file_path} with project context from {project_root}")
+        logger.info(f"Analyzing {file_path} with scan scope: {scan_scope}")
 
         try:
             # Create session focused on this file
             session = await self.session_manager.create_session(
-                project_root=project_root,
+                scan_scope=scan_scope,
                 target_files=[file_path],
                 session_metadata={
                     "analysis_type": "focused_file",

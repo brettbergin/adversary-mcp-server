@@ -935,7 +935,7 @@ class CleanCLI:
             # Load existing configuration or create new one
             try:
                 current_config = credential_manager.load_config()
-                console.print("\n[green]✓[/green] Found existing configuration")
+                console.print("\n[green][OK][/green] Found existing configuration")
                 if interactive:
                     console.print(
                         "[yellow]Current settings will be updated with new values[/yellow]"
@@ -1102,7 +1102,7 @@ class CleanCLI:
                 )
                 if custom_model.strip():
                     config.llm_model = custom_model.strip()
-                    console.print(f"[green]✓[/green] Model set: {custom_model}")
+                    console.print(f"[green][OK][/green] Model set: {custom_model}")
                 return
 
             console.print(f"\n[cyan]Select {provider.title()} model:[/cyan]")
@@ -1201,7 +1201,9 @@ class CleanCLI:
                 )
                 if custom_model.strip():
                     config.llm_model = custom_model.strip()
-                    console.print(f"[green]✓[/green] Custom model set: {custom_model}")
+                    console.print(
+                        f"[green][OK][/green] Custom model set: {custom_model}"
+                    )
                 else:
                     console.print(
                         "[yellow]No custom model entered, keeping current setting[/yellow]"
@@ -1215,7 +1217,7 @@ class CleanCLI:
                 display_name = (
                     selected_model["display_name"] if selected_model else model_choice
                 )
-                console.print(f"[green]✓[/green] Model configured: {display_name}")
+                console.print(f"[green][OK][/green] Model configured: {display_name}")
 
         except Exception as e:
             logger.warning(f"Failed to load models from pricing config: {e}")
@@ -1230,7 +1232,7 @@ class CleanCLI:
             )
             if custom_model.strip():
                 config.llm_model = custom_model.strip()
-                console.print(f"[green]✓[/green] Model set: {custom_model}")
+                console.print(f"[green][OK][/green] Model set: {custom_model}")
 
     async def _show_configuration_summary(
         self, config: SecurityConfig, credential_manager: CredentialManager
@@ -1250,13 +1252,13 @@ class CleanCLI:
                 "LLM Provider",
                 config.llm_provider,
                 (
-                    "[green]✓ Configured[/green]"
+                    "[green][OK] Configured[/green]"
                     if config.llm_api_key
                     else "[yellow]API key needed[/yellow]"
                 ),
             )
             if config.llm_model:
-                table.add_row("LLM Model", config.llm_model, "[green]✓[/green]")
+                table.add_row("LLM Model", config.llm_model, "[green][OK][/green]")
         else:
             table.add_row(
                 "LLM Provider", "None", "[yellow]LLM features disabled[/yellow]"
@@ -1266,7 +1268,11 @@ class CleanCLI:
         table.add_row(
             "Semgrep Scanning",
             "Enabled" if config.enable_semgrep_scanning else "Disabled",
-            "[green]✓[/green]" if config.enable_semgrep_scanning else "[red]✗[/red]",
+            (
+                "[green][OK][/green]"
+                if config.enable_semgrep_scanning
+                else "[red][X][/red]"
+            ),
         )
 
         if config.enable_semgrep_scanning:
@@ -1276,7 +1282,7 @@ class CleanCLI:
                 "Semgrep Pro",
                 "Enabled" if semgrep_api_key else "Community",
                 (
-                    "[green]✓ Pro rules[/green]"
+                    "[green][OK] Pro rules[/green]"
                     if semgrep_api_key
                     else "[yellow]Community rules[/yellow]"
                 ),
@@ -1288,32 +1294,34 @@ class CleanCLI:
 
         if config.enable_llm_analysis:
             if llm_configured:
-                llm_analysis_status = "[green]✓ Enabled[/green]"
+                llm_analysis_status = "[green][OK] Enabled[/green]"
                 llm_analysis_value = "Enabled"
             else:
                 llm_analysis_status = "[yellow]API key needed[/yellow]"
                 llm_analysis_value = "[yellow]Disabled (API key needed)[/yellow]"
         else:
-            llm_analysis_status = "[red]✗ Disabled[/red]"
+            llm_analysis_status = "[red][X] Disabled[/red]"
             llm_analysis_value = "Disabled"
 
         table.add_row("LLM Analysis", llm_analysis_value, llm_analysis_status)
 
         if config.enable_llm_validation:
             if llm_configured:
-                llm_validation_status = "[green]✓ Enabled[/green]"
+                llm_validation_status = "[green][OK] Enabled[/green]"
                 llm_validation_value = "Enabled"
             else:
                 llm_validation_status = "[yellow]API key needed[/yellow]"
                 llm_validation_value = "[yellow]Disabled (API key needed)[/yellow]"
         else:
-            llm_validation_status = "[red]✗ Disabled[/red]"
+            llm_validation_status = "[red][X] Disabled[/red]"
             llm_validation_value = "Disabled"
 
         table.add_row("LLM Validation", llm_validation_value, llm_validation_status)
 
         table.add_row(
-            "Severity Threshold", config.severity_threshold.upper(), "[green]✓[/green]"
+            "Severity Threshold",
+            config.severity_threshold.upper(),
+            "[green][OK][/green]",
         )
 
         console.print(table)
@@ -1468,7 +1476,7 @@ class CleanCLI:
             # Display results
             if findings:
                 console.print(
-                    f"\n[green]✓ Session analysis complete![/green] Found {len(findings)} potential security issues."
+                    f"\n[green][+] Session analysis complete![/green] Found {len(findings)} potential security issues."
                 )
 
                 # Format and display findings
@@ -1481,7 +1489,7 @@ class CleanCLI:
                         findings, output_file, output_format
                     )
             else:
-                console.print("[green]✓ No security issues found![/green]")
+                console.print("[green][+] No security issues found![/green]")
 
         except Exception as e:
             console.print(f"[red]Session analysis failed:[/red] {e}")
@@ -1546,27 +1554,6 @@ Focus on systemic and architectural vulnerabilities.
             findings.extend(arch_findings)
 
         return findings
-
-    def _find_project_root(self, file_path: Path) -> Path:
-        """Find project root by looking for common project indicators."""
-        current = file_path.parent if file_path.is_file() else file_path
-
-        while current.parent != current:
-            if any(
-                (current / indicator).exists()
-                for indicator in [
-                    ".git",
-                    "package.json",
-                    "pyproject.toml",
-                    "requirements.txt",
-                    ".project",
-                ]
-            ):
-                return current
-            current = current.parent
-
-        # Fallback to file's parent directory
-        return file_path.parent if file_path.is_file() else file_path
 
     def _display_session_findings(self, findings):
         """Display session findings in a formatted table."""
@@ -2123,7 +2110,7 @@ def dashboard(hours: int, no_launch: bool, output_dir: str):
 
             progress.update(task, description="Dashboard ready!")
 
-        console.print("[green]✓ Dashboard generated successfully![/green]")
+        console.print("[green][+] Dashboard generated successfully![/green]")
         console.print(f"[cyan]Dashboard location:[/cyan] {dashboard_file}")
 
         if no_launch:
