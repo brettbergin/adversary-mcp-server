@@ -135,7 +135,7 @@ class TestEndToEndSessionWorkflow:
 
             # Execute full workflow
             threat_matches = await scanner.analyze_project_with_session(
-                project_root=project_root,
+                scan_scope=project_root,
                 analysis_focus="comprehensive security analysis for Flask web application",
             )
 
@@ -223,7 +223,7 @@ class TestEndToEndSessionWorkflow:
             scanner1 = SessionAwareLLMScanner(Mock())
             scanner1.session_manager = session_manager1
 
-            await scanner1.analyze_project_with_session(project_root)
+            await scanner1.analyze_project_with_session(scan_scope=project_root)
 
             # Verify context was cached
             cached_context = session_manager1.session_cache.get_cached_project_context(
@@ -242,7 +242,7 @@ class TestEndToEndSessionWorkflow:
                 "get_cached_project_context",
                 return_value=cached_context,
             ):
-                await scanner2.analyze_project_with_session(project_root)
+                await scanner2.analyze_project_with_session(scan_scope=project_root)
 
             # Should have used cached context (fewer context building calls)
 
@@ -278,7 +278,7 @@ class TestEndToEndSessionWorkflow:
 
             # Should handle error gracefully
             with pytest.raises(Exception, match="API Error"):
-                await scanner.analyze_project_with_session(project_root)
+                await scanner.analyze_project_with_session(scan_scope=project_root)
 
             # The session should be created but may persist due to the error
             # In a persistent session store, sessions might remain for cleanup later
@@ -375,7 +375,9 @@ class TestEndToEndSessionWorkflow:
             scanner = SessionAwareLLMScanner(Mock())
             scanner.session_manager = session_manager
 
-            threat_matches = await scanner.analyze_project_with_session(project_root)
+            threat_matches = await scanner.analyze_project_with_session(
+                scan_scope=project_root
+            )
 
             # Verify multi-language analysis
             assert len(threat_matches) == 4
@@ -435,7 +437,9 @@ class TestEndToEndSessionWorkflow:
             scanner = SessionAwareLLMScanner(Mock())
             scanner.session_manager = session_manager
 
-            threat_matches = await scanner.analyze_project_with_session(project_root)
+            threat_matches = await scanner.analyze_project_with_session(
+                scan_scope=project_root
+            )
 
             # Should handle large project efficiently
             assert len(threat_matches) >= 1
@@ -927,7 +931,7 @@ class TestCompleteE2EWorkflow:
         scanner.session_manager = session_manager
 
         threat_matches = await scanner.analyze_project_with_session(
-            project_root=e2e_test_project,
+            scan_scope=e2e_test_project,
             analysis_focus="comprehensive security analysis for production Flask application",
         )
 
@@ -1065,7 +1069,7 @@ async def test_session_workflow_performance():
 
         start_time = time.time()
 
-        await scanner.analyze_project_with_session(project_root)
+        await scanner.analyze_project_with_session(scan_scope=project_root)
 
         end_time = time.time()
         duration = end_time - start_time

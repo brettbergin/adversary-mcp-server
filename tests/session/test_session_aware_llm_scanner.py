@@ -121,13 +121,13 @@ class TestSessionAwareLLMScanner:
             (project_root / "app.py").write_text("# test file")
 
             threat_matches = await scanner.analyze_project_with_session(
-                project_root=project_root,
+                scan_scope=project_root,
                 analysis_focus="comprehensive security analysis",
             )
 
             # Verify session workflow
             mock_session_manager.create_session.assert_called_once_with(
-                project_root=project_root,
+                scan_scope=project_root,
                 target_files=None,
                 session_metadata={
                     "analysis_focus": "comprehensive security analysis",
@@ -157,7 +157,9 @@ class TestSessionAwareLLMScanner:
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
 
-            threat_matches = await scanner.analyze_project_with_session(project_root)
+            threat_matches = await scanner.analyze_project_with_session(
+                scan_scope=project_root
+            )
 
             assert threat_matches == []
 
@@ -204,7 +206,7 @@ class TestSessionAwareLLMScanner:
             # Verify session was created with project context
             mock_session_manager.create_session.assert_called_once()
             call_args = mock_session_manager.create_session.call_args
-            assert call_args[1]["project_root"] == project_root
+            assert call_args[1]["scan_scope"] == project_root
             assert call_args[1]["target_files"] == [file_path]
 
             # Verify analysis was performed
@@ -619,7 +621,7 @@ class TestSessionAwareLLMScannerIntegration:
 
         # Perform analysis
         threat_matches = await scanner.analyze_project_with_session(
-            project_root=temp_project_structure,
+            scan_scope=temp_project_structure,
             analysis_focus="comprehensive security analysis for web application",
         )
 

@@ -873,12 +873,12 @@ class CleanMCPServer:
 
             logger.info(f"Starting session-aware file scan: {file_path}")
 
-            # Find project root
-            project_root = self._find_project_root(file_path)
+            # Use file's parent directory as scan scope
+            scan_scope = file_path.parent
 
             # Create session focused on this file
             session = await self._session_manager.create_session(
-                project_root=project_root,
+                scan_scope=scan_scope,
                 target_files=[file_path],
                 session_metadata={
                     "analysis_type": "focused_file",
@@ -934,7 +934,7 @@ Please analyze the above code for security vulnerabilities. Provide the EXACT li
                 "success": True,
                 "analysis_type": "session_aware_file",
                 "file_path": str(file_path),
-                "project_root": str(project_root),
+                "project_root": str(scan_scope),
                 "findings_count": len(findings),
                 "findings": [
                     {
@@ -1190,27 +1190,6 @@ Focus on systemic and architectural vulnerabilities.
 
         return findings
 
-    def _find_project_root(self, file_path: Path) -> Path:
-        """Find project root by looking for common project indicators."""
-        current = file_path.parent if file_path.is_file() else file_path
-
-        while current.parent != current:
-            if any(
-                (current / indicator).exists()
-                for indicator in [
-                    ".git",
-                    "package.json",
-                    "pyproject.toml",
-                    "requirements.txt",
-                    ".project",
-                ]
-            ):
-                return current
-            current = current.parent
-
-        # Fallback to file's parent directory
-        return file_path.parent if file_path.is_file() else file_path
-
     async def _handle_session_file_analysis(
         self,
         path: str,
@@ -1227,11 +1206,11 @@ Focus on systemic and architectural vulnerabilities.
             raise CleanAdversaryToolError("Session manager not available")
 
         file_path_obj = Path(path).resolve()
-        project_root = self._find_project_root(file_path_obj)
+        scan_scope = file_path_obj.parent
 
         # Create session for contextual analysis
         session = await self._session_manager.create_session(
-            project_root=project_root,
+            scan_scope=scan_scope,
             target_files=[file_path_obj],
             session_metadata={
                 "mcp_session": True,

@@ -28,9 +28,9 @@ class ProjectFile:
 
 @dataclass
 class ProjectContext:
-    """Comprehensive project context for LLM analysis."""
+    """Comprehensive scan context for LLM analysis."""
 
-    project_root: Path
+    project_root: Path  # TODO: Rename to scan_scope in future iteration
     project_type: str = "unknown"
     structure_overview: str = ""
     key_files: list[ProjectFile] = field(default_factory=list)
@@ -46,14 +46,13 @@ class ProjectContext:
     def to_context_prompt(self) -> str:
         """Generate context prompt for LLM initialization."""
         return f"""
-# Project Analysis Context
+# Security Analysis Context
 
-**Project Type**: {self.project_type}
-**Project Root**: {self.project_root}
+**Scan Scope**: {self.project_root}
 **Total Files**: {self.total_files} ({self.total_size_bytes:,} bytes)
 **Languages**: {', '.join(sorted(self.languages_used))}
 
-## Project Structure
+## Directory Structure
 {self.structure_overview}
 
 ## Key Security-Relevant Files
@@ -74,7 +73,7 @@ class ProjectContext:
 
 ---
 
-I'll be analyzing this codebase for security vulnerabilities. I'll reference these components by name in my queries.
+I'll be analyzing this scan scope for security vulnerabilities. I'll reference these components by name in my queries.
 """
 
     def _format_key_files(self) -> str:
@@ -172,15 +171,15 @@ class ProjectContextBuilder:
         }
 
     def build_context(
-        self, project_root: Path, target_files: list[Path] | None = None
+        self, scan_scope: Path, target_files: list[Path] | None = None
     ) -> ProjectContext:
-        """Build comprehensive project context."""
-        logger.info(f"Building project context for {project_root}")
+        """Build comprehensive scan context."""
+        logger.info(f"Building scan context for {scan_scope}")
 
-        context = ProjectContext(project_root=project_root)
+        context = ProjectContext(project_root=scan_scope)
 
-        # Discover files
-        all_files = self._discover_files(project_root)
+        # Discover files within scan scope
+        all_files = self._discover_files(scan_scope)
         context.total_files = len(all_files)
         context.total_size_bytes = sum(
             f.stat().st_size for f in all_files if f.exists()
@@ -193,7 +192,7 @@ class ProjectContextBuilder:
         project_files = []
         for file_path in files_to_analyze:
             if file_path.exists() and file_path.is_file():
-                project_file = self._create_project_file(file_path, project_root)
+                project_file = self._create_project_file(file_path, scan_scope)
                 project_files.append(project_file)
                 context.languages_used.add(project_file.language)
 
@@ -205,14 +204,14 @@ class ProjectContextBuilder:
         # Select key files within token budget
         context.key_files = self._select_key_files(project_files, context)
 
-        # Analyze project structure
-        context.project_type = self._detect_project_type(project_root, project_files)
+        # Analyze scan scope structure
+        context.project_type = self._detect_project_type(scan_scope, project_files)
         context.structure_overview = self._build_structure_overview(
-            project_root, all_files
+            scan_scope, all_files
         )
         context.security_modules = self._identify_security_modules(project_files)
         context.entry_points = self._identify_entry_points(project_files)
-        context.dependencies = self._extract_dependencies(project_root)
+        context.dependencies = self._extract_dependencies(scan_scope)
         context.architecture_summary = self._analyze_architecture(context)
 
         # Estimate token usage
@@ -226,29 +225,32 @@ class ProjectContextBuilder:
 
         return context
 
-    def _discover_files(self, project_root: Path) -> list[Path]:
-        """Discover all relevant files in the project."""
+    def _discover_files(self, scan_scope: Path) -> list[Path]:
+        """Discover all relevant files within the scan scope."""
         try:
             # Use existing file filter for consistent logic
             file_filter = FileFilter(
-                root_path=project_root,
+                root_path=scan_scope,
                 max_file_size_mb=10,  # Reasonable limit for context
                 respect_gitignore=True,
             )
 
-            # Get all files recursively
+            # Get all files recursively within scan scope only
             all_files = []
-            for file_path in project_root.rglob("*"):
+            for file_path in scan_scope.rglob("*"):
                 if file_path.is_file():
                     all_files.append(file_path)
 
             # Apply filtering
             filtered_files = file_filter.filter_files(all_files)
 
-            # Further filter to analyzable source files
+            # Further filter to analyzable source files within scope boundary
             source_files = []
             for file_path in filtered_files:
-                if self._is_analyzable_file(file_path):
+                # Enforce scope boundary - ensure file is within scan scope
+                if self._is_within_scope(
+                    file_path, scan_scope
+                ) and self._is_analyzable_file(file_path):
                     source_files.append(file_path)
 
             logger.debug(
@@ -259,6 +261,22 @@ class ProjectContextBuilder:
         except Exception as e:
             logger.warning(f"Error discovering files: {e}")
             return []
+
+    def _is_within_scope(self, file_path: Path, scan_scope: Path) -> bool:
+        """Ensure file is within the scan scope boundary."""
+        try:
+            # Resolve both paths to handle symlinks and relative paths
+            resolved_file = file_path.resolve()
+            resolved_scope = scan_scope.resolve()
+
+            # Check if file is within the scope directory
+            return (
+                resolved_scope in resolved_file.parents
+                or resolved_file == resolved_scope
+            )
+        except Exception:
+            # If path resolution fails, be conservative and exclude
+            return False
 
     def _is_analyzable_file(self, file_path: Path) -> bool:
         """Check if file should be included in analysis."""
@@ -271,9 +289,9 @@ class ProjectContextBuilder:
             )
         return True
 
-    def _create_project_file(self, file_path: Path, project_root: Path) -> ProjectFile:
+    def _create_project_file(self, file_path: Path, scan_scope: Path) -> ProjectFile:
         """Create ProjectFile with metadata."""
-        relative_path = file_path.relative_to(project_root)
+        relative_path = file_path.relative_to(scan_scope)
         language = LanguageMapper.detect_language_from_extension(file_path)
 
         try:
@@ -392,16 +410,16 @@ class ProjectContextBuilder:
         return selected
 
     def _detect_project_type(
-        self, project_root: Path, project_files: list[ProjectFile]
+        self, scan_scope: Path, project_files: list[ProjectFile]
     ) -> str:
         """Detect the type of project."""
         # Check for common project indicators
         languages = {f.language for f in project_files}
 
-        if (project_root / "package.json").exists():
+        if (scan_scope / "package.json").exists():
             return "Node.js/JavaScript Application"
-        elif (project_root / "requirements.txt").exists() or (
-            project_root / "pyproject.toml"
+        elif (scan_scope / "requirements.txt").exists() or (
+            scan_scope / "pyproject.toml"
         ).exists():
             if any(
                 "django" in f.content_preview.lower()
@@ -423,10 +441,10 @@ class ProjectContextBuilder:
                 return "FastAPI Application"
             else:
                 return "Python Application"
-        elif (project_root / "Cargo.toml").exists():
+        elif (scan_scope / "Cargo.toml").exists():
             return "Rust Application"
-        elif (project_root / "pom.xml").exists() or (
-            project_root / "build.gradle"
+        elif (scan_scope / "pom.xml").exists() or (
+            scan_scope / "build.gradle"
         ).exists():
             return "Java Application"
         elif "javascript" in languages or "typescript" in languages:
@@ -460,7 +478,7 @@ class ProjectContextBuilder:
             files = dir_structure[dir_name][:5]  # Limit files per directory
             lines.append(f"{dir_name}/ ({len(dir_structure[dir_name])} files)")
             for file_name in files:
-                lines.append(f"   📄 {file_name}")
+                lines.append(f"   - {file_name}")
             if len(dir_structure[dir_name]) > 5:
                 lines.append(f"   ... and {len(dir_structure[dir_name]) - 5} more")
 

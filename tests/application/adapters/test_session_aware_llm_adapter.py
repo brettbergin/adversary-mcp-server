@@ -205,7 +205,7 @@ class TestSessionAwareLLMScanStrategy:
         # Verify scanner was called
         self.mock_scanner.analyze_project_with_session.assert_called_once()
         call_args = self.mock_scanner.analyze_project_with_session.call_args
-        assert call_args[1]["project_root"] == Path(
+        assert call_args[1]["scan_scope"] == Path(
             "/Users/brettbergin/code/adversary-mcp-server"
         )
 
@@ -432,34 +432,7 @@ class TestSessionAwareLLMScanStrategy:
         assert "medium_confidence" in rule_ids
         assert "low_confidence" not in rule_ids
 
-    def test_find_project_root(self):
-        """Test project root detection."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-
-            # Create nested structure
-            project_root = temp_path / "project"
-            src_dir = project_root / "src"
-            src_dir.mkdir(parents=True)
-            test_file = src_dir / "app.py"
-            test_file.write_text("# test")
-
-            # Create project indicator
-            (project_root / ".git").mkdir()
-
-            # Test project root detection
-            detected_root = self.adapter._find_project_root(test_file)
-            assert detected_root == project_root
-
-    def test_find_project_root_no_indicators(self):
-        """Test project root detection without indicators."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            test_file = Path(temp_dir) / "standalone.py"
-            test_file.write_text("# standalone")
-
-            # Should fall back to file's parent directory
-            detected_root = self.adapter._find_project_root(test_file)
-            assert detected_root == test_file.parent
+    # Removed project root detection tests - functionality no longer exists
 
     def test_create_context_hint(self):
         """Test context hint creation."""
@@ -707,7 +680,7 @@ class TestSessionAwareLLMScanStrategyIntegration:
         call_args = mock_scanner.analyze_project_with_session.call_args
         # Use resolve() to handle symlinks like /private/var -> /var on macOS
         assert (
-            call_args[1]["project_root"].resolve() == temp_project_for_adapter.resolve()
+            call_args[1]["scan_scope"].resolve() == temp_project_for_adapter.resolve()
         )
         assert "comprehensive" in call_args[1]["analysis_focus"]
 

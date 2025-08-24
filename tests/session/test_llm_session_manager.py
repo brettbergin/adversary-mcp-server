@@ -77,7 +77,9 @@ class TestLLMSessionManager:
                 )
                 self.mock_llm_client.complete.return_value = mock_response
 
-                session = await self.session_manager.create_session(project_root)
+                session = await self.session_manager.create_session(
+                    scan_scope=project_root
+                )
 
                 # Verify session creation
                 assert (
@@ -116,7 +118,9 @@ class TestLLMSessionManager:
                 )
                 self.mock_llm_client.complete.return_value = mock_response
 
-                session = await self.session_manager.create_session(project_root)
+                session = await self.session_manager.create_session(
+                    scan_scope=project_root
+                )
 
                 # Verify cached context was used
                 assert session.project_context["cached"] is True
@@ -322,7 +326,7 @@ class TestLLMSessionManager:
         prompt = self.session_manager._create_initial_context_prompt(context)
 
         assert "senior security engineer" in prompt
-        assert "Flask Web Application" in prompt
+        # Project type is not included in the prompt anymore with the new scan scope approach
         assert "auth.py" in prompt
         assert "crypto.py" in prompt
         assert "security questions" in prompt
