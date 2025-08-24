@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import random
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
@@ -48,6 +49,12 @@ class LLMAPIError(LLMClientError):
 
 class LLMRateLimitError(LLMClientError):
     """Exception for rate limit errors."""
+
+    pass
+
+
+class LLMQuotaError(LLMClientError):
+    """Exception for quota/billing limit errors (non-retriable)."""
 
     pass
 
@@ -214,6 +221,8 @@ class LLMClient(ABC):
         response_format: str = "json",
         max_retries: int = 3,
         retry_delay: float = 1.0,
+        max_delay: float = 60.0,
+        use_jitter: bool = True,
     ) -> LLMResponse:
         """Complete with automatic retry on failure.
 
@@ -225,12 +234,15 @@ class LLMClient(ABC):
             response_format: Expected response format
             max_retries: Maximum number of retry attempts
             retry_delay: Base delay between retries (exponential backoff)
+            max_delay: Maximum delay cap to prevent excessive waits
+            use_jitter: Add randomization to prevent thundering herd
 
         Returns:
             LLMResponse with the completion
 
         Raises:
             LLMAPIError: If all retries fail
+            LLMQuotaError: If quota exceeded (non-retriable)
         """
         logger.debug(
             f"Starting completion with retry - max_retries: {max_retries}, "
@@ -259,13 +271,26 @@ class LLMClient(ABC):
                     )
                 return result
 
+            except LLMQuotaError as e:
+                # Quota errors are non-retriable - fail immediately
+                logger.error(
+                    f"Quota error on attempt {attempt + 1} - not retrying: {e}"
+                )
+                raise
+
             except LLMRateLimitError as e:
                 last_error = e
                 if attempt < max_retries - 1:
-                    delay = retry_delay * (2**attempt)  # Exponential backoff
+                    delay = min(
+                        retry_delay * (2**attempt), max_delay
+                    )  # Exponential backoff with cap
+                    if use_jitter:
+                        delay = delay * (
+                            0.5 + random.random() * 0.5  # noqa: S311
+                        )  # Add 50% jitter
                     logger.warning(
                         f"Rate limited on attempt {attempt + 1}/{max_retries}, "
-                        f"retrying in {delay}s: {e}"
+                        f"retrying in {delay:.1f}s: {e}"
                     )
                     await asyncio.sleep(delay)
                 else:
@@ -277,10 +302,16 @@ class LLMClient(ABC):
             except LLMAPIError as e:
                 last_error = e
                 if attempt < max_retries - 1:
-                    delay = retry_delay * (2**attempt)
+                    delay = min(
+                        retry_delay * (2**attempt), max_delay
+                    )  # Exponential backoff with cap
+                    if use_jitter:
+                        delay = delay * (
+                            0.5 + random.random() * 0.5  # noqa: S311
+                        )  # Add 50% jitter
                     logger.warning(
                         f"API error on attempt {attempt + 1}/{max_retries}, "
-                        f"retrying in {delay}s: {e}"
+                        f"retrying in {delay:.1f}s: {e}"
                     )
                     await asyncio.sleep(delay)
                 else:
@@ -308,6 +339,8 @@ class LLMClient(ABC):
         response_format: str = "json",
         max_retries: int = 3,
         retry_delay: float = 1.0,
+        max_delay: float = 60.0,
+        use_jitter: bool = True,
     ) -> LLMResponse:
         """Complete with streaming and automatic retry on failure.
 
@@ -319,12 +352,15 @@ class LLMClient(ABC):
             response_format: Expected response format
             max_retries: Maximum number of retry attempts
             retry_delay: Base delay between retries (exponential backoff)
+            max_delay: Maximum delay cap to prevent excessive waits
+            use_jitter: Add randomization to prevent thundering herd
 
         Returns:
             LLMResponse with the completion
 
         Raises:
             LLMAPIError: If all retries fail
+            LLMQuotaError: If quota exceeded (non-retriable)
         """
         logger.debug(
             f"Starting streaming completion with retry - max_retries: {max_retries}, "
@@ -355,13 +391,26 @@ class LLMClient(ABC):
                     )
                 return result
 
+            except LLMQuotaError as e:
+                # Quota errors are non-retriable - fail immediately
+                logger.error(
+                    f"Quota error on streaming attempt {attempt + 1} - not retrying: {e}"
+                )
+                raise
+
             except LLMRateLimitError as e:
                 last_error = e
                 if attempt < max_retries - 1:
-                    delay = retry_delay * (2**attempt)  # Exponential backoff
+                    delay = min(
+                        retry_delay * (2**attempt), max_delay
+                    )  # Exponential backoff with cap
+                    if use_jitter:
+                        delay = delay * (
+                            0.5 + random.random() * 0.5  # noqa: S311
+                        )  # Add 50% jitter
                     logger.warning(
                         f"Rate limited on streaming attempt {attempt + 1}/{max_retries}, "
-                        f"retrying in {delay}s: {e}"
+                        f"retrying in {delay:.1f}s: {e}"
                     )
                     await asyncio.sleep(delay)
                 else:
@@ -373,10 +422,16 @@ class LLMClient(ABC):
             except LLMAPIError as e:
                 last_error = e
                 if attempt < max_retries - 1:
-                    delay = retry_delay * (2**attempt)
+                    delay = min(
+                        retry_delay * (2**attempt), max_delay
+                    )  # Exponential backoff with cap
+                    if use_jitter:
+                        delay = delay * (
+                            0.5 + random.random() * 0.5  # noqa: S311
+                        )  # Add 50% jitter
                     logger.warning(
                         f"API error on streaming attempt {attempt + 1}/{max_retries}, "
-                        f"retrying in {delay}s: {e}"
+                        f"retrying in {delay:.1f}s: {e}"
                     )
                     await asyncio.sleep(delay)
                 else:
@@ -518,8 +573,15 @@ class OpenAIClient(LLMClient):
                 duration=duration,
                 success=False,
             )
-            logger.error(f"OpenAI rate limit error: {e}")
-            raise LLMRateLimitError(f"OpenAI rate limit exceeded: {e}")
+
+            # Check if this is a quota error (non-retriable) vs rate limit (retriable)
+            error_str = str(e)
+            if "insufficient_quota" in error_str or "quota" in error_str.lower():
+                logger.error(f"OpenAI quota exceeded (non-retriable): {e}")
+                raise LLMQuotaError(f"OpenAI quota exceeded - check billing: {e}")
+            else:
+                logger.error(f"OpenAI rate limit error (retriable): {e}")
+                raise LLMRateLimitError(f"OpenAI rate limit exceeded: {e}")
         except openai.APIError as e:
             duration = asyncio.get_event_loop().time() - start_time
             self._record_llm_metrics(
@@ -676,8 +738,19 @@ class OpenAIClient(LLMClient):
                 duration=duration,
                 success=False,
             )
-            logger.error(f"OpenAI rate limit error during streaming: {e}")
-            raise LLMRateLimitError(f"OpenAI rate limit exceeded: {e}")
+
+            # Check if this is a quota error (non-retriable) vs rate limit (retriable)
+            error_str = str(e)
+            if "insufficient_quota" in error_str or "quota" in error_str.lower():
+                logger.error(
+                    f"OpenAI quota exceeded during streaming (non-retriable): {e}"
+                )
+                raise LLMQuotaError(f"OpenAI quota exceeded - check billing: {e}")
+            else:
+                logger.error(
+                    f"OpenAI rate limit error during streaming (retriable): {e}"
+                )
+                raise LLMRateLimitError(f"OpenAI rate limit exceeded: {e}")
         except openai.APIError as e:
             duration = asyncio.get_event_loop().time() - start_time
             self._record_llm_metrics(

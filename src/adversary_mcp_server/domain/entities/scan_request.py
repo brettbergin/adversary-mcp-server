@@ -161,10 +161,6 @@ class ScanRequest:
         if not any([self.enable_semgrep, self.enable_llm]):
             raise ValidationError("At least one scanner must be enabled")
 
-        # Validation requires LLM to be enabled
-        if self.enable_validation and not self.enable_llm:
-            raise ValidationError("Validation requires LLM analysis to be enabled")
-
         # Code scans should enable LLM for better analysis
         if self.context.is_code_scan() and not self.enable_llm:
             # This is a warning, not an error

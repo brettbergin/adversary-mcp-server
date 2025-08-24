@@ -64,8 +64,8 @@ class TestScanRequest:
         assert request.enable_validation is False
         assert request.severity_threshold == SeverityLevel.from_string("high")
 
-    def test_invalid_configuration_validation_without_llm(self):
-        """Test that validation requires LLM to be enabled."""
+    def test_valid_configuration_validation_without_llm(self):
+        """Test that validation can be enabled without LLM scanner (separation of concerns)."""
         file_path = FilePath.from_string("examples/vulnerable_python.py")
         metadata = ScanMetadata(
             scan_id="test-scan-123",
@@ -75,10 +75,11 @@ class TestScanRequest:
         )
         context = ScanContext(target_path=file_path, metadata=metadata)
 
-        with pytest.raises(
-            ValidationError, match="Validation requires LLM analysis to be enabled"
-        ):
-            ScanRequest(context=context, enable_llm=False, enable_validation=True)
+        # This should now succeed - validation can work on Semgrep-only results
+        request = ScanRequest(context=context, enable_llm=False, enable_validation=True)
+        assert request.enable_semgrep is True  # Default to True
+        assert request.enable_llm is False
+        assert request.enable_validation is True
 
     def test_invalid_configuration_no_scanners(self):
         """Test that at least one scanner must be enabled."""

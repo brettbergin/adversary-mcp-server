@@ -526,7 +526,7 @@ class TestValidationService:
             validation_service.validate_scan_request(invalid_request)
 
     def test_validate_scan_request_validation_without_llm(self, validation_service):
-        """Test validating scan request with validation but no LLM."""
+        """Test validating scan request with validation but no LLM (should succeed)."""
         file_path = FilePath.from_virtual("test.py")
         metadata = ScanMetadata(
             scan_id="test-scan-123",
@@ -536,16 +536,15 @@ class TestValidationService:
         )
         context = ScanContext(target_path=file_path, metadata=metadata)
 
-        with pytest.raises(
-            ValidationError, match="Validation requires LLM analysis to be enabled"
-        ):
-            invalid_request = ScanRequest(
-                context=context,
-                enable_semgrep=True,
-                enable_llm=False,
-                enable_validation=True,
-            )
-            validation_service.validate_scan_request(invalid_request)
+        # This should now succeed - validation can work independently of LLM scanning
+        valid_request = ScanRequest(
+            context=context,
+            enable_semgrep=True,
+            enable_llm=False,
+            enable_validation=True,
+        )
+        # Should not raise any exceptions
+        validation_service.validate_scan_request(valid_request)
 
     def test_validate_threat_data_valid(self, validation_service, sample_threat):
         """Test validating valid threat data."""

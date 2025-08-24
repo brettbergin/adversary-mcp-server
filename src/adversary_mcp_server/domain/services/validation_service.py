@@ -204,10 +204,6 @@ class ValidationService(IValidationService):
         if not any([request.enable_semgrep, request.enable_llm]):
             raise ValidationError("At least one scanner must be enabled")
 
-        # Validation requires LLM to be enabled
-        if request.enable_validation and not request.enable_llm:
-            raise ValidationError("Validation requires LLM analysis to be enabled")
-
         # Check timeout constraints
         timeout = request.context.metadata.get_effective_timeout()
         if timeout <= 0:
