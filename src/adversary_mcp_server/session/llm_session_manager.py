@@ -441,9 +441,9 @@ Ready for security analysis questions about this codebase."""
         for file_info in optimized_context["key_files"]:
             lines.append(f"\n### {file_info['path']} ({file_info['language']})")
             if file_info["is_security_critical"]:
-                lines.append("🔒 **SECURITY CRITICAL**")
+                lines.append("**SECURITY CRITICAL**")
             if file_info.get("truncated"):
-                lines.append("⚠️ **Content truncated for context optimization**")
+                lines.append("**Content truncated for context optimization**")
             lines.append(f"Security Relevance: {file_info['security_relevance']}")
             lines.append(f"Relevance Score: {file_info['relevance_score']:.2f}")
             lines.append("```" + file_info["language"])
@@ -709,17 +709,17 @@ Use your existing project context to understand how these changes interact with 
         # Analysis metadata
         if incremental_metadata["baseline_established"]:
             context_lines.append(
-                "📊 **Baseline Analysis**: Project context already established"
+                "**Baseline Analysis**: Project context already established"
             )
             if incremental_metadata["last_analysis_timestamp"]:
                 last_analysis = time.strftime(
                     "%Y-%m-%d %H:%M:%S",
                     time.localtime(incremental_metadata["last_analysis_timestamp"]),
                 )
-                context_lines.append(f"🕒 **Last Analysis**: {last_analysis}")
+                context_lines.append(f"**Last Analysis**: {last_analysis}")
         else:
             context_lines.append(
-                "📊 **Baseline Analysis**: Not yet established - full context needed"
+                "**Baseline Analysis**: Not yet established - full context needed"
             )
 
         # Changed files
@@ -745,9 +745,9 @@ Use your existing project context to understand how these changes interact with 
                     context_lines.append(content)
                     context_lines.append("```")
                 else:
-                    context_lines.append("   ⚠️ File not found or not readable")
+                    context_lines.append("   File not found or not readable")
             except Exception as e:
-                context_lines.append(f"   ❌ Error reading file: {e}")
+                context_lines.append(f"   [-] Error reading file: {e}")
 
         # Add change context if provided
         if change_context:

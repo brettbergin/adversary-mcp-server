@@ -333,7 +333,7 @@ class DashboardAssetManager:
     <div class="dashboard-container">
         <!-- Header -->
         <header class="dashboard-header">
-            <h1>🛡️ Adversary MCP Server Dashboard</h1>
+            <h1>Adversary MCP Server Dashboard</h1>
             <div class="header-meta">
                 <span class="generated-time">Generated: {{ metadata.generated_at | timestamp_to_datetime }}</span>
                 <span class="coverage">Coverage: {{ metadata.hours_covered }} hours</span>

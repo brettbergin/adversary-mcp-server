@@ -354,3 +354,84 @@ class TestScanResultFocused:
         # but this ensures the method doesn't crash)
         new_stats = result.get_statistics()
         assert new_stats is not None
+
+    def test_get_threats_by_severity_enum_type_safety(self):
+        """Test that get_threats_by_severity only accepts SeverityLevel enums, not strings."""
+        file_path = FilePath.from_string("examples/vulnerable_python.py")
+        metadata = ScanMetadata.for_file_scan(requester="test-user")
+        context = ScanContext(target_path=file_path, metadata=metadata)
+        request = ScanRequest(context=context)
+
+        # Create threats with different severities
+        threats = [
+            ThreatMatch(
+                rule_id="critical-threat",
+                rule_name="Critical Threat",
+                description="Critical issue",
+                category="injection",
+                severity=SeverityLevel.from_string("critical"),
+                file_path=file_path,
+                line_number=10,
+                column_number=1,
+                code_snippet="critical code",
+                confidence=ConfidenceScore(0.9),
+            ),
+            ThreatMatch(
+                rule_id="high-threat",
+                rule_name="High Threat",
+                description="High priority issue",
+                category="xss",
+                severity=SeverityLevel.from_string("high"),
+                file_path=file_path,
+                line_number=20,
+                column_number=1,
+                code_snippet="high priority code",
+                confidence=ConfidenceScore(0.8),
+            ),
+            ThreatMatch(
+                rule_id="medium-threat",
+                rule_name="Medium Threat",
+                description="Medium priority issue",
+                category="csrf",
+                severity=SeverityLevel.from_string("medium"),
+                file_path=file_path,
+                line_number=30,
+                column_number=1,
+                code_snippet="medium priority code",
+                confidence=ConfidenceScore(0.7),
+            ),
+        ]
+
+        result = ScanResult.create_from_threats(request, threats)
+
+        # Test that passing proper SeverityLevel enum works
+        critical_threats = result.get_threats_by_severity(
+            SeverityLevel.from_string("critical")
+        )
+        assert len(critical_threats) == 1
+        assert critical_threats[0].rule_id == "critical-threat"
+
+        high_threats = result.get_threats_by_severity(SeverityLevel.from_string("high"))
+        assert len(high_threats) == 1
+        assert high_threats[0].rule_id == "high-threat"
+
+        medium_threats = result.get_threats_by_severity(
+            SeverityLevel.from_string("medium")
+        )
+        assert len(medium_threats) == 1
+        assert medium_threats[0].rule_id == "medium-threat"
+
+        # Test that passing strings (the bug we fixed) returns empty list
+        # because string comparison with SeverityLevel enum will always fail
+        string_critical_threats = result.get_threats_by_severity("critical")  # type: ignore
+        assert len(string_critical_threats) == 0  # This was the bug - no matches!
+
+        string_high_threats = result.get_threats_by_severity("high")  # type: ignore
+        assert len(string_high_threats) == 0
+
+        string_medium_threats = result.get_threats_by_severity("medium")  # type: ignore
+        assert len(string_medium_threats) == 0
+
+        # Verify that SeverityLevel.CRITICAL.value (string) also fails
+        value_critical_threats = result.get_threats_by_severity(SeverityLevel.CRITICAL.value)  # type: ignore
+        assert len(value_critical_threats) == 0  # This was the exact bug in MCP server!

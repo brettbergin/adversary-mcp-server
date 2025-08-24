@@ -274,9 +274,9 @@ class TestBenchmarkSummary:
         assert "Files Processed: 15" in output
         assert "Fastest Test: Fast Test" in output
         assert "Slowest Test: Slow Test" in output
-        assert "✅ Fast Test" in output
-        assert "✅ Slow Test" in output
-        assert "❌ Failed Test" in output
+        assert "[+] Fast Test" in output
+        assert "[+] Slow Test" in output
+        assert "[-] Failed Test" in output
         assert "Error: Test error" in output
 
 

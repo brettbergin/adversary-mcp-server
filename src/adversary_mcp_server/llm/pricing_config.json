@@ -402,10 +402,10 @@
       "OpenAI has largely moved to GPT-5 family as primary offering"
     ],
     "category_descriptions": {
-      "latest": "🚀 Newest models with cutting-edge capabilities",
-      "budget": "💰 Cost-effective options for high-volume use",
-      "specialized": "🎯 Models optimized for specific use cases (reasoning, multimodal)",
-      "legacy": "📚 Older models, some deprecated"
+      "latest": "Newest models with cutting-edge capabilities",
+      "budget": "Cost-effective options for high-volume use",
+      "specialized": "Models optimized for specific use cases (reasoning, multimodal)",
+      "legacy": "Older models, some deprecated"
     },
     "provider_highlights": {
       "openai": {

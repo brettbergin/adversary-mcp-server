@@ -9,6 +9,7 @@ from adversary_mcp_server.application.adapters.input_models import (
 from adversary_mcp_server.domain.entities.scan_result import ScanResult
 from adversary_mcp_server.domain.entities.threat_match import ThreatMatch
 from adversary_mcp_server.domain.value_objects.confidence_score import ConfidenceScore
+from adversary_mcp_server.domain.value_objects.severity_level import SeverityLevel
 from adversary_mcp_server.logger import get_logger
 
 logger = get_logger("telemetry_adapter")
@@ -350,10 +351,18 @@ class DomainTelemetryAdapter:
             }
 
         # Calculate security score (higher is better)
-        critical_count = len(result.get_threats_by_severity("critical"))
-        high_count = len(result.get_threats_by_severity("high"))
-        medium_count = len(result.get_threats_by_severity("medium"))
-        low_count = len(result.get_threats_by_severity("low"))
+        critical_count = len(
+            result.get_threats_by_severity(SeverityLevel.from_string("critical"))
+        )
+        high_count = len(
+            result.get_threats_by_severity(SeverityLevel.from_string("high"))
+        )
+        medium_count = len(
+            result.get_threats_by_severity(SeverityLevel.from_string("medium"))
+        )
+        low_count = len(
+            result.get_threats_by_severity(SeverityLevel.from_string("low"))
+        )
 
         # Weighted security score (0-100)
         security_score = max(

@@ -32,6 +32,7 @@ from adversary_mcp_server.domain.interfaces import (
     SecurityError,
     ValidationError,
 )
+from adversary_mcp_server.domain.value_objects.confidence_score import ConfidenceScore
 from adversary_mcp_server.domain.value_objects.severity_level import SeverityLevel
 from adversary_mcp_server.infrastructure.false_positive_json_repository import (
     FalsePositiveJsonRepository,
@@ -140,6 +141,10 @@ class CleanMCPServer:
     ) -> list[types.TextContent]:
         """Handle file scanning requests."""
         try:
+            # Log MCP tool invocation at INFO level for visibility
+            logger.info(f"MCP Tool Invoked: {name}")
+            logger.info(f"Parameters: {arguments}")
+
             # Log raw arguments received
             logger.debug(f"MCP scan_file raw arguments: {arguments}")
 
@@ -202,6 +207,19 @@ class CleanMCPServer:
                 "persisted": "file_path" in locals(),
             }
 
+            # Log successful completion with key metrics
+            threat_count = (
+                len(result.threat_matches) if hasattr(result, "threat_matches") else 0
+            )
+            scan_duration = (
+                getattr(result.metadata, "scan_duration_seconds", 0)
+                if hasattr(result, "metadata")
+                else 0
+            )
+            logger.info(
+                f"[+] MCP Tool Completed: {name} | Threats: {threat_count} | Duration: {scan_duration:.2f}s"
+            )
+
             return [
                 types.TextContent(
                     type="text",
@@ -222,6 +240,10 @@ class CleanMCPServer:
     ) -> list[types.TextContent]:
         """Handle folder scanning requests."""
         try:
+            # Log MCP tool invocation at INFO level for visibility
+            logger.info(f"MCP Tool Invoked: {name}")
+            logger.info(f"Parameters: {arguments}")
+
             # Comprehensive input validation
             validated_args = self._input_validator.validate_mcp_arguments(
                 arguments, tool_name="adv_scan_folder"
@@ -268,6 +290,24 @@ class CleanMCPServer:
                 "persisted": "file_path" in locals(),
             }
 
+            # Log successful completion with key metrics
+            threat_count = (
+                len(result.threat_matches) if hasattr(result, "threat_matches") else 0
+            )
+            scan_duration = (
+                getattr(result.metadata, "scan_duration_seconds", 0)
+                if hasattr(result, "metadata")
+                else 0
+            )
+            files_scanned = (
+                getattr(result.metadata, "total_files_scanned", 0)
+                if hasattr(result, "metadata")
+                else 0
+            )
+            logger.info(
+                f"[+] MCP Tool Completed: {name} | Threats: {threat_count} | Files: {files_scanned} | Duration: {scan_duration:.2f}s"
+            )
+
             return [
                 types.TextContent(
                     type="text",
@@ -288,6 +328,10 @@ class CleanMCPServer:
     ) -> list[types.TextContent]:
         """Handle code scanning requests."""
         try:
+            # Log MCP tool invocation at INFO level for visibility
+            logger.info(f"MCP Tool Invoked: {name}")
+            logger.info(f"Parameters: {arguments}")
+
             # Comprehensive input validation
             validated_args = self._input_validator.validate_mcp_arguments(
                 arguments, tool_name="adv_scan_code"
@@ -362,6 +406,20 @@ class CleanMCPServer:
                 "file_path": file_path if "file_path" in locals() else None,
                 "persisted": "file_path" in locals(),
             }
+
+            # Log successful completion with key metrics
+            threat_count = (
+                len(result.threat_matches) if hasattr(result, "threat_matches") else 0
+            )
+            scan_duration = (
+                getattr(result.metadata, "scan_duration_seconds", 0)
+                if hasattr(result, "metadata")
+                else 0
+            )
+            code_length = len(content) if content else 0
+            logger.info(
+                f"[+] MCP Tool Completed: {name} | Threats: {threat_count} | Code: {code_length} chars | Duration: {scan_duration:.2f}s"
+            )
 
             return [
                 types.TextContent(
@@ -552,21 +610,23 @@ class CleanMCPServer:
             "threats": [self._format_threat(threat) for threat in result.threats],
             "summary": {
                 "total_threats": len(result.threats),
-                "critical_threats": len(
-                    result.get_threats_by_severity(SeverityLevel.CRITICAL.value)
-                ),
-                "high_threats": len(
-                    result.get_threats_by_severity(SeverityLevel.HIGH.value)
-                ),
-                "medium_threats": len(
-                    result.get_threats_by_severity(SeverityLevel.MEDIUM.value)
-                ),
-                "low_threats": len(
-                    result.get_threats_by_severity(SeverityLevel.LOW.value)
-                ),
+                "threat_count_by_severity": {
+                    severity: len(
+                        result.get_threats_by_severity(
+                            SeverityLevel.from_string(severity)
+                        )
+                    )
+                    for severity in ["critical", "high", "medium", "low"]
+                },
                 "threat_categories": list(result.get_threat_categories()),
                 "has_critical_threats": result.has_critical_threats(),
                 "is_empty": result.is_empty(),
+                "high_confidence_threats": len(
+                    result.filter_by_confidence(ConfidenceScore(0.8)).threats
+                ),
+                "validated_threats": len(
+                    [t for t in result.threats if "validation" in t.source_scanner]
+                ),
             },
         }
 

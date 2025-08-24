@@ -83,11 +83,11 @@ I'll be analyzing this codebase for security vulnerabilities. I'll reference the
         for file in self.key_files[:15]:  # Limit to top 15 files
             markers = []
             if file.is_entry_point:
-                markers.append("🚪 Entry Point")
+                markers.append("Entry Point")
             if file.is_config:
-                markers.append("⚙️ Config")
+                markers.append("Config")
             if file.is_security_critical:
-                markers.append("🔒 Security Critical")
+                markers.append("Security Critical")
 
             marker_str = f" ({', '.join(markers)})" if markers else ""
             formatted.append(f"- {file.path}{marker_str} - {file.language}")
@@ -458,7 +458,7 @@ class ProjectContextBuilder:
         lines = []
         for dir_name in sorted(dir_structure.keys()):
             files = dir_structure[dir_name][:5]  # Limit files per directory
-            lines.append(f"📁 {dir_name}/ ({len(dir_structure[dir_name])} files)")
+            lines.append(f"{dir_name}/ ({len(dir_structure[dir_name])} files)")
             for file_name in files:
                 lines.append(f"   📄 {file_name}")
             if len(dir_structure[dir_name]) > 5:

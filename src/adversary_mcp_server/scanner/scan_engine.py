@@ -1732,7 +1732,7 @@ class ScanEngine:
                         f"Directory Semgrep scan complete: found {len(all_semgrep_threats)} threats across {len(directory_semgrep_threats)} files"
                     )
                     logger.info(
-                        f"✅ Semgrep optimization: Scanned entire directory once instead of {len(files_to_scan)} individual scans"
+                        f"[+] Semgrep optimization: Scanned entire directory once instead of {len(files_to_scan)} individual scans"
                     )
 
                     # Record individual threat findings in telemetry using scan context

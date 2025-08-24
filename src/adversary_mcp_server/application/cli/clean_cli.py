@@ -926,9 +926,7 @@ class CleanCLI:
             f"Configuration mode: {'interactive' if interactive else 'non-interactive'}"
         )
         try:
-            console.print(
-                "\n[bold blue]🔧 Adversary MCP Server Configuration[/bold blue]"
-            )
+            console.print("\n[bold blue]Adversary MCP Server Configuration[/bold blue]")
             console.print("Setting up your security analysis environment...")
 
             # Get credential manager
@@ -975,7 +973,7 @@ class CleanCLI:
                 or updated_config.enable_llm_validation
             ):
                 console.print(
-                    f"\n[yellow]⚠️ LLM Configuration Warning:[/yellow] {error_message}"
+                    f"\n[yellow]LLM Configuration Warning:[/yellow] {error_message}"
                 )
                 console.print(
                     "[yellow]LLM features will be disabled until API keys are configured[/yellow]"
@@ -988,7 +986,7 @@ class CleanCLI:
             # Show configuration summary
             await self._show_configuration_summary(updated_config, credential_manager)
 
-            console.print("\n[green]✅ Configuration saved successfully![/green]")
+            console.print("\n[green][+] Configuration saved successfully![/green]")
             console.print("\n[blue]Next steps:[/blue]")
             console.print("• Run [bold]adversary-mcp-cli status[/bold] to verify setup")
             console.print("• Configure Cursor IDE with MCP integration")
@@ -996,7 +994,7 @@ class CleanCLI:
 
         except Exception as e:
             logger.error(f"Configuration error: {e}")
-            console.print(f"\n[red]❌ Configuration failed:[/red] {e}")
+            console.print(f"\n[red][-] Configuration failed:[/red] {e}")
             sys.exit(1)
 
     def _update_config_from_params(
@@ -1014,7 +1012,7 @@ class CleanCLI:
         self, config: SecurityConfig, credential_manager: CredentialManager
     ) -> SecurityConfig:
         """Interactive configuration prompts."""
-        console.print("\n[bold]🔧 Interactive Configuration[/bold]")
+        console.print("\n[bold]Interactive Configuration[/bold]")
 
         # LLM Provider Configuration
         if not config.llm_provider:
@@ -1173,11 +1171,11 @@ class CleanCLI:
                         # Create budget indicator
                         daily_cost = typical_estimate["daily_cost"]
                         if daily_cost < 1.0:
-                            budget_indicator = "[green]💰 Budget-friendly[/green]"
+                            budget_indicator = "[green]Budget-friendly[/green]"
                         elif daily_cost < 5.0:
-                            budget_indicator = "[yellow]💰💰 Moderate cost[/yellow]"
+                            budget_indicator = "[yellow]Moderate cost[/yellow]"
                         else:
-                            budget_indicator = "[red]💰💰💰 Premium pricing[/red]"
+                            budget_indicator = "[red]Premium pricing[/red]"
 
                         console.print(
                             f"    [dim]Estimated daily cost: ${daily_cost:.2f} (typical usage) | ${light_estimate['daily_cost']:.2f} (light usage)[/dim]"
@@ -1238,7 +1236,7 @@ class CleanCLI:
         self, config: SecurityConfig, credential_manager: CredentialManager
     ) -> None:
         """Show configuration summary."""
-        # console.print("\n[bold]📋 Configuration Summary[/bold]")
+        # console.print("\n[bold]Configuration Summary[/bold]")
 
         # Create summary table
         table = Table(title="Current Configuration")
@@ -1254,14 +1252,14 @@ class CleanCLI:
                 (
                     "[green]✓ Configured[/green]"
                     if config.llm_api_key
-                    else "[yellow]⚠ API key needed[/yellow]"
+                    else "[yellow]API key needed[/yellow]"
                 ),
             )
             if config.llm_model:
                 table.add_row("LLM Model", config.llm_model, "[green]✓[/green]")
         else:
             table.add_row(
-                "LLM Provider", "None", "[yellow]⚠ LLM features disabled[/yellow]"
+                "LLM Provider", "None", "[yellow]LLM features disabled[/yellow]"
             )
 
         # Semgrep Configuration
@@ -1293,7 +1291,7 @@ class CleanCLI:
                 llm_analysis_status = "[green]✓ Enabled[/green]"
                 llm_analysis_value = "Enabled"
             else:
-                llm_analysis_status = "[yellow]⚠ API key needed[/yellow]"
+                llm_analysis_status = "[yellow]API key needed[/yellow]"
                 llm_analysis_value = "[yellow]Disabled (API key needed)[/yellow]"
         else:
             llm_analysis_status = "[red]✗ Disabled[/red]"
@@ -1306,7 +1304,7 @@ class CleanCLI:
                 llm_validation_status = "[green]✓ Enabled[/green]"
                 llm_validation_value = "Enabled"
             else:
-                llm_validation_status = "[yellow]⚠ API key needed[/yellow]"
+                llm_validation_status = "[yellow]API key needed[/yellow]"
                 llm_validation_value = "[yellow]Disabled (API key needed)[/yellow]"
         else:
             llm_validation_status = "[red]✗ Disabled[/red]"
@@ -1325,7 +1323,7 @@ class CleanCLI:
         logger.info("Starting configuration reset")
         try:
             if not confirm:
-                console.print("\n[bold red]⚠️  Configuration Reset[/bold red]")
+                console.print("\n[bold red]Configuration Reset[/bold red]")
                 console.print("This will clear all stored configuration and API keys:")
                 console.print("• LLM provider and API keys")
                 console.print("• Semgrep API key")
@@ -1357,7 +1355,7 @@ class CleanCLI:
             reset_credential_manager()
             logger.info("Configuration reset completed successfully")
 
-            console.print("\n[green]✅ Configuration reset successfully![/green]")
+            console.print("\n[green][+] Configuration reset successfully![/green]")
             console.print("\n[blue]Next steps:[/blue]")
             console.print(
                 "• Run [bold]adversary-mcp-cli configure[/bold] to set up your environment"
@@ -1366,7 +1364,7 @@ class CleanCLI:
 
         except Exception as e:
             logger.error(f"Configuration reset error: {e}")
-            console.print(f"\n[red]❌ Reset failed:[/red] {e}")
+            console.print(f"\n[red][-] Reset failed:[/red] {e}")
             sys.exit(1)
 
     def _init_session_manager(self):

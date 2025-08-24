@@ -283,12 +283,12 @@ class CredentialManager:
                 else:
                     # Don't fail on verification issues - storage might still have worked
                     logger.debug(
-                        "⚠️ Keyring storage verification returned None (may be normal in test environments)"
+                        "Keyring storage verification returned None (may be normal in test environments)"
                     )
             except Exception as e:
                 # Don't fail on verification issues - the main storage operation succeeded
                 logger.debug(
-                    f"⚠️ Keyring storage verification failed: {e} (may be normal in test environments)"
+                    f"Keyring storage verification failed: {e} (may be normal in test environments)"
                 )
 
             logger.info("Successfully stored configuration in keyring")

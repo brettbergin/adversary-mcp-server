@@ -518,11 +518,11 @@ class ScanResultFormatter:
                     getattr(threat.severity, "value", threat.severity)
                 ).lower()
                 severity_emoji = {
-                    "critical": "🔴",
-                    "high": "🟠",
-                    "medium": "🟡",
-                    "low": "🔵",
-                }.get(sev_val, "⚪")
+                    "critical": "[CRITICAL]",
+                    "high": "[HIGH]",
+                    "medium": "[MEDIUM]",
+                    "low": "[LOW]",
+                }.get(sev_val, "[UNKNOWN]")
 
                 md_lines.append(
                     f"#### {severity_emoji} {sev_val.upper()}: {threat.rule_name}"
@@ -559,7 +559,7 @@ class ScanResultFormatter:
 
         else:
             md_lines.append("")
-            md_lines.append("## ✅ No Security Threats Detected")
+            md_lines.append("## [+] No Security Threats Detected")
             md_lines.append("")
             md_lines.append(
                 "The scan completed successfully with no security vulnerabilities found."

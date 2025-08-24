@@ -43,7 +43,7 @@ class InteractiveModelSelector:
             Selected model or None if cancelled
         """
         try:
-            console.print("\n🤖 [bold]Select LLM Model[/bold]")
+            console.print("\n[bold]Select LLM Model[/bold]")
             console.print("Loading available models...", style="dim")
 
             # Get available models
@@ -51,7 +51,7 @@ class InteractiveModelSelector:
 
             if not models:
                 console.print(
-                    "❌ No models available. Please check your API keys.", style="red"
+                    "[-] No models available. Please check your API keys.", style="red"
                 )
                 return None
 
@@ -72,16 +72,16 @@ class InteractiveModelSelector:
             return await self._show_all_models_selection(models, show_categories)
 
         except KeyboardInterrupt:
-            console.print("\n❌ Model selection cancelled.", style="yellow")
+            console.print("\n[-] Model selection cancelled.", style="yellow")
             return None
         except Exception as e:
             logger.error(f"Error in model selection: {e}")
-            console.print(f"❌ Error during model selection: {e}", style="red")
+            console.print(f"[-] Error during model selection: {e}", style="red")
             return None
 
     async def _show_recommendation_menu(self, models: list[ModelInfo]) -> str | None:
         """Show quick recommendation menu."""
-        console.print("\n💡 [bold]Quick Recommendations[/bold]")
+        console.print("\n[bold]Quick Recommendations[/bold]")
 
         # Get different recommendation types
         general_recs = await self.catalog_service.get_recommended_models("general")
@@ -94,9 +94,7 @@ class InteractiveModelSelector:
 
         # Top general recommendations
         if general_recs:
-            choices.append(
-                questionary.Separator("🚀 Recommended for Security Scanning")
-            )
+            choices.append(questionary.Separator("[RECOMMENDED] For Security Scanning"))
             for model in general_recs[:3]:
                 choice_text = f"{model.display_name} - {model.cost_description} - {model.description[:60]}..."
                 choices.append(questionary.Choice(choice_text, value=f"rec_{model.id}"))
@@ -104,13 +102,13 @@ class InteractiveModelSelector:
         # Quick access options
         choices.extend(
             [
-                questionary.Separator("⚡ Quick Options"),
-                questionary.Choice("💰 Budget-friendly models", value="budget"),
-                questionary.Choice("🏎️  Fastest models", value="speed"),
-                questionary.Choice("🏆 Highest quality models", value="quality"),
-                questionary.Separator("📋 Browse All"),
-                questionary.Choice("🔍 View all models by category", value="view_all"),
-                questionary.Choice("🎛️  Custom filtering", value="custom"),
+                questionary.Separator("[QUICK] Options"),
+                questionary.Choice("Budget-friendly models", value="budget"),
+                questionary.Choice("Fastest models", value="speed"),
+                questionary.Choice("Highest quality models", value="quality"),
+                questionary.Separator("[BROWSE] All"),
+                questionary.Choice("View all models by category", value="view_all"),
+                questionary.Choice("Custom filtering", value="custom"),
             ]
         )
 
@@ -124,7 +122,7 @@ class InteractiveModelSelector:
         self, models: list[ModelInfo], show_categories: bool
     ) -> ModelInfo | None:
         """Show custom filtering interface."""
-        console.print("\n🎛️  [bold]Custom Model Filtering[/bold]")
+        console.print("\n[bold]Custom Model Filtering[/bold]")
 
         # Provider filter
         provider_choice = questionary.select(
@@ -143,19 +141,19 @@ class InteractiveModelSelector:
             "Filter by category:",
             choices=[
                 "All categories",
-                "🚀 Latest models",
-                "💰 Budget models",
-                "🎯 Specialized models",
+                "Latest models",
+                "Budget models",
+                "Specialized models",
                 "📚 Legacy models",
             ],
         ).ask()
 
         category_filter = None
-        if category_choice == "🚀 Latest models":
+        if category_choice == "Latest models":
             category_filter = ModelCategory.LATEST
-        elif category_choice == "💰 Budget models":
+        elif category_choice == "Budget models":
             category_filter = ModelCategory.BUDGET
-        elif category_choice == "🎯 Specialized models":
+        elif category_choice == "Specialized models":
             category_filter = ModelCategory.SPECIALIZED
         elif category_choice == "📚 Legacy models":
             category_filter = ModelCategory.LEGACY
@@ -188,7 +186,7 @@ class InteractiveModelSelector:
         filtered_models = await self.catalog_service.get_models_by_filter(model_filter)
 
         if not filtered_models:
-            console.print("❌ No models match your criteria.", style="red")
+            console.print("[-] No models match your criteria.", style="red")
             return None
 
         return await self._show_model_list_selection(filtered_models, "Filtered Models")
@@ -206,7 +204,7 @@ class InteractiveModelSelector:
         self, models: list[ModelInfo]
     ) -> ModelInfo | None:
         """Show models organized by categories."""
-        console.print("\n📋 [bold]Models by Category[/bold]")
+        console.print("\n[bold]Models by Category[/bold]")
 
         categorized = self.catalog_service.get_categorized_models(models)
 
@@ -214,12 +212,16 @@ class InteractiveModelSelector:
         category_choices = []
         for category, category_models in categorized.items():
             emoji = (
-                "🚀"
+                "[LATEST]"
                 if category == ModelCategory.LATEST
                 else (
-                    "💰"
+                    "[BUDGET]"
                     if category == ModelCategory.BUDGET
-                    else "🎯" if category == ModelCategory.SPECIALIZED else "📚"
+                    else (
+                        "[SPECIALIZED]"
+                        if category == ModelCategory.SPECIALIZED
+                        else "[LEGACY]"
+                    )
                 )
             )
             choice_text = (
@@ -245,7 +247,7 @@ class InteractiveModelSelector:
         self, models: list[ModelInfo], title: str
     ) -> ModelInfo | None:
         """Show a list of models for selection."""
-        console.print(f"\n📋 [bold]{title}[/bold]")
+        console.print(f"\n[bold]{title}[/bold]")
 
         # Display models table first
         self._display_models_table(models)
@@ -301,19 +303,23 @@ class InteractiveModelSelector:
 
         for model in models[:15]:  # Limit to first 15 to avoid overwhelming
             category_emoji = (
-                "🚀"
+                "[LATEST]"
                 if model.category == ModelCategory.LATEST
                 else (
-                    "💰"
+                    "[BUDGET]"
                     if model.category == ModelCategory.BUDGET
-                    else "🎯" if model.category == ModelCategory.SPECIALIZED else "📚"
+                    else (
+                        "[SPECIALIZED]"
+                        if model.category == ModelCategory.SPECIALIZED
+                        else "[LEGACY]"
+                    )
                 )
             )
 
             speed_emoji = (
-                "⚡"
+                "[FAST]"
                 if model.speed_rating == "fast"
-                else "🐌" if model.speed_rating == "slow" else "⚖️"
+                else "[SLOW]" if model.speed_rating == "slow" else "[MEDIUM]"
             )
 
             context = (
@@ -354,36 +360,34 @@ class InteractiveModelSelector:
         content.append("")
 
         # Pricing
-        content.append(f"💰 [bold]Pricing:[/bold] {model.cost_description}")
+        content.append(f"[bold]Pricing:[/bold] {model.cost_description}")
 
         # Performance
         speed_emoji = (
-            "⚡"
+            "[FAST]"
             if model.speed_rating == "fast"
-            else "🐌" if model.speed_rating == "slow" else "⚖️"
+            else "[SLOW]" if model.speed_rating == "slow" else "[MEDIUM]"
         )
         quality_emoji = (
-            "🏆"
+            "[EXCELLENT]"
             if model.quality_rating == "excellent"
-            else "👍" if model.quality_rating == "good" else "👌"
+            else "[GOOD]" if model.quality_rating == "good" else "[OK]"
         )
         content.append(
-            f"🏎️  [bold]Speed:[/bold] {speed_emoji} {model.speed_rating.title()}"
+            f"[bold]Speed:[/bold] {speed_emoji} {model.speed_rating.title()}"
         )
         content.append(
-            f"⭐ [bold]Quality:[/bold] {quality_emoji} {model.quality_rating.title()}"
+            f"[bold]Quality:[/bold] {quality_emoji} {model.quality_rating.title()}"
         )
 
         # Context
         if model.max_context_tokens:
-            content.append(
-                f"📄 [bold]Context:[/bold] {model.max_context_tokens:,} tokens"
-            )
+            content.append(f"[bold]Context:[/bold] {model.max_context_tokens:,} tokens")
 
         # Capabilities
         if model.capabilities:
             caps_text = " ".join(model.capability_tags)
-            content.append(f"🛠️  [bold]Capabilities:[/bold] {caps_text}")
+            content.append(f"[bold]Capabilities:[/bold] {caps_text}")
 
         # Best for
         if model.best_for:
