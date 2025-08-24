@@ -14,7 +14,7 @@ logger = get_logger("session_demo")
 async def demo_session_scanning():
     """Demonstrate session-aware LLM scanning capabilities."""
 
-    print("🔬 Session-Aware LLM Security Analysis Demo")
+    print("Session-Aware LLM Security Analysis Demo")
     print("=" * 50)
 
     # Initialize scanner
@@ -23,13 +23,13 @@ async def demo_session_scanning():
         scanner = SessionAwareLLMScanner(credential_manager)
 
         if not scanner.is_available():
-            print("❌ LLM scanner not available. Please configure your API keys.")
+            print("[-] LLM scanner not available. Please configure your API keys.")
             return
 
-        print("✅ LLM scanner initialized successfully")
+        print("[+] LLM scanner initialized successfully")
 
     except Exception as e:
-        print(f"❌ Failed to initialize scanner: {e}")
+        print(f"[-] Failed to initialize scanner: {e}")
         return
 
     # Get project root (current directory or examples)
@@ -38,9 +38,9 @@ async def demo_session_scanning():
 
     if examples_dir.exists():
         project_root = examples_dir
-        print(f"📁 Using examples directory: {project_root}")
+        print(f"Using examples directory: {project_root}")
     else:
-        print(f"📁 Using current directory: {project_root}")
+        print(f"Using current directory: {project_root}")
 
     try:
         print("\\n🧠 Starting session-aware analysis...")
@@ -56,11 +56,11 @@ async def demo_session_scanning():
             analysis_focus="comprehensive security analysis with architectural review",
         )
 
-        print(f"\\n🎯 Analysis Results: {len(threat_matches)} findings")
+        print(f"\\nAnalysis Results: {len(threat_matches)} findings")
         print("-" * 30)
 
         if not threat_matches:
-            print("✅ No security vulnerabilities detected!")
+            print("[+] No security vulnerabilities detected!")
         else:
             for i, threat in enumerate(threat_matches, 1):
                 print(f"\\n{i}. {threat.rule_name}")
@@ -81,7 +81,7 @@ async def demo_session_scanning():
                             f"   Architectural Context: {session_context['architectural_context'][:100]}..."
                         )
 
-        print("\\n📊 Analysis Summary:")
+        print("\\nAnalysis Summary:")
         print(f"   • Total findings: {len(threat_matches)}")
 
         # Count by severity
@@ -93,7 +93,7 @@ async def demo_session_scanning():
         for severity, count in severity_counts.items():
             print(f"   • {severity.title()}: {count}")
 
-        print("\\n🎉 Session-aware analysis complete!")
+        print("\\n[+] Session-aware analysis complete!")
         print("\\nKey advantages of session-aware analysis:")
         print("  ✓ Full project context understanding")
         print("  ✓ Cross-file vulnerability detection")
@@ -102,7 +102,7 @@ async def demo_session_scanning():
         print("  ✓ More intelligent threat analysis")
 
     except Exception as e:
-        print(f"❌ Analysis failed: {e}")
+        print(f"[-] Analysis failed: {e}")
         logger.error(f"Demo analysis failed: {e}", exc_info=True)
 
     finally:
@@ -114,7 +114,7 @@ async def demo_file_analysis():
     """Demonstrate file analysis with project context."""
 
     print("\\n" + "=" * 50)
-    print("🔬 File Analysis with Project Context Demo")
+    print("File Analysis with Project Context Demo")
     print("=" * 50)
 
     try:
@@ -122,7 +122,7 @@ async def demo_file_analysis():
         scanner = SessionAwareLLMScanner(credential_manager)
 
         if not scanner.is_available():
-            print("❌ LLM scanner not available")
+            print("[-] LLM scanner not available")
             return
 
         # Find a Python file to analyze
@@ -143,7 +143,7 @@ async def demo_file_analysis():
                 target_file = python_files[0]
 
         if not target_file:
-            print("❌ No Python files found to analyze")
+            print("[-] No Python files found to analyze")
             return
 
         print(f"📄 Analyzing file with context: {target_file}")
@@ -153,7 +153,7 @@ async def demo_file_analysis():
             context_hint="Focus on input validation and injection vulnerabilities",
         )
 
-        print(f"\\n🎯 File Analysis Results: {len(threat_matches)} findings")
+        print(f"\\nFile Analysis Results: {len(threat_matches)} findings")
 
         for i, threat in enumerate(threat_matches, 1):
             print(f"\\n{i}. {threat.rule_name}")
@@ -163,10 +163,10 @@ async def demo_file_analysis():
             print(f"   Confidence: {threat.confidence:.1%}")
 
         if not threat_matches:
-            print("✅ No vulnerabilities found in this file!")
+            print("[+] No vulnerabilities found in this file!")
 
     except Exception as e:
-        print(f"❌ File analysis failed: {e}")
+        print(f"[-] File analysis failed: {e}")
 
 
 def main():

@@ -497,28 +497,28 @@ def run_migration_cli(
         check_results = migration_manager.check_migration_needed()
 
         if not check_results["migration_needed"]:
-            print("✅ No migration needed - no legacy files found")
+            print("[+] No migration needed - no legacy files found")
             return 0
 
-        print("📋 Migration Check Results:")
+        print("Migration Check Results:")
         print(f"  - Legacy SQLite files: {len(check_results['legacy_sqlite_files'])}")
         print(f"  - JSON metrics files: {len(check_results['json_metrics_files'])}")
         print(f"  - Estimated records: {check_results['estimated_records']}")
         print(f"  - Target DB exists: {check_results['target_db_exists']}")
 
         # Run migration
-        print("\n🚀 Starting migration...")
+        print("\nStarting migration...")
         results = migration_manager.run_full_migration(backup=backup)
 
         if results.get("errors"):
-            print(f"❌ Migration completed with {len(results['errors'])} errors")
+            print(f"[-] Migration completed with {len(results['errors'])} errors")
             return 1
         else:
-            print("✅ Migration completed successfully")
+            print("[+] Migration completed successfully")
             return 0
 
     except Exception as e:
-        print(f"❌ Migration failed: {e}")
+        print(f"[-] Migration failed: {e}")
         return 1
 
 

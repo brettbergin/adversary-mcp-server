@@ -574,12 +574,22 @@ class TestDomainTelemetryAdapter:
         # Create mock scan result
         mock_scan_result = Mock()
         mock_scan_result.threats = [critical_threat, high_threat]
-        mock_scan_result.get_threats_by_severity.side_effect = lambda severity: {
-            "critical": [critical_threat] if severity == "critical" else [],
-            "high": [high_threat] if severity == "high" else [],
-            "medium": [],
-            "low": [],
-        }[severity]
+
+        def mock_get_threats_by_severity(severity):
+            if severity == SeverityLevel.from_string("critical"):
+                return [critical_threat]
+            elif severity == SeverityLevel.from_string("high"):
+                return [high_threat]
+            elif severity == SeverityLevel.from_string("medium"):
+                return []
+            elif severity == SeverityLevel.from_string("low"):
+                return []
+            else:
+                return []
+
+        mock_scan_result.get_threats_by_severity.side_effect = (
+            mock_get_threats_by_severity
+        )
 
         metrics = adapter.extract_quality_metrics(mock_scan_result)
 

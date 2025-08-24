@@ -60,11 +60,9 @@ class UnifiedDashboard:
         # Clear screen and show header
         self.console.clear()
         self.console.print(
-            "🔍 [bold cyan]Adversary MCP Server - Real-Time Monitoring Dashboard[/bold cyan]"
+            "[bold cyan]Adversary MCP Server - Real-Time Monitoring Dashboard[/bold cyan]"
         )
-        self.console.print(
-            f"📊 Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-        )
+        self.console.print(f"Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
 
         # System Overview Panel
         self._display_system_overview()
@@ -96,7 +94,9 @@ class UnifiedDashboard:
             Path to generated HTML file or None if failed
         """
         if not self.telemetry_enabled:
-            self.console.print("❌ [red]HTML dashboard requires telemetry system[/red]")
+            self.console.print(
+                "[-] [red]HTML dashboard requires telemetry system[/red]"
+            )
             return None
 
         try:
@@ -108,17 +108,17 @@ class UnifiedDashboard:
             )
 
             self.console.print(
-                f"✅ [green]HTML dashboard generated: {html_file}[/green]"
+                f"[+] [green]HTML dashboard generated: {html_file}[/green]"
             )
             return html_file
 
         except ImportError as e:
             self.console.print(
-                f"❌ [red]HTML dashboard dependencies missing: {e}[/red]"
+                f"[-] [red]HTML dashboard dependencies missing: {e}[/red]"
             )
             return None
         except Exception as e:
-            self.console.print(f"❌ [red]Failed to generate HTML dashboard: {e}[/red]")
+            self.console.print(f"[-] [red]Failed to generate HTML dashboard: {e}[/red]")
             logger.error(f"HTML dashboard generation failed: {e}", exc_info=True)
             return None
 
@@ -140,7 +140,7 @@ class UnifiedDashboard:
             return self._export_json_metrics(output_path)
         else:
             self.console.print(
-                f"❌ [red]Unsupported export format: {format_type}[/red]"
+                f"[-] [red]Unsupported export format: {format_type}[/red]"
             )
             return None
 
@@ -326,11 +326,11 @@ class UnifiedDashboard:
             with open(export_file, "w") as f:
                 json.dump(export_data, f, indent=2, default=str)
 
-            self.console.print(f"✅ [green]Metrics exported to: {export_file}[/green]")
+            self.console.print(f"[+] [green]Metrics exported to: {export_file}[/green]")
             return str(export_file)
 
         except Exception as e:
-            self.console.print(f"❌ [red]Failed to export JSON metrics: {e}[/red]")
+            self.console.print(f"[-] [red]Failed to export JSON metrics: {e}[/red]")
             logger.error(f"JSON export failed: {e}", exc_info=True)
             return None
 

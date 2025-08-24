@@ -231,7 +231,7 @@ class TestScanResultFormatter:
             [mock_result], "/test/target"
         )
 
-        assert "## ✅ No Security Threats Detected" in result_md
+        assert "## [+] No Security Threats Detected" in result_md
         assert (
             "The scan completed successfully with no security vulnerabilities found."
             in result_md
@@ -498,11 +498,11 @@ class TestScanResultFormatter:
 
         result_md = formatter.format_directory_results_markdown([mock_result], "/test")
 
-        # Check that severity emojis are included
-        assert "🔴" in result_md  # Critical
-        assert "🟠" in result_md  # High
-        assert "🟡" in result_md  # Medium
-        assert "🔵" in result_md  # Low
+        # Check that severity markers are included (ASCII instead of emojis)
+        assert "[CRITICAL]" in result_md  # Critical
+        assert "[HIGH]" in result_md  # High
+        assert "[MEDIUM]" in result_md  # Medium
+        assert "[LOW]" in result_md  # Low
 
     def test_format_directory_results_json_hasattr_false(self, formatter):
         """Test when hasattr returns False for all_threats (lines 74-75)."""

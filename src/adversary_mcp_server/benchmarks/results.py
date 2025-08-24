@@ -156,7 +156,7 @@ class BenchmarkSummary:
         print("\nDETAILED RESULTS:")
         print("-" * 60)
         for result in self.results:
-            status = "✅" if result.success else "❌"
+            status = "[+]" if result.success else "[-]"
             print(f"{status} {result.name}")
             print(f"   Duration: {result.duration_seconds:.2f}s")
             if result.files_processed > 0:

@@ -100,7 +100,7 @@ class TestInteractiveModelSelector:
 
             assert result is None
             mock_console.print.assert_any_call(
-                "❌ No models available. Please check your API keys.", style="red"
+                "[-] No models available. Please check your API keys.", style="red"
             )
 
     @pytest.mark.asyncio
@@ -115,7 +115,7 @@ class TestInteractiveModelSelector:
 
             assert result is None
             mock_console.print.assert_any_call(
-                "\n❌ Model selection cancelled.", style="yellow"
+                "\n[-] Model selection cancelled.", style="yellow"
             )
 
     @pytest.mark.asyncio
@@ -130,7 +130,7 @@ class TestInteractiveModelSelector:
 
             assert result is None
             mock_console.print.assert_any_call(
-                "❌ Error during model selection: Test error", style="red"
+                "[-] Error during model selection: Test error", style="red"
             )
 
     @pytest.mark.asyncio
@@ -176,7 +176,7 @@ class TestInteractiveModelSelector:
         # Mock questionary responses
         responses = [
             "OpenAI only",  # provider choice
-            "🚀 Latest models",  # category choice
+            "Latest models",  # category choice
             "Under $0.005/1k (Budget)",  # cost choice
         ]
 
@@ -227,7 +227,7 @@ class TestInteractiveModelSelector:
 
                 assert result is None
                 mock_console.print.assert_any_call(
-                    "❌ No models match your criteria.", style="red"
+                    "[-] No models match your criteria.", style="red"
                 )
 
     @pytest.mark.asyncio
@@ -622,7 +622,7 @@ class TestErrorHandling:
 
             assert result is None
             mock_console.print.assert_any_call(
-                "❌ Error during model selection: Catalog error", style="red"
+                "[-] Error during model selection: Catalog error", style="red"
             )
 
     @pytest.mark.asyncio

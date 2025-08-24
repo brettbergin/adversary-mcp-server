@@ -89,10 +89,10 @@ class ModelInfo:
     def category_display(self) -> str:
         """Formatted category for display."""
         category_emojis = {
-            ModelCategory.LATEST: "🚀",
-            ModelCategory.BUDGET: "💰",
-            ModelCategory.SPECIALIZED: "🎯",
-            ModelCategory.LEGACY: "📚",
+            ModelCategory.LATEST: "[LATEST]",
+            ModelCategory.BUDGET: "[BUDGET]",
+            ModelCategory.SPECIALIZED: "[SPECIALIZED]",
+            ModelCategory.LEGACY: "[LEGACY]",
         }
         return f"{category_emojis.get(self.category, '')} {self.category.value.title()}"
 
@@ -100,12 +100,12 @@ class ModelInfo:
     def capability_tags(self) -> list[str]:
         """Formatted capability tags."""
         capability_formats = {
-            ModelCapability.CHAT: "💬 Chat",
-            ModelCapability.CODE: "💻 Code",
-            ModelCapability.ANALYSIS: "🔍 Analysis",
-            ModelCapability.REASONING: "🧠 Reasoning",
-            ModelCapability.FAST: "⚡ Fast",
-            ModelCapability.HIGH_CONTEXT: "📄 Large Context",
+            ModelCapability.CHAT: "Chat",
+            ModelCapability.CODE: "Code",
+            ModelCapability.ANALYSIS: "Analysis",
+            ModelCapability.REASONING: "Reasoning",
+            ModelCapability.FAST: "Fast",
+            ModelCapability.HIGH_CONTEXT: "Large Context",
         }
         return [
             capability_formats.get(cap, cap.value) for cap in (self.capabilities or [])

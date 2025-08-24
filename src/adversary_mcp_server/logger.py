@@ -2,6 +2,7 @@
 
 import logging
 import logging.handlers
+import os
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +45,11 @@ class AdversaryLogger:
         # Set up logging
         self._setup_logging()
 
+        # Apply environment variable log level if set
+        env_log_level = os.environ.get("ADVERSARY_LOG_LEVEL", "").upper()
+        if env_log_level in ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]:
+            self.set_log_level(env_log_level)
+
     def _setup_logging(self) -> None:
         """Set up the logging configuration with file rotation."""
         # Create logger
@@ -72,6 +78,9 @@ class AdversaryLogger:
 
         # Add handlers to logger
         self.logger.addHandler(file_handler)
+
+        # Set default log level to INFO for better visibility (was WARNING)
+        self.logger.setLevel(logging.INFO)
 
         # Prevent propagation to root logger
         self.logger.propagate = False
